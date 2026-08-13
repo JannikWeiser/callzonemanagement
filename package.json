@@ -1,0 +1,16 @@
+{
+  "name": "callzone-management",
+  "version": "1.0.0",
+  "description": "Callzone-Anzeige fuer Kletterwettkaempfe (results.info) - wer ist an der Wand, wer ist als naechstes dran",
+  "type": "module",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

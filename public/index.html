@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Callzone Management</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header id="setup" class="setup">
+  <h1>Callzone Management</h1>
+  <div class="setup-row">
+    <label>
+      Event ID
+      <input id="eventId" type="text" inputmode="numeric" placeholder="z.B. 2101" />
+    </label>
+    <label>
+      Server
+      <select id="host">
+        <option value="prod">dav.results.info</option>
+        <option value="stage">dav-stage.results.info (Test)</option>
+      </select>
+    </label>
+    <button id="loadEvent">Event laden</button>
+  </div>
+  <div id="setupError" class="error" hidden></div>
+
+  <div id="categoryRow" class="setup-row" hidden>
+    <label class="grow">
+      Altersklasse / Runde
+      <select id="roundSelect"></select>
+    </label>
+    <button id="watchRound">Anzeigen</button>
+  </div>
+</header>
+
+<main id="board" class="board" hidden>
+  <div class="board-topbar">
+    <button id="backBtn" class="ghost">&larr; andere Runde</button>
+    <div id="roundTitle" class="round-title"></div>
+    <div id="statusLine" class="status-line"></div>
+  </div>
+  <div class="share-row">
+    <span class="share-label">Link für dieses Tablet:</span>
+    <input id="shareLink" class="share-input" type="text" readonly />
+    <button id="copyLink" class="ghost">Kopieren</button>
+  </div>
+  <div id="lanes" class="lanes"></div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
