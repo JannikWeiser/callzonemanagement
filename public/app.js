@@ -180,6 +180,21 @@ function computeLane(round, route) {
     .sort((a, b) => a.position - b.position)
     .map((x) => x.athlete);
 
+  // Before the round has actually begun, nobody is "at the wall" yet, even
+  // though every athlete's ascent status is still "pending" - that status
+  // alone can't tell a not-yet-started route apart from someone mid-climb.
+  // round.status (pending/active/finished) is the only reliable signal for
+  // "has this round started at all".
+  if (round.status === "pending") {
+    return {
+      routeName: route.name,
+      finished: false,
+      atWall: null,
+      onDeck: ordered[0] ?? null,
+      queue: ordered.slice(1, 1 + 6),
+    };
+  }
+
   let currentIndex = ordered.findIndex((a) => (statusByAthlete.get(a.athlete_id) ?? "pending") === "pending");
   if (currentIndex === -1) currentIndex = ordered.length; // everyone done
 
@@ -233,6 +248,8 @@ function buildLane(round, route, laneLabelPrefix) {
     if (lane.queue.length) {
       const list = document.createElement("ol");
       list.className = "queue-list";
+      // "Nächste·r" is implicitly queue position 1, so this list continues from 2.
+      list.setAttribute("start", "2");
       for (const athlete of lane.queue) {
         const li = document.createElement("li");
         li.textContent = athleteLine(athlete);
