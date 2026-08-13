@@ -198,50 +198,80 @@ function athleteLine(athlete) {
   return `${bib}${athlete.name}`;
 }
 
+// Most rounds list their routes directly on `round.routes`. Boulder rounds
+// split into starting groups (e.g. "Group A" / "Group B" climbing separate
+// boulders in parallel) instead nest the routes under `round.starting_groups`
+// and have no top-level `routes` at all - group them here so the rest of the
+// rendering code doesn't need to care which shape it got.
+function collectRouteGroups(round) {
+  if (round.routes?.length) return [{ groupName: null, routes: round.routes }];
+  if (round.starting_groups?.length) {
+    return round.starting_groups.map((g) => ({ groupName: g.name, routes: g.routes }));
+  }
+  return [];
+}
+
+function buildLane(round, route, laneLabelPrefix) {
+  const lane = computeLane(round, route);
+  const laneEl = document.createElement("section");
+  laneEl.className = "lane";
+
+  const heading = document.createElement("div");
+  heading.className = "lane-heading";
+  heading.textContent = `${laneLabelPrefix} ${lane.routeName}`;
+  laneEl.appendChild(heading);
+
+  if (lane.finished) {
+    const done = document.createElement("div");
+    done.className = "lane-finished";
+    done.textContent = "Runde beendet";
+    laneEl.appendChild(done);
+  } else {
+    laneEl.appendChild(makeCard("an der wand", athleteLine(lane.atWall), "at-wall"));
+    laneEl.appendChild(makeCard("nächste·r", athleteLine(lane.onDeck), "on-deck"));
+
+    if (lane.queue.length) {
+      const list = document.createElement("ol");
+      list.className = "queue-list";
+      for (const athlete of lane.queue) {
+        const li = document.createElement("li");
+        li.textContent = athleteLine(athlete);
+        list.appendChild(li);
+      }
+      laneEl.appendChild(list);
+    }
+  }
+
+  return laneEl;
+}
+
 function renderBoard(round) {
-  el.roundTitle.textContent = `${round.category_round_name ?? ""} — ${round.discipline ?? ""}`.trim();
+  el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
   const laneLabelPrefix = round.discipline === "Speed" ? "Bahn" : "Route";
 
   el.lanes.innerHTML = "";
-  if (!round.routes?.length) {
+  const routeGroups = collectRouteGroups(round);
+  if (!routeGroups.length) {
     const empty = document.createElement("div");
     empty.className = "lane-finished";
     empty.textContent = "Keine Routen-Daten für diese Runde.";
     el.lanes.appendChild(empty);
     return;
   }
-  for (const route of round.routes) {
-    const lane = computeLane(round, route);
-    const laneEl = document.createElement("section");
-    laneEl.className = "lane";
 
-    const heading = document.createElement("div");
-    heading.className = "lane-heading";
-    heading.textContent = `${laneLabelPrefix} ${lane.routeName}`;
-    laneEl.appendChild(heading);
-
-    if (lane.finished) {
-      const done = document.createElement("div");
-      done.className = "lane-finished";
-      done.textContent = "Runde beendet";
-      laneEl.appendChild(done);
-    } else {
-      laneEl.appendChild(makeCard("an der wand", athleteLine(lane.atWall), "at-wall"));
-      laneEl.appendChild(makeCard("nächste·r", athleteLine(lane.onDeck), "on-deck"));
-
-      if (lane.queue.length) {
-        const list = document.createElement("ol");
-        list.className = "queue-list";
-        for (const athlete of lane.queue) {
-          const li = document.createElement("li");
-          li.textContent = athleteLine(athlete);
-          list.appendChild(li);
-        }
-        laneEl.appendChild(list);
-      }
+  for (const group of routeGroups) {
+    if (group.groupName) {
+      const groupHeading = document.createElement("div");
+      groupHeading.className = "group-heading";
+      groupHeading.textContent = group.groupName;
+      el.lanes.appendChild(groupHeading);
     }
-
-    el.lanes.appendChild(laneEl);
+    const grid = document.createElement("div");
+    grid.className = "lanes-grid";
+    for (const route of group.routes) {
+      grid.appendChild(buildLane(round, route, laneLabelPrefix));
+    }
+    el.lanes.appendChild(grid);
   }
 }
 

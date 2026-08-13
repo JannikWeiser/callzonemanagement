@@ -125,10 +125,18 @@ button.ghost {
   color: var(--muted);
 }
 
-.lanes {
+.lanes-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.group-heading {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
 }
 
 .lane {
@@ -197,5 +205,5 @@ button.ghost {
 .queue-list li { color: var(--text); }
 
 @media (max-width: 640px) {
-  .lanes { grid-template-columns: 1fr; }
+  .lanes-grid { grid-template-columns: 1fr; }
 }
