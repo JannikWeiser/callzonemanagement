@@ -4,8 +4,10 @@ Zeigt fuer einen Kletterwettkampf auf results.info, wer gerade an der Wand ist,
 wer als naechstes dran ist und wer danach kommt - pro Route/Bahn.
 
 Kann lokal (Laptop + WLAN) oder gehostet (feste `https://`-URL, kein WLAN
-noetig) laufen. Fuer Hosting siehe [HOSTING.md](HOSTING.md); der Rest dieser
-Datei beschreibt den lokalen Start.
+noetig) laufen. Fuer Hosting siehe [HOSTING.md](HOSTING.md), fuer die
+technische Doku inkl. Begruendungen fuer Design-Entscheidungen siehe
+[ARCHITECTURE.md](ARCHITECTURE.md). Der Rest dieser Datei beschreibt den
+lokalen Start.
 
 ## Start
 
@@ -43,12 +45,17 @@ Speed-Qualifikation. Speed-K.-o.-Runden (Duelle) werden nicht unterstuetzt.
 
 ## Architektur
 
-Ein kleiner lokaler Node/Express-Server dient das Frontend aus und reicht
-Anfragen an die results.info-API durch (inkl. des von results.info
+Kurzfassung: ein kleiner Node/Express-Server dient das Frontend aus und
+reicht Anfragen an die results.info-API durch (inkl. des von results.info
 verlangten `Referer`-Headers, den ein reiner Browser-Client nicht faelschen
-kann). Er cached Antworten kurz serverseitig (Event-Struktur 20s,
-Live-Ergebnisse 3s), damit mehrere Geraete gleichzeitig zuschauen koennen,
-ohne results.info zu ueberlasten. Dadurch laeuft alles lokal im Hallen-WLAN,
-ohne Hosting oder Internetzugang von aussen - alternativ laesst sich derselbe
-Server unveraendert auf einem Hosting-Dienst wie Render deployen, siehe
-[HOSTING.md](HOSTING.md).
+kann), mit kurzem serverseitigem Cache. Vollstaendige Doku inkl. API-Details,
+dem "an der Wand"-Algorithmus und Begruendungen fuer alle Design-
+Entscheidungen: [ARCHITECTURE.md](ARCHITECTURE.md). Hosting: [HOSTING.md](HOSTING.md).
+
+## Weitere Dokumente
+
+- [ANLEITUNG.md](ANLEITUNG.md) - nicht-technische Bedienungsanleitung zum Weitergeben.
+- [ARCHITECTURE.md](ARCHITECTURE.md) - technische Doku, API-Referenz, Begruendungen (Englisch).
+- [HOSTING.md](HOSTING.md) - Deployment-Pipeline GitHub -> Render, wo man was findet.
+- [CHANGELOG.md](CHANGELOG.md) - chronologisches Aenderungsprotokoll (Englisch).
+- [AGENTS.md](AGENTS.md) - Arbeitsregeln fuer zukuenftige KI-Coding-Sessions in diesem Repo (Englisch).
