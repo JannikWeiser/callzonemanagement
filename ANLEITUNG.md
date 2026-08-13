@@ -48,8 +48,10 @@ ist einfach immer erreichbar.
 1. **Event ID** eintragen. Die findet ihr in der Adresse auf
    [results.info](https://dav.results.info), z. B. bei
    `dav.results.info/event/2101/` ist die Event ID `2101`.
-2. **Server:** `dav.results.info` auswählen (die Test-Option braucht ihr
-   normalerweise nicht).
+2. **Server:** je nachdem, wo der Wettkampf ausgeschrieben ist –
+   `dav.results.info` für DAV-Wettkämpfe, `ifsc.results.info` für
+   IFSC-/Weltcup-Wettkämpfe (die Test-Option braucht ihr normalerweise
+   nicht).
 3. Auf **„Event laden"** klicken.
 4. Im Dropdown die passende **Altersklasse und Runde** auswählen
    (z. B. „LEAD U13 m — Qualifikation").
@@ -63,8 +65,8 @@ müsst nichts mehr tun.
 - **Oben, groß, orange:** Athlet·in, die/der gerade an der Wand ist
 - **Darunter:** Athlet·in, die/der als Nächstes dran ist
 - **Liste darunter:** die Athlet·innen, die danach folgen
-- Bei Disziplinen mit mehreren Wänden gleichzeitig (z. B. Boulder mit 4
-  Wänden) wird für jede Wand eine eigene Spalte angezeigt.
+- Bei Disziplinen mit mehreren Routen gleichzeitig (z. B. Boulder mit 4
+  Routen) wird für jede Route eine eigene Spalte angezeigt.
 
 Über **„← andere Runde"** oben links könnt ihr jederzeit zu einer anderen
 Altersklasse/Runde wechseln.

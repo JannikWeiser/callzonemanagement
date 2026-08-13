@@ -200,13 +200,13 @@ function athleteLine(athlete) {
 
 function renderBoard(round) {
   el.roundTitle.textContent = `${round.category_round_name ?? ""} — ${round.discipline ?? ""}`.trim();
-  const laneLabelPrefix = round.discipline === "Speed" ? "Bahn" : "Wand";
+  const laneLabelPrefix = round.discipline === "Speed" ? "Bahn" : "Route";
 
   el.lanes.innerHTML = "";
   if (!round.routes?.length) {
     const empty = document.createElement("div");
     empty.className = "lane-finished";
-    empty.textContent = "Keine Wand-Daten für diese Runde.";
+    empty.textContent = "Keine Routen-Daten für diese Runde.";
     el.lanes.appendChild(empty);
     return;
   }

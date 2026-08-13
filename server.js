@@ -6,6 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const HOSTS = {
   prod: "https://dav.results.info",
+  ifsc: "https://ifsc.results.info",
   stage: "https://dav-stage.results.info",
 };
 

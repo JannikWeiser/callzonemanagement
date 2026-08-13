@@ -1,7 +1,7 @@
 # Callzone Management
 
 Zeigt fuer einen Kletterwettkampf auf results.info, wer gerade an der Wand ist,
-wer als naechstes dran ist und wer danach kommt - pro Wand/Bahn.
+wer als naechstes dran ist und wer danach kommt - pro Route/Bahn.
 
 Kann lokal (Laptop + WLAN) oder gehostet (feste `https://`-URL, kein WLAN
 noetig) laufen. Fuer Hosting siehe [HOSTING.md](HOSTING.md); der Rest dieser
@@ -24,8 +24,8 @@ Der Server laeuft dann auf `http://localhost:4173`.
 ## Benutzung
 
 1. Event ID eingeben (aus der results.info-URL, z.B. `/event/2101/` -> `2101`)
-   und Server waehlen (normalerweise `dav.results.info`, `dav-stage.results.info`
-   nur zum Testen).
+   und Server waehlen: `dav.results.info` (DAV-Wettkaempfe), `ifsc.results.info`
+   (IFSC/Weltcup-Wettkaempfe) oder `dav-stage.results.info` nur zum Testen.
 2. Altersklasse + Runde (Qualifikation/Finale) aus dem Dropdown waehlen.
 3. "Anzeigen" - die Anzeige aktualisiert sich automatisch alle 3 Sekunden.
 
@@ -35,10 +35,10 @@ dem iPad) zeigt automatisch wieder dieselbe Runde.
 ## Wie "an der Wand" ermittelt wird
 
 results.info hat kein Feld fuer "klettert gerade". Die App leitet es ab: pro
-Wand/Bahn wird die Startreihenfolge mit dem Wertungsstatus jedes Athleten
+Route/Bahn wird die Startreihenfolge mit dem Wertungsstatus jedes Athleten
 abgeglichen. Der erste Athlet in der Startreihenfolge ohne bestaetigtes
 Ergebnis gilt als "an der Wand", der naechste als "naechste/r", der Rest als
-Warteliste. Das funktioniert fuer Lead, Boulder (mehrere Waende parallel) und
+Warteliste. Das funktioniert fuer Lead, Boulder (mehrere Routen parallel) und
 Speed-Qualifikation. Speed-K.-o.-Runden (Duelle) werden nicht unterstuetzt.
 
 ## Architektur
