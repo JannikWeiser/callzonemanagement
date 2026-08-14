@@ -29,7 +29,11 @@ Der Server laeuft dann auf `http://localhost:4173`.
    und Server waehlen: `dav.results.info` (DAV-Wettkaempfe), `ifsc.results.info`
    (IFSC/Weltcup-Wettkaempfe) oder `dav-stage.results.info` nur zum Testen.
 2. Altersklasse + Runde (Qualifikation/Finale) aus dem Dropdown waehlen.
-3. "Show" - die Anzeige aktualisiert sich automatisch alle 3 Sekunden.
+3. "Show" - die Anzeige aktualisiert sich automatisch alle 3 Sekunden. Statt
+   einer einzelnen Runde laesst sich auch eine **Sequenz** mehrerer Runden
+   zusammenstellen ("+ Add to sequence", Reihenfolge per Drag & Drop), die
+   automatisch weiterschaltet, sobald die jeweils aktuelle Runde fertig ist
+   - siehe [ANLEITUNG.md](ANLEITUNG.md) Abschnitt 5.
 
 Die Auswahl wird im Browser gemerkt, ein Reload (z.B. nach WLAN-Aussetzer auf
 dem iPad) zeigt automatisch wieder dieselbe Runde.
@@ -40,15 +44,18 @@ Details siehe [ANLEITUNG.md](ANLEITUNG.md).
 
 ## Wie "an der Wand" ermittelt wird
 
-results.info hat kein Feld fuer "klettert gerade". Die App leitet es ab: pro
-Route/Bahn wird die Startreihenfolge mit dem Wertungsstatus jedes Athleten
-abgeglichen. Der erste Athlet in der Startreihenfolge ohne bestaetigtes
-Ergebnis gilt als "an der Wand", der naechste als "naechste/r", der Rest als
-Warteliste. Das funktioniert fuer Lead, Boulder (mehrere Routen parallel,
-inkl. Boulder-Gruppen A/B mit Umschalter) und Speed-Qualifikation.
-Speed-K.-o.-Runden (Finale mit Turnierbaum) zeigen stattdessen die
-aktuellen und kommenden Duelle der laufenden Stufe - siehe
-[ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
+results.info hat kein Feld fuer "klettert gerade" - nur einen Wertungsstatus
+pro Athlet und Route: "pending" (noch nicht dran), "active" (Kampfrichter
+trägt gerade live ein, noch nicht bestätigt) oder "confirmed"/"locked"
+(fertig gewertet). Die App leitet daraus ab: der/die Athlet·in mit dem
+zuletzt eingetragenen "active"-Ergebnis gilt als "climbing" (an der Wand);
+falls niemand aktuell "active" ist, die Position direkt nach dem zuletzt
+bestätigten Ergebnis. Das funktioniert fuer Lead, Boulder (mehrere Routen
+parallel, inkl. Boulder-Gruppen A/B mit Umschalter) und Speed-Qualifikation.
+Speed-K.-o.-Runden (Finale mit Turnierbaum) zeigen dieselbe Logik pro Bahn
+(Lane A/B) statt pro Route - siehe
+[ARCHITECTURE.md §5.2](ARCHITECTURE.md#52-the-inference-findcurrentindex--computelane-in-publicappjs)
+und [§5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
 
 ## Architektur
 

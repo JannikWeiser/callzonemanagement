@@ -7,6 +7,51 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Added
+- **Sequence mode: an ordered, auto-advancing playlist of rounds.** Setup
+  screen gained "+ Add to sequence" (next to the existing single-round
+  dropdown, which is unchanged) and a drag-to-reorder list; "Show sequence"
+  watches the whole ordered list, automatically switching to the next round
+  as soon as the current one is fully finished (every lane/group/heat, not
+  just the visible group tab). A tablet loading a sequence where the first
+  few rounds are already done catches up through them immediately rather
+  than idling. Share link gains `&rounds=id1,id2,id3` (comma-separated);
+  the original single `&round=id` form still works unchanged. Requested
+  explicitly for Speed, where Quali Men → Quali Women → Final Men → Final
+  Women is a fixed known order. See
+  [ARCHITECTURE.md §6.10](ARCHITECTURE.md#610-sequence-mode-an-ordered-playlist-of-rounds-auto-advancing).
+
+### Changed
+- **"At the wall" card label renamed to "climbing"** per user preference
+  (shorter, reads better). Label text only — internal field/class names
+  unchanged. See
+  [ARCHITECTURE.md §6.9](ARCHITECTURE.md#69-climbing-instead-of-at-the-wall-as-the-card-label).
+
+### Fixed
+- **Corrected a wrong assumption from the previous fix below: ascent
+  status `"active"` does NOT mean "already climbed".** It means a judge is
+  live-scoring that attempt right now and hasn't confirmed it yet - during
+  Lead/Boulder live judging, an athlete can still be at the wall (or just
+  off it) while their result shows `"active"`. Treating `"active"` the same
+  as `"confirmed"` (as the previous fix did) meant the board could jump to
+  the next athlete before the current one was actually confirmed done.
+  Fixed by splitting the inference into two explicit rules instead of one
+  "not pending" check: **the latest `"active"` entry wins if one exists,
+  otherwise fall back to the position after the last `"confirmed"`/`"locked"`
+  entry.** This also fixes the equivalent issue in
+  `computeSpeedElimination()` for heats. Clarified with the user: no
+  fallback/timeout logic if an entry stays `"active"` forever without ever
+  being confirmed - always trust the latest `"active"` entry, by design.
+  See
+  [ARCHITECTURE.md §5.2](ARCHITECTURE.md#52-the-inference-findcurrentindex--computelane-in-publicappjs),
+  [§5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination),
+  and the corrected
+  [§4.4 Quirk C](ARCHITECTURE.md#44-response-shape--the-parts-that-matter-and-their-quirks).
+
+---
+
+## 2026-08-14 — `de004f5` Fix: 'an der Wand' haengt nicht mehr bei fehlenden Ergebnissen fest
+
 ### Fixed
 - **"At the wall" could get permanently stuck on an athlete/heat that never
   gets a result** (no-show, withdrawal, an unresolved review/appeal),
@@ -23,7 +68,7 @@ section number); this file is the *what happened, when* log.
   past heat 9). Both now use a "last confirmed + 1" frontier instead of
   "first pending"; identical result in the normal no-gaps case, correct in
   the gap case. See
-  [ARCHITECTURE.md §5.2](ARCHITECTURE.md#52-the-inference-computelane-in-publicappjs)
+  [ARCHITECTURE.md §5.2](ARCHITECTURE.md#52-the-inference-findcurrentindex--computelane-in-publicappjs)
   and [§5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
 - Speed elimination now shows a distinct "Waiting for the next stage…"
   message during the brief window after a stage finishes but before

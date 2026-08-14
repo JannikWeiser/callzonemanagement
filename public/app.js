@@ -7,7 +7,11 @@ const el = {
   setupError: document.getElementById("setupError"),
   categoryRow: document.getElementById("categoryRow"),
   roundSelect: document.getElementById("roundSelect"),
+  addToSequence: document.getElementById("addToSequence"),
   watchRound: document.getElementById("watchRound"),
+  sequenceRow: document.getElementById("sequenceRow"),
+  sequenceList: document.getElementById("sequenceList"),
+  watchSequence: document.getElementById("watchSequence"),
   setup: document.getElementById("setup"),
   board: document.getElementById("board"),
   backBtn: document.getElementById("backBtn"),
@@ -26,8 +30,20 @@ let lastRoundData = null;
 
 // Tracks what the currently-watched board is showing, so re-renders (poll
 // ticks, group-tab clicks) and the share link stay in sync without having
-// to thread these four values through every function call.
-let currentSelection = null; // { host, eventId, roundId, group }
+// to thread these values through every function call. `roundIds` is always
+// an array - a single round is just an array of length 1 - see "Sequence
+// mode" below.
+let currentSelection = null; // { host, eventId, roundIds, group }
+
+// Which round of the sequence is currently showing. Always restarts at 0
+// on load/reload rather than being persisted - pollCurrent() catches up
+// through any already-finished rounds immediately, so this converges on
+// the right one within a poll or two regardless.
+let sequenceIndex = 0;
+
+// Rounds queued up on the setup screen before "Show sequence" is clicked -
+// { roundId, label }[], purely local UI state.
+let sequenceBuilder = [];
 
 function saveSelection(sel) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sel));
@@ -42,21 +58,27 @@ function loadSelection() {
 
 // Lets each tablet be bookmarked straight to "its" category (and, for
 // Boulder rounds with groups, "its" group), so it doesn't need the setup
-// screen on every reload - see buildShareLink/startWatching.
+// screen on every reload - see buildShareLink/startWatching. `rounds`
+// (comma-separated) is the sequence-mode form; `round` (singular) is the
+// original single-round form, still read for backwards compatibility with
+// links generated before sequences existed.
 function readUrlSelection() {
   const params = new URLSearchParams(location.search);
   const host = params.get("host");
   const eventId = params.get("event");
-  const roundId = params.get("round");
   const group = params.get("group");
-  return host && eventId ? { host, eventId, roundId, group } : null;
+  const roundsParam = params.get("rounds");
+  const roundParam = params.get("round");
+  const roundIds = roundsParam ? roundsParam.split(",").filter(Boolean) : roundParam ? [roundParam] : null;
+  return host && eventId ? { host, eventId, roundIds, group } : null;
 }
 
-function buildShareLink({ host, eventId, roundId, group }) {
+function buildShareLink({ host, eventId, roundIds, group }) {
   const url = new URL(location.pathname, location.origin);
   url.searchParams.set("host", host);
   url.searchParams.set("event", eventId);
-  url.searchParams.set("round", roundId);
+  if (roundIds.length > 1) url.searchParams.set("rounds", roundIds.join(","));
+  else url.searchParams.set("round", roundIds[0]);
   if (group) url.searchParams.set("group", group);
   return url.toString();
 }
@@ -97,6 +119,11 @@ const STATUS_LABEL = {
 };
 
 function populateRounds(eventData, host, eventId) {
+  // A freshly-loaded event starts with an empty sequence - carrying over
+  // rounds from a previously-loaded event would silently mix events.
+  sequenceBuilder = [];
+  renderSequenceBuilder();
+
   const entries = [];
   for (const dcat of eventData.d_cats ?? []) {
     for (const round of dcat.category_rounds ?? []) {
@@ -123,20 +150,84 @@ function populateRounds(eventData, host, eventId) {
   el.watchRound.onclick = () => {
     const roundId = el.roundSelect.value;
     if (!roundId) return;
-    startWatching(host, eventId, roundId, null);
+    startWatching(host, eventId, [roundId], null);
+  };
+
+  el.addToSequence.onclick = () => {
+    const opt = el.roundSelect.selectedOptions[0];
+    if (!opt) return;
+    sequenceBuilder.push({ roundId: opt.value, label: opt.textContent });
+    renderSequenceBuilder();
+  };
+
+  el.watchSequence.onclick = () => {
+    if (!sequenceBuilder.length) return;
+    startWatching(
+      host,
+      eventId,
+      sequenceBuilder.map((s) => s.roundId),
+      null
+    );
   };
 }
 
-function startWatching(host, eventId, roundId, group) {
-  currentSelection = { host, eventId, roundId, group: group ?? null };
+// Drag-and-drop reordering of the in-progress sequence on the setup screen
+// (native HTML5 DnD - no library needed for a same-list reorder).
+function renderSequenceBuilder() {
+  el.sequenceRow.hidden = sequenceBuilder.length === 0;
+  el.sequenceList.innerHTML = "";
+
+  sequenceBuilder.forEach((item, index) => {
+    const li = document.createElement("li");
+    li.className = "sequence-item";
+    li.draggable = true;
+
+    const text = document.createElement("span");
+    text.textContent = item.label;
+    li.appendChild(text);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "sequence-remove";
+    removeBtn.textContent = "×";
+    removeBtn.setAttribute("aria-label", "Remove from sequence");
+    removeBtn.addEventListener("click", () => {
+      sequenceBuilder.splice(index, 1);
+      renderSequenceBuilder();
+    });
+    li.appendChild(removeBtn);
+
+    li.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", String(index));
+      e.dataTransfer.effectAllowed = "move";
+      li.classList.add("dragging");
+    });
+    li.addEventListener("dragend", () => li.classList.remove("dragging"));
+    li.addEventListener("dragover", (e) => e.preventDefault());
+    li.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const from = Number(e.dataTransfer.getData("text/plain"));
+      if (Number.isNaN(from) || from === index) return;
+      const [moved] = sequenceBuilder.splice(from, 1);
+      sequenceBuilder.splice(index, 0, moved);
+      renderSequenceBuilder();
+    });
+
+    el.sequenceList.appendChild(li);
+  });
+}
+
+function startWatching(host, eventId, roundIds, group) {
+  currentSelection = { host, eventId, roundIds, group: group ?? null };
+  sequenceIndex = 0;
   lastRoundData = null;
   saveSelection(currentSelection);
   el.shareLink.value = buildShareLink(currentSelection);
   el.setup.hidden = true;
   el.board.hidden = false;
   clearInterval(pollTimer);
-  pollRound(host, roundId);
-  pollTimer = setInterval(() => pollRound(host, roundId), 3000);
+  pollCurrent();
+  pollTimer = setInterval(pollCurrent, 3000);
 }
 
 el.backBtn.addEventListener("click", () => {
@@ -230,27 +321,81 @@ async function pollRound(host, roundId) {
     renderBoard(data);
     el.statusLine.textContent = `Updated ${new Date().toLocaleTimeString("en-GB")}`;
     el.statusLine.classList.remove("stale");
+    return true;
   } catch (err) {
     el.statusLine.textContent = `Connection lost: ${err.message}`;
     el.statusLine.classList.add("stale");
+    return false;
   }
 }
 
-// The API never says who is climbing "right now". It only tells us, per
-// route, which athletes already have a confirmed ascent and which are
-// still "pending". We infer the callzone order from that - but NOT by
-// taking the first still-pending athlete in start order: real events
-// sometimes never record a result for someone (no-show, withdrawal, a
-// review that never gets finalized), and results can get entered out of
-// strict start order (e.g. a judge reviewing footage). Either one leaves
-// an early position permanently "pending" while later positions already
-// have results - if we stopped at the first pending athlete, the board
-// would get stuck forever showing that one gap as "at the wall" long
-// after the round has actually moved on. Instead we take the position
-// right after the LAST confirmed athlete in start order ("the frontier")
-// - in the common case (no gaps) this is identical to "first pending",
-// but it correctly skips past permanently-unresolved gaps instead of
-// getting stuck on them.
+// Sequence mode: poll the round at sequenceIndex, and if it's fully
+// finished and there's a next one queued up, jump straight to it (no
+// artificial delay) rather than waiting for the next 3s tick - this
+// catches up through any already-finished rounds in one go on load,
+// e.g. a tablet reloaded mid-event lands on the actually-current class
+// within a single call instead of idling through each past one.
+async function pollCurrent() {
+  const { host, roundIds } = currentSelection;
+  for (;;) {
+    const roundId = roundIds[sequenceIndex];
+    const ok = await pollRound(host, roundId);
+    if (!ok) return;
+    const hasNext = sequenceIndex < roundIds.length - 1;
+    if (hasNext && isRoundFullyFinished(lastRoundData)) {
+      sequenceIndex++;
+      continue;
+    }
+    return;
+  }
+}
+
+// Whole-round completion (every lane, in every group, not just the one
+// currently shown by the group tabs) - used to decide whether sequence
+// mode should advance. Deliberately independent of which group tab a
+// tablet happens to have selected: a Boulder round with Group A/B isn't
+// "done" for advancement purposes just because the tab someone's looking
+// at finished first.
+function isRoundFullyFinished(round) {
+  if (!round) return false;
+  if (round.speed_elimination_stages?.length) return computeSpeedElimination(round).finished;
+  const routeGroups = collectRouteGroups(round);
+  if (!routeGroups.length) return false;
+  return routeGroups.every((g) => g.routes.every((r) => computeLane(round, r).finished));
+}
+
+// An ascent status counts as fully locked in once it's one of these -
+// "active" is deliberately NOT here, see findCurrentIndex() below.
+const DONE_STATUSES = new Set(["confirmed", "locked"]);
+
+// The API never says who is climbing "right now" as a single flag - but
+// combined, two signals tell us: an ascent status of "active" means a
+// judge is live-scoring that attempt right now (entered, not yet
+// confirmed), while "confirmed"/"locked" means it's fully done. Given
+// those, who's at the wall is:
+//   - if anyone has a live ("active") entry, the LATEST one in start
+//     order - a judge can start live-scoring the next athlete before
+//     confirming the previous one, so among several simultaneously-active
+//     entries the later one in order is the one actually on the wall.
+//   - otherwise, the position right after the last CONFIRMED entry.
+// This also has to tolerate results never arriving for someone at all
+// (no-show, withdrawal, a review that never gets finalized) or being
+// entered out of strict start order (e.g. a judge reviewing footage) -
+// both leave an early position permanently without a confirmed result
+// while later positions already have one. "First not-done" would get
+// stuck forever on that one gap; "last confirmed + 1" correctly skips
+// past it. See ARCHITECTURE.md §5.2 for the full reasoning and a real
+// reproduction case.
+function findCurrentIndex(items, isActive, isConfirmed) {
+  let lastActive = -1;
+  let lastConfirmed = -1;
+  items.forEach((item, i) => {
+    if (isActive(item)) lastActive = i;
+    if (isConfirmed(item)) lastConfirmed = i;
+  });
+  return lastActive !== -1 ? lastActive : lastConfirmed + 1;
+}
+
 function computeLane(round, route) {
   const statusByAthlete = new Map();
   for (const entry of round.ranking ?? []) {
@@ -282,11 +427,11 @@ function computeLane(round, route) {
     };
   }
 
-  const isDone = (a) => (statusByAthlete.get(a.athlete_id) ?? "pending") !== "pending";
-  let currentIndex = 0;
-  for (let i = 0; i < ordered.length; i++) {
-    if (isDone(ordered[i])) currentIndex = i + 1;
-  }
+  const currentIndex = findCurrentIndex(
+    ordered,
+    (a) => statusByAthlete.get(a.athlete_id) === "active",
+    (a) => DONE_STATUSES.has(statusByAthlete.get(a.athlete_id))
+  );
 
   return {
     routeName: route.name,
@@ -332,7 +477,7 @@ function buildLane(round, route, laneLabelPrefix) {
     done.textContent = "Round finished";
     laneEl.appendChild(done);
   } else {
-    laneEl.appendChild(makeCard("at the wall", athleteLine(lane.atWall), "at-wall"));
+    laneEl.appendChild(makeCard("climbing", athleteLine(lane.atWall), "at-wall"));
     laneEl.appendChild(makeCard("next", athleteLine(lane.onDeck), "on-deck"));
 
     if (lane.queue.length) {
@@ -379,9 +524,17 @@ function makeCard(label, text, variant) {
 function heatIsReady(heat) {
   return (heat.athletes?.length ?? 0) === 2;
 }
-function heatIsDone(heat) {
-  if (!heatIsReady(heat)) return false;
-  return heat.athletes.every((a) => (a.ascents?.[0]?.status ?? "pending") !== "pending");
+function heatAscentStatuses(heat) {
+  return heat.athletes.map((a) => a.ascents?.[0]?.status);
+}
+// A heat is "active" if either lane is currently being live-scored (mirrors
+// the per-athlete "active" check in computeLane/findCurrentIndex); it's
+// fully "confirmed" only once BOTH lanes are locked in.
+function heatIsActive(heat) {
+  return heatIsReady(heat) && heatAscentStatuses(heat).some((s) => s === "active");
+}
+function heatIsConfirmed(heat) {
+  return heatIsReady(heat) && heatAscentStatuses(heat).every((s) => DONE_STATUSES.has(s));
 }
 
 function computeSpeedElimination(round) {
@@ -389,16 +542,13 @@ function computeSpeedElimination(round) {
     stage.heats.map((heat) => ({ ...heat, stageName: stage.stage_name }))
   );
 
-  // Mirrors computeLane()'s frontier logic: advance to the heat right
-  // after the last CONFIRMED heat, rather than stopping at the first
-  // still-pending one. A heat whose result never finalizes (a false start
-  // under review, a stuck appeal) would otherwise permanently block the
-  // board on an old stage even after results.info has already populated
-  // and moved on to the next one.
-  let currentIndex = 0;
-  for (let i = 0; i < heats.length; i++) {
-    if (heatIsReady(heats[i]) && heatIsDone(heats[i])) currentIndex = i + 1;
-  }
+  // Same findCurrentIndex() rule as qualification routes, applied at heat
+  // granularity: the latest live ("active") heat wins, otherwise it's the
+  // heat right after the last fully-confirmed one. A heat whose result
+  // never finalizes (a false start under review, a stuck appeal) would
+  // otherwise permanently block the board on an old stage even after
+  // results.info has already populated and moved on to the next one.
+  const currentIndex = findCurrentIndex(heats, heatIsActive, heatIsConfirmed);
 
   if (currentIndex >= heats.length) {
     return { finished: heats.length > 0, stageName: null, heats: [] };
@@ -445,7 +595,7 @@ function buildSpeedLane(laneName, heats) {
   heading.textContent = `Lane ${laneName}`;
   laneEl.appendChild(heading);
 
-  laneEl.appendChild(makeCard("at the wall", heatAthleteLine(athletes[0]), "at-wall"));
+  laneEl.appendChild(makeCard("climbing", heatAthleteLine(athletes[0]), "at-wall"));
   laneEl.appendChild(makeCard("next", heatAthleteLine(athletes[1]), "on-deck"));
 
   const queue = athletes.slice(2, 2 + 6);
@@ -568,15 +718,16 @@ const initial = readUrlSelection() ?? loadSelection();
 if (initial?.eventId && initial?.host) {
   el.eventId.value = initial.eventId;
   el.host.value = initial.host;
-  if (initial.roundId) {
+  if (initial.roundIds?.length) {
     // Jump straight to the board so a bookmarked tablet never has to see
     // the setup screen; loadEvent() below fills the dropdown in the
     // background for when "switch round" is used later.
-    startWatching(initial.host, initial.eventId, initial.roundId, initial.group ?? null);
+    startWatching(initial.host, initial.eventId, initial.roundIds, initial.group ?? null);
   }
   loadEvent().then(() => {
-    if (initial.roundId && [...el.roundSelect.options].some((o) => o.value === initial.roundId)) {
-      el.roundSelect.value = initial.roundId;
+    const firstRoundId = initial.roundIds?.[0];
+    if (firstRoundId && [...el.roundSelect.options].some((o) => o.value === firstRoundId)) {
+      el.roundSelect.value = firstRoundId;
     }
   });
 }

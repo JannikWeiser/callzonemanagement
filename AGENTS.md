@@ -16,6 +16,12 @@ previously-reported problems:
 - `round.status === "pending"` short-circuit in `computeLane()` — removing
   it silently reintroduces the "athlete #1 shown as at the wall before the
   round starts" bug.
+- `findCurrentIndex()`'s two-rule split (latest `"active"` entry wins,
+  else last-`"confirmed"`+1) — do NOT simplify this to a single "status is
+  not pending" check. `"active"` specifically means "a judge is
+  live-scoring this right now, not yet confirmed" and must NOT be treated
+  as done; conflating the two was a real shipped bug (see
+  `CHANGELOG.md`, the entry that corrects the previous one).
 - `collectRouteGroups()` handling both `round.routes` and
   `round.starting_groups[].routes` — Boulder-with-groups rounds have no
   `routes` field at all; assuming it always exists breaks those rounds.
@@ -63,7 +69,7 @@ athlete data — no need to hunt for a live competition to test against.
 | `stage` | 1594 | `13740` (SPEED Damen+ Finale) | Speed elimination round with `status: "pending"` and no bracket generated yet — baseline "no bracket data" case |
 | `prod` | `2101` "KidsCup Hessen Bouldern + Lead Gießen" | — | Real `dav.results.info` event structure, all rounds pending as of investigation |
 | `ifsc` | `1518` "World Climbing Asia Youth Series Quannan 2026" | — | Real `ifsc.results.info` event structure confirmation |
-| `stage` | 1595 "Anleitung CallzoneManagement" | `13750` (LEAD Damen+ Quali) | **The "at the wall" frontier bug, reproduced.** Route 1 has confirmed results at positions 4,5,6,7,9 but permanently-pending gaps at 1,2,3,8 (simulated no-shows) — the correct "at the wall" is position 10 (STEIN), not position 1. Built by the user specifically to demonstrate this bug; keep this round's data shape in mind (or a fresh equivalent) whenever touching `computeLane()`'s frontier logic. |
+| `stage` | 1595 "Anleitung CallzoneManagement" | `13750` (LEAD Damen+ Quali) | **Two bugs reproduced here, at different times.** (1) Route with `"active"`/gap results at positions 4,5,6,7,9 but permanently-pending gaps at 1,2,3,8 (simulated no-shows) — correct "at the wall" is the position after the last confirmed one, not the first pending one. (2) Live-judging: Route 1 stayed `"active"` (never `"confirmed"`) for several athletes while Route 2's entries progressed to `"confirmed"` - proved `"active"` ≠ done, see Quirk C. This is the user's ongoing edge-case test round for this exact algorithm; keep checking it (or a fresh equivalent) whenever touching `findCurrentIndex()`/`computeLane()`. |
 | `stage` | 1595 | `13782` (SPEED Damen+ Finale) | **The stage-advancement bug, reproduced.** `status: "under_appeal"`; stage "1/8" fully confirmed, stage "1/4" heat 9 already confirmed but heats 10-12 still pending — correct behavior is to show heat 10 as current, not get stuck on heat 9 or on stage "1/8". Also the source of the `"active"` ascent-status and `"under_appeal"` round-status values documented in Quirks C/D. |
 | `stage` | 1595 | `13769`/`13770` (BOULDER Herren+/Damen+ Quali) | Active status, `starting_groups`, but zero results yet as of investigation — baseline "round started, nobody's climbed a given route yet" case. |
 | `stage` | 1595 | `13785`/`13786` (BOULDER Herren+/Damen+ Finale) | `format_identifier: "boulder_finals_one_by_one"` — a Boulder finals format not seen elsewhere, but same `routes[]` shape as qualification, so no special-casing needed. `status: "pending"`, no startlist yet as of investigation. |

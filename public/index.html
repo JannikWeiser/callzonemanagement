@@ -32,7 +32,14 @@
       Category / round
       <select id="roundSelect"></select>
     </label>
+    <button id="addToSequence" class="ghost">+ Add to sequence</button>
     <button id="watchRound">Show</button>
+  </div>
+
+  <div id="sequenceRow" class="sequence-row" hidden>
+    <div class="sequence-label">Sequence (drag to reorder) — plays through in order, auto-advancing once each round finishes:</div>
+    <ol id="sequenceList" class="sequence-list"></ol>
+    <button id="watchSequence">Show sequence</button>
   </div>
 </header>
 

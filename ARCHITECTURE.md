@@ -159,20 +159,26 @@ present with all-pending ascents — just absent). `computeLane()` treats
 "absent from ranking" the same as an explicit `"pending"` ascent status via
 `?? "pending"` — this is required, not optional.
 
-**Quirk C — `ascents[].status` values seen:** `"pending"` (not yet judged),
-`"confirmed"` (judged, locked in), `"locked"` (seen on Speed), `"active"`
-(seen in a judge/route-setter review-mode workflow — same practical meaning
-as confirmed). Treat **anything that is not literally `"pending"`** as
-"already climbed" — don't match against `"confirmed"` specifically, the set
-of non-pending values is not closed. There is no `"in_progress"` /
-"currently climbing" status — see section 5.
+**Quirk C — `ascents[].status` values seen, and what they actually mean:**
+`"pending"` (not judged, not started), `"active"` (**a judge is live-scoring
+this attempt right now — entered, but not yet confirmed**), `"confirmed"`
+and `"locked"` (fully done, locked in). **Correction from an earlier
+version of this doc:** `"active"` was previously assumed to mean the same
+as `"confirmed"` (i.e. "already climbed"). That's wrong for the live-judging
+workflow described by the user: a referee enters a result live while the
+athlete is still on the wall (or just off it), which sets status `"active"`,
+and only the explicit "Confirm" action moves it to `"confirmed"`. Until
+confirmed, the athlete should still be treated as being at the wall — see
+§5.2 for the corrected inference logic (`findCurrentIndex()`). There is no
+separate `"in_progress"` status distinct from `"active"`.
 
 **Quirk C.1 — results can be entered out of start-order, or never at all.**
 An athlete's ascent can permanently stay `"pending"` (no-show, withdrawal,
 an unresolved review) while athletes *after* them in start order already
-have confirmed results — judge/review workflows don't guarantee sequential
-entry. See §5.2 for why the "at the wall" inference is based on the
-*highest confirmed position*, not the *first pending* one.
+have a confirmed result — judge/review workflows don't guarantee sequential
+entry. See §5.2 for why the "at the wall" inference falls back to the
+position *after the highest confirmed one*, not the *first not-pending*
+one, when nobody currently has a live `"active"` entry.
 
 **Quirk D — `round.status` values seen:** `"pending"`, `"active"`,
 `"finished"`, and `"under_appeal"` (a round can apparently sit in this
@@ -232,47 +238,65 @@ reads the bracket. See §5.6.
 
 ### 5.1 The problem
 
-results.info has no "currently climbing" field. All it exposes is, per
-athlete per route: has this been judged yet (`pending`) or not
-(`confirmed`/`locked`), and that athlete's fixed start position on that
-route.
+results.info has no single "currently climbing" flag. What it exposes, per
+athlete per route, is an ascent status - `"pending"` (not judged),
+`"active"` (a judge is live-scoring this attempt right now, not yet
+confirmed), or `"confirmed"`/`"locked"` (fully done) - and that athlete's
+fixed start position on the route (Quirk C).
 
-### 5.2 The inference (`computeLane()` in `public/app.js`)
+### 5.2 The inference (`findCurrentIndex()` / `computeLane()` in `public/app.js`)
 
-For one route (one physical wall/lane), walk the start order:
+For one route (one physical wall/lane), walk the start order and apply two
+rules, in this priority:
 
-1. Build `ordered`: all athletes with a start position on this specific
-   route, sorted by `position`.
-2. Find `currentIndex`: **the position right after the *last* athlete with
-   a confirmed ascent** (anyone entirely absent from `ranking` — Quirk B —
-   counts as not-confirmed, same as an explicit `"pending"` status).
-   Concretely: walk `ordered` front to back, remembering the index of the
-   most recent confirmed athlete seen so far; `currentIndex` is one past
-   that. Everyone before `currentIndex` is treated as already climbed,
-   everyone at or after it is not.
-3. `atWall = ordered[currentIndex]`, `onDeck = ordered[currentIndex + 1]`,
-   `queue = ordered.slice(currentIndex + 2, currentIndex + 8)` (next 6).
-4. If `currentIndex >= ordered.length` (the last position in the route was
-   itself confirmed), the whole route is done → `finished: true`, rendered
-   as "Round finished" instead of the three cards.
+1. **If anyone has a live (`"active"`) entry, the LATEST one in start order
+   is at the wall.** A judge can start live-scoring the next athlete before
+   confirming the previous one's result, so if two athletes are
+   simultaneously `"active"`, the later one in start order is the one
+   actually on the wall right now.
+2. **Otherwise, it's the position right after the last `"confirmed"`/`"locked"`
+   entry** ("last confirmed + 1"). Anyone entirely absent from `ranking`
+   (Quirk B) counts as not-confirmed here, same as an explicit `"pending"`
+   status.
 
-**Why "last confirmed + 1" and not "first pending"** (this was a real bug,
-fixed after a user report with reproduction data — see `CHANGELOG.md`):
-results.info doesn't guarantee sequential result entry. An athlete can stay
-`"pending"` forever — a no-show, a withdrawal, a review that never gets
-finalized (Quirk C.1) — while athletes *after* them in start order already
-have confirmed results, e.g. positions 4-7 and 9 confirmed while 1-3 and 8
-stay pending forever. "First pending" would get permanently stuck showing
-position 1 as "at the wall" long after the round had actually reached
-position 9. "Last confirmed + 1" instead tracks the highest point of actual
-progress and correctly reports position 10 as next up, silently leaving the
-permanently-pending gaps (1-3, 8) out of the display entirely — which is
-the right behavior for a callzone tool: its job is to say who to send to
-the wall next, not to chase unresolved administrative gaps.
+Concretely (`findCurrentIndex(items, isActive, isConfirmed)`): walk `ordered`
+front to back once, remembering the index of the most recent item matching
+each rule; `currentIndex` is the last-active index if one exists, otherwise
+one past the last-confirmed index. Then:
 
-In the common case (no gaps, sequential entry) "last confirmed + 1" and
-"first pending" produce identical results — this is a strict generalization,
-not a behavior change for well-behaved data.
+- `atWall = ordered[currentIndex]`, `onDeck = ordered[currentIndex + 1]`,
+  `queue = ordered.slice(currentIndex + 2, currentIndex + 8)` (next 6).
+- If `currentIndex >= ordered.length`, the whole route is done →
+  `finished: true`, rendered as "Round finished" instead of the three cards.
+
+**Why rule 2 is "last confirmed + 1" and not "first not-pending"** (a real
+bug, fixed after a user report with reproduction data — see
+`CHANGELOG.md`): results.info doesn't guarantee sequential result entry. An
+athlete can stay `"pending"` forever - a no-show, a withdrawal, a review
+that never gets finalized (Quirk C.1) - while athletes *after* them in
+start order already have a confirmed result, e.g. positions 4-7 and 9
+confirmed while 1-3 and 8 stay pending forever. "First not-pending" would
+get permanently stuck showing position 1 as at the wall long after the
+round had actually reached position 9. "Last confirmed + 1" instead tracks
+the highest point of actual progress and correctly reports position 10 as
+next up, silently leaving the permanently-pending gaps (1-3, 8) out of the
+display entirely - the right behavior for a callzone tool, whose job is to
+say who to send to the wall next, not to chase unresolved administrative
+gaps.
+
+**Why rule 1 exists at all, and takes priority over rule 2:** without it, an
+athlete currently being live-scored (`"active"`, not yet `"confirmed"`)
+would be indistinguishable from "hasn't climbed yet" under rule 2 alone,
+and rule 2 would report the position *before* them as still at the wall -
+one step behind reality. Checking for the latest `"active"` entry first
+closes that gap directly from the live-judging signal, without waiting for
+a confirm action that might lag behind the actual climb by anywhere from
+seconds to minutes.
+
+In the fully-normal case (no gaps, no live in-progress entries at poll
+time) both rules reduce to the same thing as the original naive "first
+pending" approach - this is a strict generalization, not a behavior change
+for well-behaved data.
 
 ### 5.3 Why `round.status` is checked before the ascent-status walk
 
@@ -321,19 +345,21 @@ because Quirk F's data shape has no linear start order to walk.
 2. A heat is **ready** once it has 2 athletes (`athletes.length === 2`) —
    before that, results.info hasn't determined the pairing yet (still
    waiting on the previous stage).
-3. A heat is **done** once every athlete in it has a non-`"pending"` ascent
-   status (mirrors the qualification logic's `"pending"` check, just
-   applied per-heat instead of per-athlete-position).
-4. Find `currentIndex`: the position right after the *last* ready-and-done
-   heat in the flattened list — the same "last confirmed + 1" frontier used
-   in 5.2, applied at heat granularity. **Not** "the first ready-and-not-done
-   heat": a heat can stay pending indefinitely (an unresolved false-start
-   review, an appeal) while later heats — even in the next stage — are
-   already confirmed, which would otherwise permanently block the board on
-   an old stage. Observed live on a real `under_appeal` round: stage "1/8"
-   fully confirmed, stage "1/4" heat 9 already confirmed, heats 10-12 still
-   pending — "first not-done" would have stopped at heat 9 forever; the
-   frontier approach correctly lands on heat 10.
+3. A heat is **active** if either lane's ascent status is `"active"` (a
+   judge is live-scoring one of the two racers right now); it's **confirmed**
+   only once *both* lanes are `"confirmed"`/`"locked"` — see Quirk C and
+   §5.2's rule 1/rule 2 split, applied here per-heat via the same
+   `findCurrentIndex()` helper (not a separate implementation).
+4. Find `currentIndex` via `findCurrentIndex(heats, heatIsActive, heatIsConfirmed)`:
+   the latest **active** heat if any exists, otherwise the position right
+   after the last **confirmed** heat. **Not** "the first ready-and-not-done
+   heat": a heat can stay unconfirmed indefinitely (an unresolved
+   false-start review, an appeal) while later heats — even in the next
+   stage — are already confirmed, which would otherwise permanently block
+   the board on an old stage. Observed live on a real `under_appeal` round:
+   stage "1/8" fully confirmed, stage "1/4" heat 9 already confirmed, heats
+   10-12 still pending — "first not-done" would have stopped at heat 9
+   forever; the frontier approach correctly lands on heat 10.
 5. If `currentIndex` is past the end of the flattened list, the whole
    bracket is done → `finished: true`, rendered as "Round finished".
    If `heats[currentIndex]` exists but isn't **ready** yet, results.info
@@ -536,7 +562,66 @@ see `AGENTS.md` §6 for the full convention — because that audience (the
 person running the app) is different from the audience of the on-screen UI
 (international athletes/officials at the venue).
 
-### 6.9 Hosting: Render (Blueprint) over alternatives
+### 6.9 "Climbing" instead of "at the wall" as the card label
+
+The at-the-wall card's label text was changed from "at the wall" to
+"climbing" per user preference (shorter, reads better at a glance). Purely
+a label string change (`makeCard("climbing", …)` in `buildLane()` and
+`buildSpeedLane()`) — the CSS class stays `card--at-wall` and the internal
+field name stays `atWall` throughout the code, since renaming those would
+be pure churn with no user-visible benefit. Prose in this document and code
+comments may still say "at the wall" when describing the *concept* rather
+than quoting the UI label.
+
+### 6.10 Sequence mode: an ordered playlist of rounds, auto-advancing
+
+**Problem this solves:** a tablet at the Speed wall, say, needs to show
+Qualification Men, then Qualification Women, then Final Men, then Final
+Women, in order, over the course of an event — without someone manually
+clicking "switch round" every time one class wraps up.
+
+**Decision:** the setup screen keeps its existing single-round dropdown +
+"Show" flow untouched, and adds a **separate, additive** mechanism next to
+it: "+ Add to sequence" appends the currently-selected round to a
+reorderable list (native HTML5 drag-and-drop, no library), and "Show
+sequence" starts watching the whole ordered list. Internally,
+`currentSelection.roundIds` is *always* an array — a single "Show" click is
+just an array of length 1 — so there's exactly one code path for both
+cases, not two parallel ones.
+
+**Auto-advance mechanism (`pollCurrent()`):** each poll checks
+`isRoundFullyFinished()` on the round currently being shown (every
+lane/group/heat done, not just the one visible group tab happens to be
+on). If finished and the sequence has a next entry, it fetches and renders
+that next round **immediately**, in a loop, rather than waiting for the
+next 3s timer tick — so a tablet that reloads mid-event (or loads a
+sequence where the first few rounds already finished before it was even
+opened) catches up through all of them in one go and lands on the actually
+current class right away, instead of idling ~3s per already-finished round.
+Trade-off accepted: a round that finishes *while being actively watched*
+switches away immediately too, with no pause to let viewers see the final
+state — simpler to implement correctly than a "was this round watched
+before it finished vs. already-finished on load" distinction, and revisit
+only if the abruptness turns out to matter in practice.
+
+**Why `sequenceIndex` isn't persisted, only `roundIds` is:** the share
+link/`localStorage` capture the *configured sequence* (`?rounds=id1,id2,id3`,
+back-compat `?round=id` for a single round — see `readUrlSelection()`), not
+which entry is currently showing. On every load, `sequenceIndex` restarts
+at 0 and the catch-up behavior above immediately fast-forwards to the right
+entry. This avoids a second piece of persisted state that could drift out
+of sync with reality (e.g. a round finishing between sessions) — the
+catch-up logic is the single source of truth for "where are we in the
+sequence" and re-derives it from live data every time, rather than trusting
+a stored index that could be stale.
+
+**Why round-level finished-ness ignores the selected group tab:** a Boulder
+round with Group A/B (6.6) isn't "done" for sequence-advancement purposes
+just because whichever group tab a given tablet happens to have selected
+finished first — `isRoundFullyFinished()` deliberately checks every group's
+every route via `collectRouteGroups()`, independent of `currentSelection.group`.
+
+### 6.11 Hosting: Render (Blueprint) over alternatives
 
 **Why not GitHub Pages alone:** static-only, cannot run the proxy (6.1) —
 a hard requirement, not a preference.

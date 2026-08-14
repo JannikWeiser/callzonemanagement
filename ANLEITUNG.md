@@ -67,7 +67,7 @@ müsst nichts mehr tun.
 
 ## 4. Anzeige lesen
 
-- **Oben, groß, orange ("AT THE WALL"):** Athlet·in, die/der gerade an der
+- **Oben, groß, orange ("CLIMBING"):** Athlet·in, die/der gerade an der
   Wand ist
 - **Darunter ("NEXT"):** Athlet·in, die/der als Nächstes dran ist
 - **Liste darunter:** die Athlet·innen, die danach folgen
@@ -90,15 +90,39 @@ also z. B. ein Tablet fest auf „Group A" verlinken und ein zweites auf
 ### Speed-Finale (K.-o.-System)
 
 Bei Speed-Finalrunden (K.-o.-Baum mit 1/8-Finale, Viertelfinale,
-Halbfinale, kleinem und großem Finale) zeigt die App statt einzelner
-Athlet·innen **Duelle**: „AT THE WALL" zeigt die zwei Athlet·innen des
-aktuellen Laufs (Bahn A gegen Bahn B), „NEXT" den nächsten Lauf, und
-darunter alle weiteren noch offenen Läufe der aktuellen Runde (z. B. alle
-verbleibenden Viertelfinal-Duelle) in der Reihenfolge, wie sie dran sind.
-Sobald eine Runde fertig ausgewertet ist, springt die Anzeige automatisch
-zur nächsten Runde (z. B. von Viertelfinale zu Halbfinale).
+Halbfinale, kleinem und großem Finale) zeigt die App eine eigene Spalte pro
+Bahn (Lane A / Lane B) – genau wie bei der Quali: „CLIMBING" zeigt, wer
+gerade auf dieser Bahn dran ist, „NEXT" die nächste Person auf derselben
+Bahn, und darunter alle weiteren noch offenen Läufe der aktuellen Stufe
+(z. B. alle verbleibenden Viertelfinal-Duelle) in der Reihenfolge, wie sie
+dran sind. Sobald eine Stufe fertig ausgewertet ist, springt die Anzeige
+automatisch zur nächsten (z. B. von Viertelfinale zu Halbfinale).
 
-## 5. Mehrere Tablets gleichzeitig (je eigene Startklasse)
+## 5. Mehrere Klassen nacheinander (Sequenz, z. B. für Speed)
+
+Statt nur einer einzelnen Runde könnt ihr eine **Reihenfolge von Runden**
+festlegen, die automatisch nacheinander angezeigt werden – z. B. „Quali
+Speed Herren" → „Quali Speed Damen" → „Finale Speed Herren" → „Finale Speed
+Damen". Sobald eine Runde komplett fertig ausgewertet ist, springt die
+Anzeige von selbst zur nächsten.
+
+1. Wie in Schritt 3 eine Runde im Dropdown auswählen, aber statt „Show"
+   auf **„+ Add to sequence"** klicken. Die Runde erscheint in einer Liste
+   darunter.
+2. Nächste Runde im Dropdown wählen, wieder „+ Add to sequence" – so lange
+   wiederholen, bis alle gewünschten Runden in der Liste stehen.
+3. Reihenfolge per **Drag & Drop** anpassen (Eintrag anfassen und
+   verschieben). Mit dem „×" lässt sich ein Eintrag wieder entfernen.
+4. Auf **„Show sequence"** klicken.
+
+Die Anzeige startet dann automatisch bei der ersten noch nicht
+abgeschlossenen Runde der Liste (bereits fertige Runden werden beim Start
+übersprungen) und schaltet danach von selbst weiter, sobald jeweils die
+aktuelle Runde fertig ist. Der Tablet-Link merkt sich die ganze Sequenz,
+lässt sich also genauso als Lesezeichen speichern wie bei einer einzelnen
+Runde (Schritt 6).
+
+## 6. Mehrere Tablets gleichzeitig (je eigene Startklasse)
 
 Jedes Gerät kann unabhängig eine eigene Altersklasse/Runde anzeigen – z. B.
 Tablet 1 zeigt Boulder U11, Tablet 2 zeigt Lead U15, gleichzeitig, ohne dass
@@ -118,7 +142,7 @@ Startklasse zeigt (statt der Auswahl-Maske):
 Jedes Tablet bekommt so seinen eigenen Link mit seiner eigenen Runde (und,
 bei Boulder, seiner eigenen Gruppe).
 
-## 6. Vollbild & Bildschirm wach halten
+## 7. Vollbild & Bildschirm wach halten
 
 Oben auf dem Board gibt es den Button **„Fullscreen + Always On"**. Ein
 Klick macht die Seite gleichzeitig vollbildig (keine Safari-Leiste mehr)
@@ -130,7 +154,7 @@ Falls das auf einem älteren iPad nicht funktioniert: das "Wach halten"
 braucht iPadOS 16.4 oder neuer. Vollbild funktioniert unabhängig davon,
 sollte aber vor dem Wettkampf einmal kurz getestet werden.
 
-## 7. Programm beenden
+## 8. Programm beenden
 
 Im Terminal-Fenster `Strg + C` drücken (oder das Fenster schließen).
 

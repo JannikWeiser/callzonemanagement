@@ -49,6 +49,51 @@ h1 {
 
 .setup-row label.grow { flex: 1; min-width: 260px; }
 
+.sequence-row {
+  margin: 0 0 1.5rem;
+  max-width: 560px;
+}
+
+.sequence-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+}
+
+.sequence-list {
+  list-style: decimal;
+  padding-left: 1.4rem;
+  margin: 0 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sequence-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  background: var(--panel);
+  border: 1px solid #333846;
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  cursor: grab;
+}
+.sequence-item.dragging { opacity: 0.4; }
+.sequence-item span { overflow-wrap: anywhere; }
+
+.sequence-remove {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+  cursor: pointer;
+}
+.sequence-remove:hover { color: var(--danger); }
+
 input, select, button {
   font-size: 1rem;
   padding: 0.65rem 0.8rem;
