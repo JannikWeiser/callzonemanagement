@@ -7,14 +7,45 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Fixed
+- **"At the wall" could get permanently stuck on an athlete/heat that never
+  gets a result** (no-show, withdrawal, an unresolved review/appeal),
+  showing them forever even after everyone later in start order already
+  had confirmed results. Reported with reproduction data: a Lead route
+  where positions 4-7 and 9 were confirmed but 1-3 and 8 stayed pending —
+  the board was stuck on position 1 instead of showing the real next
+  climber (position 10). Root cause: `computeLane()` searched for the
+  *first* still-pending athlete instead of the position right after the
+  *last confirmed* one. Same class of bug existed in
+  `computeSpeedElimination()` for heats (reproduced with a real
+  `under_appeal` round: stage "1/8" fully confirmed, stage "1/4" heat 9
+  already confirmed, heats 10-12 pending — was at risk of never advancing
+  past heat 9). Both now use a "last confirmed + 1" frontier instead of
+  "first pending"; identical result in the normal no-gaps case, correct in
+  the gap case. See
+  [ARCHITECTURE.md §5.2](ARCHITECTURE.md#52-the-inference-computelane-in-publicappjs)
+  and [§5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
+- Speed elimination now shows a distinct "Waiting for the next stage…"
+  message during the brief window after a stage finishes but before
+  results.info has populated the next stage's heats, instead of
+  prematurely showing "Round finished".
+- Documented two previously-unseen API values encountered while
+  reproducing the above: ascent status `"active"` (a third non-pending
+  value alongside `"confirmed"`/`"locked"`) and round status
+  `"under_appeal"`. See
+  [ARCHITECTURE.md §4.4 Quirks C/C.1/D](ARCHITECTURE.md#44-response-shape--the-parts-that-matter-and-their-quirks).
+
+---
+
+## 2026-08-14 — `f9d7809` Speed-Finale Lane-Ansicht, Kiosk-Modus Link ausblenden, Cleanup
+
 ### Changed
 - **Speed elimination now renders per-lane columns (Lane A / Lane B),
   matching qualification rounds**, instead of the one-card-per-heat
   "matchup" layout shipped in `480f5e3`. Same underlying heat-based
   inference (5.5), different presentation — user feedback after the
   matchup-card version was live: it didn't match the rest of the app and
-  was harder to scan. See
-  [ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
+  was harder to scan.
   `heatMatchupLine()`/`makeHeatCard()`/`sortedHeatAthletes()` removed
   (dead after the switch to `athleteForLane()`/`buildSpeedLane()`), along
   with the now-unused `.card-athlete--heat` CSS.

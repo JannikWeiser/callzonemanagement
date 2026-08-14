@@ -63,6 +63,15 @@ athlete data — no need to hunt for a live competition to test against.
 | `stage` | 1594 | `13740` (SPEED Damen+ Finale) | Speed elimination round with `status: "pending"` and no bracket generated yet — baseline "no bracket data" case |
 | `prod` | `2101` "KidsCup Hessen Bouldern + Lead Gießen" | — | Real `dav.results.info` event structure, all rounds pending as of investigation |
 | `ifsc` | `1518` "World Climbing Asia Youth Series Quannan 2026" | — | Real `ifsc.results.info` event structure confirmation |
+| `stage` | 1595 "Anleitung CallzoneManagement" | `13750` (LEAD Damen+ Quali) | **The "at the wall" frontier bug, reproduced.** Route 1 has confirmed results at positions 4,5,6,7,9 but permanently-pending gaps at 1,2,3,8 (simulated no-shows) — the correct "at the wall" is position 10 (STEIN), not position 1. Built by the user specifically to demonstrate this bug; keep this round's data shape in mind (or a fresh equivalent) whenever touching `computeLane()`'s frontier logic. |
+| `stage` | 1595 | `13782` (SPEED Damen+ Finale) | **The stage-advancement bug, reproduced.** `status: "under_appeal"`; stage "1/8" fully confirmed, stage "1/4" heat 9 already confirmed but heats 10-12 still pending — correct behavior is to show heat 10 as current, not get stuck on heat 9 or on stage "1/8". Also the source of the `"active"` ascent-status and `"under_appeal"` round-status values documented in Quirks C/D. |
+| `stage` | 1595 | `13769`/`13770` (BOULDER Herren+/Damen+ Quali) | Active status, `starting_groups`, but zero results yet as of investigation — baseline "round started, nobody's climbed a given route yet" case. |
+| `stage` | 1595 | `13785`/`13786` (BOULDER Herren+/Damen+ Finale) | `format_identifier: "boulder_finals_one_by_one"` — a Boulder finals format not seen elsewhere, but same `routes[]` shape as qualification, so no special-casing needed. `status: "pending"`, no startlist yet as of investigation. |
+
+Event 1595 in particular is worth checking for fresh data on any future
+Boulder/Speed bug report — it was purpose-built by the user as a test bed
+for this app's edge cases, so it's likely to keep growing more scenarios
+over time rather than being a one-off.
 
 To simulate a state that doesn't currently exist live (e.g. a "pending round
 with a published startlist", which no test fixture had at investigation

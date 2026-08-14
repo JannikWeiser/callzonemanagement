@@ -237,10 +237,20 @@ async function pollRound(host, roundId) {
 }
 
 // The API never says who is climbing "right now". It only tells us, per
-// route, which athletes already have a confirmed/locked ascent and which
-// are still "pending". We infer the callzone order from that: walking the
-// start order, the first not-yet-climbed athlete is assumed to be at the
-// wall, the one after is next, the rest are the upcoming queue.
+// route, which athletes already have a confirmed ascent and which are
+// still "pending". We infer the callzone order from that - but NOT by
+// taking the first still-pending athlete in start order: real events
+// sometimes never record a result for someone (no-show, withdrawal, a
+// review that never gets finalized), and results can get entered out of
+// strict start order (e.g. a judge reviewing footage). Either one leaves
+// an early position permanently "pending" while later positions already
+// have results - if we stopped at the first pending athlete, the board
+// would get stuck forever showing that one gap as "at the wall" long
+// after the round has actually moved on. Instead we take the position
+// right after the LAST confirmed athlete in start order ("the frontier")
+// - in the common case (no gaps) this is identical to "first pending",
+// but it correctly skips past permanently-unresolved gaps instead of
+// getting stuck on them.
 function computeLane(round, route) {
   const statusByAthlete = new Map();
   for (const entry of round.ranking ?? []) {
@@ -272,8 +282,11 @@ function computeLane(round, route) {
     };
   }
 
-  let currentIndex = ordered.findIndex((a) => (statusByAthlete.get(a.athlete_id) ?? "pending") === "pending");
-  if (currentIndex === -1) currentIndex = ordered.length; // everyone done
+  const isDone = (a) => (statusByAthlete.get(a.athlete_id) ?? "pending") !== "pending";
+  let currentIndex = 0;
+  for (let i = 0; i < ordered.length; i++) {
+    if (isDone(ordered[i])) currentIndex = i + 1;
+  }
 
   return {
     routeName: route.name,
@@ -376,15 +389,30 @@ function computeSpeedElimination(round) {
     stage.heats.map((heat) => ({ ...heat, stageName: stage.stage_name }))
   );
 
-  const currentIndex = heats.findIndex((h) => heatIsReady(h) && !heatIsDone(h));
-  if (currentIndex === -1) {
+  // Mirrors computeLane()'s frontier logic: advance to the heat right
+  // after the last CONFIRMED heat, rather than stopping at the first
+  // still-pending one. A heat whose result never finalizes (a false start
+  // under review, a stuck appeal) would otherwise permanently block the
+  // board on an old stage even after results.info has already populated
+  // and moved on to the next one.
+  let currentIndex = 0;
+  for (let i = 0; i < heats.length; i++) {
+    if (heatIsReady(heats[i]) && heatIsDone(heats[i])) currentIndex = i + 1;
+  }
+
+  if (currentIndex >= heats.length) {
     return { finished: heats.length > 0, stageName: null, heats: [] };
+  }
+  if (!heatIsReady(heats[currentIndex])) {
+    // The previous stage just finished but results.info hasn't populated
+    // the next stage's heats yet - a brief, expected transition state.
+    return { finished: false, stageName: null, heats: [] };
   }
 
   const current = heats[currentIndex];
   // "All heats of this round, in the order the athletes are due" - i.e.
-  // every not-yet-decided heat of the current stage, not just the next one.
-  const remaining = heats.filter((h) => h.stageName === current.stageName && !heatIsDone(h));
+  // every remaining heat of the current stage, not just the next one.
+  const remaining = heats.slice(currentIndex).filter((h) => h.stageName === current.stageName);
 
   return { finished: false, stageName: current.stageName, heats: remaining };
 }
@@ -443,7 +471,7 @@ function renderSpeedElimination(round) {
   if (!result.heats.length) {
     const empty = document.createElement("div");
     empty.className = "lane-finished";
-    empty.textContent = result.finished ? "Round finished" : "No bracket data for this round.";
+    empty.textContent = result.finished ? "Round finished" : "Waiting for the next stage…";
     el.lanes.appendChild(empty);
     return;
   }

@@ -160,15 +160,29 @@ present with all-pending ascents — just absent). `computeLane()` treats
 `?? "pending"` — this is required, not optional.
 
 **Quirk C — `ascents[].status` values seen:** `"pending"` (not yet judged),
-`"confirmed"` (judged, locked in), `"locked"` (seen on Speed — same
-practical meaning as confirmed for this app's purposes: anything that is not
-`"pending"` counts as "already climbed"). There is no `"in_progress"` /
+`"confirmed"` (judged, locked in), `"locked"` (seen on Speed), `"active"`
+(seen in a judge/route-setter review-mode workflow — same practical meaning
+as confirmed). Treat **anything that is not literally `"pending"`** as
+"already climbed" — don't match against `"confirmed"` specifically, the set
+of non-pending values is not closed. There is no `"in_progress"` /
 "currently climbing" status — see section 5.
 
-**Quirk D — `round.status` (pending / active / finished)** is a
-*round-level* field, not per-athlete and not per-route. It's the only
-reliable signal for "has this round started at all" — see 5.3 for why that
-distinction matters and can't be derived from ascent statuses alone.
+**Quirk C.1 — results can be entered out of start-order, or never at all.**
+An athlete's ascent can permanently stay `"pending"` (no-show, withdrawal,
+an unresolved review) while athletes *after* them in start order already
+have confirmed results — judge/review workflows don't guarantee sequential
+entry. See §5.2 for why the "at the wall" inference is based on the
+*highest confirmed position*, not the *first pending* one.
+
+**Quirk D — `round.status` values seen:** `"pending"`, `"active"`,
+`"finished"`, and `"under_appeal"` (a round can apparently sit in this
+state independently of whether its heats/ascents are done — observed on a
+Speed elimination round with its 1/8 stage fully confirmed and its 1/4
+stage in progress). Only `"pending"` is specifically checked by this app
+(5.3); every other value is treated the same as `"active"` for rendering
+purposes. `round.status` is a *round-level* field, not per-athlete and not
+per-route — it's the only reliable signal for "has this round started at
+all".
 
 **Quirk E — `startlist[].route_start_positions[]`** gives each athlete's
 start position *per route*, e.g. an athlete might be position 1 on Route "1"
@@ -229,17 +243,36 @@ For one route (one physical wall/lane), walk the start order:
 
 1. Build `ordered`: all athletes with a start position on this specific
    route, sorted by `position`.
-2. Find `currentIndex`: the index of the first athlete whose ascent status
-   for this route is `pending` (or who is entirely absent from `ranking` —
-   see Quirk B). Everyone before that index has already climbed.
+2. Find `currentIndex`: **the position right after the *last* athlete with
+   a confirmed ascent** (anyone entirely absent from `ranking` — Quirk B —
+   counts as not-confirmed, same as an explicit `"pending"` status).
+   Concretely: walk `ordered` front to back, remembering the index of the
+   most recent confirmed athlete seen so far; `currentIndex` is one past
+   that. Everyone before `currentIndex` is treated as already climbed,
+   everyone at or after it is not.
 3. `atWall = ordered[currentIndex]`, `onDeck = ordered[currentIndex + 1]`,
    `queue = ordered.slice(currentIndex + 2, currentIndex + 8)` (next 6).
-4. If no pending athlete is found, the whole route is done →
-   `finished: true`, rendered as "Runde beendet" instead of the three cards.
+4. If `currentIndex >= ordered.length` (the last position in the route was
+   itself confirmed), the whole route is done → `finished: true`, rendered
+   as "Round finished" instead of the three cards.
 
-This is an approximation, not ground truth: it assumes athletes climb in
-strict start-order with no skips, which holds for how results.info judges
-enter results in practice, but is not something the API guarantees.
+**Why "last confirmed + 1" and not "first pending"** (this was a real bug,
+fixed after a user report with reproduction data — see `CHANGELOG.md`):
+results.info doesn't guarantee sequential result entry. An athlete can stay
+`"pending"` forever — a no-show, a withdrawal, a review that never gets
+finalized (Quirk C.1) — while athletes *after* them in start order already
+have confirmed results, e.g. positions 4-7 and 9 confirmed while 1-3 and 8
+stay pending forever. "First pending" would get permanently stuck showing
+position 1 as "at the wall" long after the round had actually reached
+position 9. "Last confirmed + 1" instead tracks the highest point of actual
+progress and correctly reports position 10 as next up, silently leaving the
+permanently-pending gaps (1-3, 8) out of the display entirely — which is
+the right behavior for a callzone tool: its job is to say who to send to
+the wall next, not to chase unresolved administrative gaps.
+
+In the common case (no gaps, sequential entry) "last confirmed + 1" and
+"first pending" produce identical results — this is a strict generalization,
+not a behavior change for well-behaved data.
 
 ### 5.3 Why `round.status` is checked before the ascent-status walk
 
@@ -291,20 +324,30 @@ because Quirk F's data shape has no linear start order to walk.
 3. A heat is **done** once every athlete in it has a non-`"pending"` ascent
    status (mirrors the qualification logic's `"pending"` check, just
    applied per-heat instead of per-athlete-position).
-4. Find the first heat that is ready and not done → that's `atWall`, and
-   its `stageName` (e.g. `"1/4"`) is treated as the "current stage".
-5. **User-requested behavior (not just next-heat):** rather than only
-   showing the single next heat, `computeSpeedElimination()` returns
-   *every* not-done heat whose `stageName` matches the current stage, in
-   order — i.e. the full remaining heat sheet of the active round (e.g. all
-   4 quarterfinal heats in turn), not just a 1-ahead preview.
-6. If no heat is ready-and-not-done but at least one heat exists at all,
-   the whole bracket is finished → rendered as "Round finished". If a stage
-   transition is in progress (previous stage just finished, next stage's
-   heats not yet populated by results.info), the same "no ready heat found"
-   branch is hit only once the *entire* bracket has no ready heats left, so
-   this is not expected to flicker mid-bracket — heats populate as a batch
-   per stage, not one at a time.
+4. Find `currentIndex`: the position right after the *last* ready-and-done
+   heat in the flattened list — the same "last confirmed + 1" frontier used
+   in 5.2, applied at heat granularity. **Not** "the first ready-and-not-done
+   heat": a heat can stay pending indefinitely (an unresolved false-start
+   review, an appeal) while later heats — even in the next stage — are
+   already confirmed, which would otherwise permanently block the board on
+   an old stage. Observed live on a real `under_appeal` round: stage "1/8"
+   fully confirmed, stage "1/4" heat 9 already confirmed, heats 10-12 still
+   pending — "first not-done" would have stopped at heat 9 forever; the
+   frontier approach correctly lands on heat 10.
+5. If `currentIndex` is past the end of the flattened list, the whole
+   bracket is done → `finished: true`, rendered as "Round finished".
+   If `heats[currentIndex]` exists but isn't **ready** yet, results.info
+   just hasn't populated the next stage yet (previous stage finished a
+   moment ago) → a distinct "Waiting for the next stage…" message, not
+   "Round finished". This is an expected, brief transition state, not an
+   error.
+6. Otherwise, `current = heats[currentIndex]` and its `stageName` (e.g.
+   `"1/4"`) is the "current stage". **User-requested behavior (not just
+   next-heat):** rather than only showing the single next heat,
+   `computeSpeedElimination()` returns *every* heat from `currentIndex`
+   onward whose `stageName` matches the current stage, in order — i.e. the
+   full remaining heat sheet of the active round (e.g. all 4 quarterfinal
+   heats in turn), not just a 1-ahead preview.
 
 **Rendering (`renderSpeedElimination()`/`buildSpeedLane()` in
 `public/app.js`) mirrors the qualification layout: one column per lane**
