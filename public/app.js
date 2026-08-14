@@ -16,6 +16,7 @@ const el = {
   statusLine: document.getElementById("statusLine"),
   groupTabs: document.getElementById("groupTabs"),
   lanes: document.getElementById("lanes"),
+  shareRow: document.getElementById("shareRow"),
   shareLink: document.getElementById("shareLink"),
   copyLink: document.getElementById("copyLink"),
 };
@@ -197,6 +198,10 @@ el.kioskBtn.addEventListener("click", () => {
 });
 
 document.addEventListener("fullscreenchange", () => {
+  // The "link for this tablet" row is only useful for setting a bookmark up
+  // in the first place - once mounted and running in kiosk mode, it's just
+  // clutter (and a copy-able URL) on an otherwise clean wall display.
+  el.shareRow.hidden = !!document.fullscreenElement;
   if (!document.fullscreenElement) {
     wakeLockSentinel?.release?.();
     wakeLockSentinel = null;
@@ -373,7 +378,7 @@ function computeSpeedElimination(round) {
 
   const currentIndex = heats.findIndex((h) => heatIsReady(h) && !heatIsDone(h));
   if (currentIndex === -1) {
-    return { finished: heats.length > 0, stageName: null, atWall: null, onDeck: null, queue: [] };
+    return { finished: heats.length > 0, stageName: null, heats: [] };
   }
 
   const current = heats[currentIndex];
@@ -381,13 +386,7 @@ function computeSpeedElimination(round) {
   // every not-yet-decided heat of the current stage, not just the next one.
   const remaining = heats.filter((h) => h.stageName === current.stageName && !heatIsDone(h));
 
-  return {
-    finished: false,
-    stageName: current.stageName,
-    atWall: remaining[0] ?? null,
-    onDeck: remaining[1] ?? null,
-    queue: remaining.slice(2, 2 + 6),
-  };
+  return { finished: false, stageName: current.stageName, heats: remaining };
 }
 
 function heatAthleteLine(athlete) {
@@ -397,78 +396,69 @@ function heatAthleteLine(athlete) {
   return `${bib}${last} ${athlete.firstname ?? ""}`.trim();
 }
 
-function sortedHeatAthletes(heat) {
-  return [...(heat?.athletes ?? [])].sort((a, b) => (a.route_name ?? "").localeCompare(b.route_name ?? ""));
+function athleteForLane(heat, laneName) {
+  return heat.athletes?.find((a) => a.route_name === laneName) ?? null;
 }
 
-function heatMatchupLine(heat) {
-  return sortedHeatAthletes(heat)
-    .map((a) => `${a.route_name}: ${heatAthleteLine(a)}`)
-    .join("   vs   ");
-}
-
-function makeHeatCard(label, heat, variant) {
-  const card = document.createElement("div");
-  card.className = `card card--${variant}`;
-  const labelEl = document.createElement("div");
-  labelEl.className = "card-label";
-  labelEl.textContent = label;
-  card.appendChild(labelEl);
-
-  const athletes = sortedHeatAthletes(heat);
-  if (!athletes.length) {
-    const textEl = document.createElement("div");
-    textEl.className = "card-athlete";
-    textEl.textContent = "—";
-    card.appendChild(textEl);
-    return card;
-  }
-  for (const athlete of athletes) {
-    const line = document.createElement("div");
-    line.className = "card-athlete card-athlete--heat";
-    line.textContent = `Lane ${athlete.route_name}: ${heatAthleteLine(athlete)}`;
-    card.appendChild(line);
-  }
-  return card;
-}
-
-function renderSpeedElimination(round) {
-  const result = computeSpeedElimination(round);
-
-  const grid = document.createElement("div");
-  grid.className = "lanes-grid";
+// Renders like a qualification round - one column per lane (Lane A / Lane
+// B), each with its own at-the-wall/next/queue chain built from the same
+// athlete on that lane across the current stage's heats - instead of one
+// two-line "matchup" card per heat. Requested explicitly after the
+// matchup-card version shipped: the per-lane layout matches every other
+// round type in the app and is easier to scan at a glance.
+function buildSpeedLane(laneName, heats) {
+  const athletes = heats.map((h) => athleteForLane(h, laneName));
 
   const laneEl = document.createElement("section");
   laneEl.className = "lane";
 
   const heading = document.createElement("div");
   heading.className = "lane-heading";
-  heading.textContent = result.stageName ? `Stage: ${result.stageName}` : "Bracket";
+  heading.textContent = `Lane ${laneName}`;
   laneEl.appendChild(heading);
 
-  if (result.finished) {
-    const done = document.createElement("div");
-    done.className = "lane-finished";
-    done.textContent = "Round finished";
-    laneEl.appendChild(done);
-  } else {
-    laneEl.appendChild(makeHeatCard("at the wall", result.atWall, "at-wall"));
-    laneEl.appendChild(makeHeatCard("next", result.onDeck, "on-deck"));
+  laneEl.appendChild(makeCard("at the wall", heatAthleteLine(athletes[0]), "at-wall"));
+  laneEl.appendChild(makeCard("next", heatAthleteLine(athletes[1]), "on-deck"));
 
-    if (result.queue.length) {
-      const list = document.createElement("ol");
-      list.className = "queue-list";
-      list.setAttribute("start", "2");
-      for (const heat of result.queue) {
-        const li = document.createElement("li");
-        li.textContent = heatMatchupLine(heat);
-        list.appendChild(li);
-      }
-      laneEl.appendChild(list);
+  const queue = athletes.slice(2, 2 + 6);
+  if (queue.length) {
+    const list = document.createElement("ol");
+    list.className = "queue-list";
+    // "Next" is implicitly queue position 1, so this list continues from 2.
+    list.setAttribute("start", "2");
+    for (const athlete of queue) {
+      const li = document.createElement("li");
+      li.textContent = heatAthleteLine(athlete);
+      list.appendChild(li);
     }
+    laneEl.appendChild(list);
   }
 
-  grid.appendChild(laneEl);
+  return laneEl;
+}
+
+function renderSpeedElimination(round) {
+  const result = computeSpeedElimination(round);
+
+  if (!result.heats.length) {
+    const empty = document.createElement("div");
+    empty.className = "lane-finished";
+    empty.textContent = result.finished ? "Round finished" : "No bracket data for this round.";
+    el.lanes.appendChild(empty);
+    return;
+  }
+
+  const stageHeading = document.createElement("div");
+  stageHeading.className = "group-heading";
+  stageHeading.textContent = `Stage: ${result.stageName}`;
+  el.lanes.appendChild(stageHeading);
+
+  const laneNames = round.routes?.length ? round.routes.map((r) => r.name) : ["A", "B"];
+  const grid = document.createElement("div");
+  grid.className = "lanes-grid";
+  for (const laneName of laneNames) {
+    grid.appendChild(buildSpeedLane(laneName, result.heats));
+  }
   el.lanes.appendChild(grid);
 }
 
@@ -500,9 +490,9 @@ function renderGroupTabs(groupNames) {
 function renderBoard(round) {
   el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
   el.lanes.innerHTML = "";
+  el.groupTabs.hidden = true; // only the multi-group branch below re-shows it
 
   if (round.speed_elimination_stages?.length) {
-    el.groupTabs.hidden = true;
     renderSpeedElimination(round);
     return;
   }
@@ -511,7 +501,6 @@ function renderBoard(round) {
   const routeGroups = collectRouteGroups(round);
 
   if (!routeGroups.length) {
-    el.groupTabs.hidden = true;
     const empty = document.createElement("div");
     empty.className = "lane-finished";
     empty.textContent = "No route data for this round.";
@@ -528,8 +517,6 @@ function renderBoard(round) {
       currentSelection.group = groupNames[0];
     }
     renderGroupTabs(groupNames);
-  } else {
-    el.groupTabs.hidden = true;
   }
 
   for (const group of routeGroups) {

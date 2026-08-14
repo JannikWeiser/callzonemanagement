@@ -50,7 +50,8 @@ app.use(express.static(path.join(__dirname, "public")));
 
 function requireHost(req, res, next) {
   if (!HOSTS[req.params.host]) {
-    return res.status(400).json({ error: `Unknown host "${req.params.host}", use "prod" or "stage"` });
+    const valid = Object.keys(HOSTS).map((k) => `"${k}"`).join(", ");
+    return res.status(400).json({ error: `Unknown host "${req.params.host}", use one of: ${valid}` });
   }
   next();
 }

@@ -7,15 +7,46 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Changed
+- **Speed elimination now renders per-lane columns (Lane A / Lane B),
+  matching qualification rounds**, instead of the one-card-per-heat
+  "matchup" layout shipped in `480f5e3`. Same underlying heat-based
+  inference (5.5), different presentation — user feedback after the
+  matchup-card version was live: it didn't match the rest of the app and
+  was harder to scan. See
+  [ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
+  `heatMatchupLine()`/`makeHeatCard()`/`sortedHeatAthletes()` removed
+  (dead after the switch to `athleteForLane()`/`buildSpeedLane()`), along
+  with the now-unused `.card-athlete--heat` CSS.
+- **Kiosk mode now also hides the "Link for this tablet" row** while in
+  fullscreen (was left visible, which is clutter/an exposed copyable URL
+  on an otherwise clean wall display). Tied to the `fullscreenchange`
+  event so it also un-hides correctly on Esc-key/swipe exits, not only the
+  kiosk button. See
+  [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
+
+### Fixed
+- `server.js`'s "unknown host" error message still listed only `"prod"`
+  and `"stage"`, left stale since `ifsc` was added in `b2c1d28`. Now built
+  from `Object.keys(HOSTS)` so it can't drift out of sync again.
+
+### Internal
+- `renderBoard()`: removed two redundant `groupTabs.hidden = true`
+  assignments (one per early-return branch) in favor of a single one at
+  the top of the function, since every branch except the multi-group case
+  wants tabs hidden.
+
+---
+
+## 2026-08-14 — `480f5e3` Speed-Finale, Boulder-Gruppen-Tabs, Englisch, Kiosk-Modus
+
 ### Added
 - **Speed elimination (K.O. bracket) support.** Finals rounds
   (`speed_elimination_stages` present) now render instead of showing "No
-  route data for this round." Shows the current heat as a lane-vs-lane
-  matchup, plus every other not-yet-decided heat of the same stage in
-  order (e.g. all 4 quarterfinal heats), not just a single next-up preview
-  — per explicit user request. See
-  [ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination)
-  and [§4.4 Quirk F](ARCHITECTURE.md#44-response-shape--the-parts-that-matter-and-their-quirks).
+  route data for this round." Shipped as one card per heat showing both
+  lanes' athletes ("lane-vs-lane matchup"); replaced by a per-lane column
+  layout in the entry above after user feedback. See
+  [§4.4 Quirk F](ARCHITECTURE.md#44-response-shape--the-parts-that-matter-and-their-quirks).
 - **Boulder starting-group tabs.** Rounds with ≥2 groups (e.g. "Group A" /
   "Group B") now show one group at a time via tab buttons instead of all
   groups' lanes stacked at once (up to 10 tiles), fixing a reported

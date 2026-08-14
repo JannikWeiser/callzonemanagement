@@ -215,12 +215,6 @@ button.ghost {
 }
 .card--on-deck .card-athlete { font-size: clamp(1.2rem, 2.6vw, 1.6rem); }
 
-/* Heat matchups (Speed elimination) show two stacked lane lines instead of
-   one athlete name, so each line needs to be smaller than the single-name
-   case to keep both lanes readable without overflowing. */
-.card--at-wall .card-athlete--heat { font-size: clamp(1.1rem, 2.6vw, 1.7rem); }
-.card--on-deck .card-athlete--heat { font-size: clamp(0.95rem, 1.8vw, 1.15rem); }
-
 .queue-list {
   list-style: decimal;
   margin: 0.75rem 0 0;

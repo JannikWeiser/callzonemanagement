@@ -294,11 +294,10 @@ because Quirk F's data shape has no linear start order to walk.
 4. Find the first heat that is ready and not done → that's `atWall`, and
    its `stageName` (e.g. `"1/4"`) is treated as the "current stage".
 5. **User-requested behavior (not just next-heat):** rather than only
-   showing the single next heat, `remaining` is *every* not-done heat whose
-   `stageName` matches the current stage, in order — i.e. the full
-   remaining heat sheet of the active round (e.g. all 4 quarterfinal heats
-   in turn), not just a 1-ahead preview. `atWall` = `remaining[0]`, `onDeck`
-   = `remaining[1]`, the rest go in the numbered queue list (5.4).
+   showing the single next heat, `computeSpeedElimination()` returns
+   *every* not-done heat whose `stageName` matches the current stage, in
+   order — i.e. the full remaining heat sheet of the active round (e.g. all
+   4 quarterfinal heats in turn), not just a 1-ahead preview.
 6. If no heat is ready-and-not-done but at least one heat exists at all,
    the whole bracket is finished → rendered as "Round finished". If a stage
    transition is in progress (previous stage just finished, next stage's
@@ -307,12 +306,22 @@ because Quirk F's data shape has no linear start order to walk.
    this is not expected to flicker mid-bracket — heats populate as a batch
    per stage, not one at a time.
 
-Rendering (`renderSpeedElimination()` in `public/app.js`) reuses the
-existing card/queue visual language but shows **both lanes of a heat** per
-card (`makeHeatCard()`), not a single athlete name — e.g. "Lane A: #221
-SCHRÖDINGER Erwin" / "Lane B: #213 CRICK Francis" stacked in one card,
-because a "callzone call" for an elimination heat is inherently a pair, not
-an individual.
+**Rendering (`renderSpeedElimination()`/`buildSpeedLane()` in
+`public/app.js`) mirrors the qualification layout: one column per lane**
+(`Lane A` / `Lane B`), each with its own at-the-wall/next/queue chain —
+*not* a combined two-athlete "matchup" card. For each lane, `athleteForLane()`
+picks that lane's athlete out of each heat in the current stage's heat
+list, producing a plain ordered list of athletes exactly like
+`computeLane()`'s `ordered` array for qualification routes, then reuses
+`makeCard()` unchanged. A single `.group-heading`-styled "Stage: 1/4" label
+sits above both lane columns (reusing the same CSS class as the Boulder
+group headings, 6.6 — a stage name and a group name serve the same visual
+role: a shared label for a row of lanes).
+
+This replaced an earlier version that rendered one card per *heat* (both
+lanes stacked in one card) — changed after user feedback that it didn't
+match the rest of the app and was harder to scan than the familiar
+per-lane column layout used everywhere else.
 
 Detection: `renderBoard()` branches into this path whenever
 `round.speed_elimination_stages` is a non-empty array, before falling back
@@ -446,6 +455,16 @@ on. A `visibilitychange` listener re-requests the lock once the page is
 visible again, but only while still in fullscreen (treated as a proxy for
 "still in kiosk mode" — exiting fullscreen also drops the wake lock via the
 `fullscreenchange` listener, so both stay in sync through one user action).
+
+**Also hides the share-link row while in fullscreen:** the `fullscreenchange`
+listener additionally toggles `el.shareRow.hidden`. Rationale: the "Link for
+this tablet" box (6.4) is only useful *before* mounting a tablet, to set up
+its bookmark — once running unattended at the venue, a visible, selectable
+URL is pure clutter (and arguably not something you want casually copyable
+off a public-facing screen). Tied to `fullscreenchange` rather than the
+button's own click handler so it also reacts correctly if fullscreen is
+exited some other way (Esc key, swipe-down on iPadOS), not just via the
+kiosk button.
 
 **Known constraint:** the Screen Wake Lock API requires iPadOS/Safari 16.4+;
 older iPads will get fullscreen but not the always-on behavior. Not
