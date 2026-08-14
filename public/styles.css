@@ -125,6 +125,29 @@ button.ghost {
   color: var(--muted);
 }
 
+.group-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.group-tab {
+  padding: 0.5rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid #333846;
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.group-tab.active {
+  background: var(--accent);
+  color: #1a1305;
+  border-color: var(--accent);
+}
+
 .lanes-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -191,6 +214,12 @@ button.ghost {
   border: 1px solid #333846;
 }
 .card--on-deck .card-athlete { font-size: clamp(1.2rem, 2.6vw, 1.6rem); }
+
+/* Heat matchups (Speed elimination) show two stacked lane lines instead of
+   one athlete name, so each line needs to be smaller than the single-name
+   case to keep both lanes readable without overflowing. */
+.card--at-wall .card-athlete--heat { font-size: clamp(1.1rem, 2.6vw, 1.7rem); }
+.card--on-deck .card-athlete--heat { font-size: clamp(0.95rem, 1.8vw, 1.15rem); }
 
 .queue-list {
   list-style: decimal;

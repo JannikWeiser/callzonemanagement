@@ -3,6 +3,11 @@
 Zeigt an, wer bei einem Kletterwettkampf gerade an der Wand ist, wer als
 nächstes dran ist und wer danach kommt.
 
+**Hinweis:** Die App selbst (Buttons, Anzeigetexte) ist komplett auf
+**Englisch**, damit sie auch bei internationalen Wettkämpfen (IFSC etc.)
+verständlich ist. Diese Anleitung hier ist auf Deutsch, verweist aber auf
+die englischen Beschriftungen in der App.
+
 Es gibt zwei Varianten, die App zu erreichen – je nachdem, was eingerichtet
 wurde:
 
@@ -52,24 +57,46 @@ ist einfach immer erreichbar.
    `dav.results.info` für DAV-Wettkämpfe, `ifsc.results.info` für
    IFSC-/Weltcup-Wettkämpfe (die Test-Option braucht ihr normalerweise
    nicht).
-3. Auf **„Event laden"** klicken.
+3. Auf **„Load event"** klicken.
 4. Im Dropdown die passende **Altersklasse und Runde** auswählen
    (z. B. „LEAD U13 m — Qualifikation").
-5. Auf **„Anzeigen"** klicken.
+5. Auf **„Show"** klicken.
 
 Die Anzeige aktualisiert sich danach von selbst alle paar Sekunden – ihr
 müsst nichts mehr tun.
 
 ## 4. Anzeige lesen
 
-- **Oben, groß, orange:** Athlet·in, die/der gerade an der Wand ist
-- **Darunter:** Athlet·in, die/der als Nächstes dran ist
+- **Oben, groß, orange ("AT THE WALL"):** Athlet·in, die/der gerade an der
+  Wand ist
+- **Darunter ("NEXT"):** Athlet·in, die/der als Nächstes dran ist
 - **Liste darunter:** die Athlet·innen, die danach folgen
 - Bei Disziplinen mit mehreren Routen gleichzeitig (z. B. Boulder mit 4
   Routen) wird für jede Route eine eigene Spalte angezeigt.
 
-Über **„← andere Runde"** oben links könnt ihr jederzeit zu einer anderen
+Über **„← switch round"** oben links könnt ihr jederzeit zu einer anderen
 Altersklasse/Runde wechseln.
+
+### Boulder mit Gruppe A / B
+
+Boulder-Qualifikationen mit großem Feld laufen oft in zwei parallelen
+Gruppen ("Group A" / "Group B") auf getrennten Wänden. Die App zeigt dann
+oben zwei Reiter zum Umschalten – standardmäßig ist nur eine Gruppe
+sichtbar (sonst wären es bis zu 10 Spalten auf einmal). Der Link im Feld
+„Link for this tablet" merkt sich die gerade gewählte Gruppe mit, ihr könnt
+also z. B. ein Tablet fest auf „Group A" verlinken und ein zweites auf
+„Group B".
+
+### Speed-Finale (K.-o.-System)
+
+Bei Speed-Finalrunden (K.-o.-Baum mit 1/8-Finale, Viertelfinale,
+Halbfinale, kleinem und großem Finale) zeigt die App statt einzelner
+Athlet·innen **Duelle**: „AT THE WALL" zeigt die zwei Athlet·innen des
+aktuellen Laufs (Bahn A gegen Bahn B), „NEXT" den nächsten Lauf, und
+darunter alle weiteren noch offenen Läufe der aktuellen Runde (z. B. alle
+verbleibenden Viertelfinal-Duelle) in der Reihenfolge, wie sie dran sind.
+Sobald eine Runde fertig ausgewertet ist, springt die Anzeige automatisch
+zur nächsten Runde (z. B. von Viertelfinale zu Halbfinale).
 
 ## 5. Mehrere Tablets gleichzeitig (je eigene Startklasse)
 
@@ -81,16 +108,29 @@ Damit ein Tablet nach dem Ausschalten/Neuladen sofort wieder **seine**
 Startklasse zeigt (statt der Auswahl-Maske):
 
 1. Auf dem Tablet einmal wie in Schritt 3 die gewünschte Runde auswählen.
-2. Oben auf dem Board erscheint ein Feld **„Link für dieses Tablet"** mit
+2. Oben auf dem Board erscheint ein Feld **„Link for this tablet"** mit
    einem Kopieren-Button.
 3. Diesen Link als Lesezeichen speichern (oder als Icon auf den Homescreen
    legen: Teilen-Symbol → „Zum Home-Bildschirm").
 4. Ab jetzt öffnet dieser Link auf diesem Tablet immer direkt die richtige
    Startklasse – auch nach einem Neustart.
 
-Jedes Tablet bekommt so seinen eigenen Link mit seiner eigenen Runde.
+Jedes Tablet bekommt so seinen eigenen Link mit seiner eigenen Runde (und,
+bei Boulder, seiner eigenen Gruppe).
 
-## 6. Programm beenden
+## 6. Vollbild & Bildschirm wach halten
+
+Oben auf dem Board gibt es den Button **„Fullscreen + Always On"**. Ein
+Klick macht die Seite gleichzeitig vollbildig (keine Safari-Leiste mehr)
+und verhindert, dass sich das Tablet-Display automatisch abschaltet oder
+sperrt – gedacht für Tablets, die fest an der Wand hängen. Erneut klicken
+("Exit fullscreen") beendet beides wieder.
+
+Falls das auf einem älteren iPad nicht funktioniert: das "Wach halten"
+braucht iPadOS 16.4 oder neuer. Vollbild funktioniert unabhängig davon,
+sollte aber vor dem Wettkampf einmal kurz getestet werden.
+
+## 7. Programm beenden
 
 Im Terminal-Fenster `Strg + C` drücken (oder das Fenster schließen).
 
@@ -98,6 +138,6 @@ Im Terminal-Fenster `Strg + C` drücken (oder das Fenster schließen).
 
 | Meldung | Bedeutung |
 |---|---|
-| „Event konnte nicht geladen werden" | Event ID oder Server falsch – beides prüfen |
-| „Verbindung verloren" | Internetverbindung des Laptops prüfen (die Daten kommen live von results.info) |
+| „Couldn't load event" | Event ID oder Server falsch – beides prüfen |
+| „Connection lost" | Internetverbindung des Laptops prüfen (die Daten kommen live von results.info) |
 | Anzeige friert ein | Seite im Browser neu laden – die zuletzt gewählte Runde wird automatisch wieder geöffnet |

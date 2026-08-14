@@ -177,6 +177,43 @@ has `route_start_positions` entries for the routes belonging to their own
 group — this is what makes filtering by `route.id` automatically correct
 per group with no extra group-membership check needed.
 
+**Quirk F — Speed elimination rounds are a completely different shape.**
+Rounds with `format_identifier: "speed_elimination_ifsc_2026"` have **no**
+`routes`, **no** `ranking`-with-`route_id`-ascents in the sense used
+elsewhere, and instead expose `speed_elimination_stages[]`:
+
+```jsonc
+{
+  "speed_elimination_stages": [
+    {
+      "stage_id": 0,
+      "stage_name": "1/8",       // then "1/4", "1/2", "Small Final", "Final"
+      "heats": [
+        {
+          "id": 18683,
+          "number": 1,            // globally sequential across ALL stages (1..16 for a 16-athlete bracket)
+          "athletes": [            // empty [] until this heat's pairing is known
+            {
+              "athlete_id": 9283, "name": "Mark Twain",  // NOTE: "Firstname Lastname", unlike ranking/startlist elsewhere ("LASTNAME Firstname")
+              "firstname": "Mark", "lastname": "Twain",
+              "bib": "208", "route_name": "A",           // which lane this athlete races in, for THIS heat
+              "ascents": [ { "route_id": 22299, "status": "pending" /* | "confirmed" */, "time_ms": 11108, ... } ],
+              "stage_result": { "winner": false, "qualified": false, "time": 11108, ... }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+Critically, **results.info computes bracket advancement itself**: as soon as
+a stage is fully judged, the next stage's heats are populated with the real
+winning athletes (`athletes.length` goes from `0` to `2`, ascent `status`
+starts at `"pending"`). This app never computes "who advances" — it only
+reads the bracket. See §5.6.
+
 ## 5. Core algorithm: "who's at the wall"
 
 ### 5.1 The problem
@@ -229,26 +266,57 @@ branch** — reverting to pure ascent-status inference reintroduces that bug.
 ### 5.4 Queue numbering starts at 2
 
 The rendered `<ol>` for the "upcoming" list uses `start="2"`
-(`list.setAttribute("start", "2")` in `buildLane()`), not the HTML default
-of 1. Rationale: "Nächste·r" (onDeck) is conceptually queue position 1 — it
-has its own card above the list. If the list below also started at 1, there
-would be two different people both visually labeled "1", which reads as
-contradictory. Starting the list at 2 makes the numbers a continuous,
-unambiguous queue position across both the onDeck card and the list. This
-applies uniformly, including in the not-started-round case from 5.3 (there,
-`onDeck` is the actual first starter, so the list correctly starts at the
-second starter).
+(`list.setAttribute("start", "2")` in `buildLane()` and again in
+`renderSpeedElimination()`), not the HTML default of 1. Rationale: "next"
+(onDeck) is conceptually queue position 1 — it has its own card above the
+list. If the list below also started at 1, there would be two different
+people (or heats) both visually labeled "1", which reads as contradictory.
+Starting the list at 2 makes the numbers a continuous, unambiguous queue
+position across both the onDeck card and the list. This applies uniformly,
+including in the not-started-round case from 5.3 (there, `onDeck` is the
+actual first starter, so the list correctly starts at the second starter).
 
-### 5.5 Known limitation: Speed elimination rounds
+### 5.5 Speed elimination: heat-based inference (`computeSpeedElimination()`)
 
-Speed *qualification* uses the same `routes: [{name: "A"}, {name: "B"}]` +
-start-position shape as Lead/Boulder and is fully supported. Speed **finals
-(head-to-head elimination brackets/duels)** use a fundamentally different
-data shape (bracket/duel structure, not a linear start order) that this app
-does not attempt to parse — such rounds will likely fall through to "Keine
-Routen-Daten für diese Runde." This is an explicit scope decision, not an
-oversight: supporting brackets would need a materially different rendering
-model (a bracket tree, not a queue).
+Same underlying problem as 5.1 (no "currently running" field), same style of
+fix, but at *heat* granularity instead of *athlete-position* granularity,
+because Quirk F's data shape has no linear start order to walk.
+
+1. Flatten `speed_elimination_stages[].heats[]` into one list, in stage
+   order then heat `number` order (both already correctly ordered by the
+   API — no re-sorting needed).
+2. A heat is **ready** once it has 2 athletes (`athletes.length === 2`) —
+   before that, results.info hasn't determined the pairing yet (still
+   waiting on the previous stage).
+3. A heat is **done** once every athlete in it has a non-`"pending"` ascent
+   status (mirrors the qualification logic's `"pending"` check, just
+   applied per-heat instead of per-athlete-position).
+4. Find the first heat that is ready and not done → that's `atWall`, and
+   its `stageName` (e.g. `"1/4"`) is treated as the "current stage".
+5. **User-requested behavior (not just next-heat):** rather than only
+   showing the single next heat, `remaining` is *every* not-done heat whose
+   `stageName` matches the current stage, in order — i.e. the full
+   remaining heat sheet of the active round (e.g. all 4 quarterfinal heats
+   in turn), not just a 1-ahead preview. `atWall` = `remaining[0]`, `onDeck`
+   = `remaining[1]`, the rest go in the numbered queue list (5.4).
+6. If no heat is ready-and-not-done but at least one heat exists at all,
+   the whole bracket is finished → rendered as "Round finished". If a stage
+   transition is in progress (previous stage just finished, next stage's
+   heats not yet populated by results.info), the same "no ready heat found"
+   branch is hit only once the *entire* bracket has no ready heats left, so
+   this is not expected to flicker mid-bracket — heats populate as a batch
+   per stage, not one at a time.
+
+Rendering (`renderSpeedElimination()` in `public/app.js`) reuses the
+existing card/queue visual language but shows **both lanes of a heat** per
+card (`makeHeatCard()`), not a single athlete name — e.g. "Lane A: #221
+SCHRÖDINGER Erwin" / "Lane B: #213 CRICK Francis" stacked in one card,
+because a "callzone call" for an elimination heat is inherently a pair, not
+an individual.
+
+Detection: `renderBoard()` branches into this path whenever
+`round.speed_elimination_stages` is a non-empty array, before falling back
+to the qualification-style `collectRouteGroups()` path.
 
 ## 6. Design decisions
 
@@ -301,35 +369,112 @@ without any build tooling).
 ### 6.4 URL query params + localStorage, in that precedence order
 
 **Problem this solves:** multiple tablets, each meant to always show one
-fixed category, without re-selecting it from a dropdown after every reload
-(power loss, Safari tab reload, etc.).
+fixed category (and, for Boulder, one fixed starting group — see 6.6),
+without re-selecting it from a dropdown after every reload (power loss,
+Safari tab reload, etc.).
 
-**Decision:** on load, `readUrlSelection()` (URL `?host=&event=&round=`)
+**Decision:** on load, `readUrlSelection()` (URL `?host=&event=&round=&group=`)
 takes precedence over `loadSelection()` (last manually-picked selection,
-`localStorage`). A "Link für dieses Tablet" box on the board shows the exact
-URL for the currently-watched round, meant to be bookmarked/added to the
-home screen on that specific tablet.
+`localStorage`). A "Link for this tablet" box on the board shows the exact
+URL for the currently-watched round (and group, if applicable), meant to be
+bookmarked/added to the home screen on that specific tablet.
 
 **Why this order and not the reverse:** URL params represent an explicit,
-durable assignment ("this physical tablet always shows Boulder U11") that
-should survive even if someone else used that same browser to look at a
-different round manually in between — a bookmark should be trustworthy.
+durable assignment ("this physical tablet always shows Boulder U11 Group A")
+that should survive even if someone else used that same browser to look at
+a different round manually in between — a bookmark should be trustworthy.
 localStorage alone would get silently overwritten by the last manual
 selection on that device, which defeats the "each tablet has its permanent
 category" use case this feature exists for.
 
-### 6.5 Naming: "Route" (or "Bahn" for Speed), not "Wand"
+### 6.5 Naming: "Route" (or "Lane" for Speed), not "Wand"/"Bahn"
 
-Earlier revision used "Wand 1" / "Wand 2" as the per-lane label. Changed to
-"Route 1" / "Route 2" after user feedback — "Wand" (wall) is ambiguous when
-a single physical wall hosts multiple named routes, whereas the athlete
-currently climbing is still described as being "an der Wand" (at the wall)
-in the card label, which is a different, correct use of the word (a
+Earlier revision used German "Wand 1" / "Wand 2" as the per-lane label.
+Changed to "Route 1" / "Route 2" after user feedback — "Wand" (wall) is
+ambiguous when a single physical wall hosts multiple named routes, whereas
+the athlete currently climbing is still described as being "at the wall" in
+the card label, which is a different, correct use of the word (a
 description of the athlete's location, not a lane identifier). Speed lanes
-keep the term "Bahn" (track/lane), which is the climbing-specific term for
-side-by-side speed lanes and was not part of the reported naming issue.
+use the term "Lane" (was "Bahn" before the English-only pass, 6.8), the
+climbing-specific term for side-by-side speed lanes.
 
-### 6.6 Hosting: Render (Blueprint) over alternatives
+### 6.6 Boulder starting-group tabs, default to one group at a time
+
+**Problem:** a Boulder round split into starting groups (Quirk A) renders
+one `.lanes-grid` per group — for a 2-group × 5-boulder round that's 10
+lane tiles at once, which doesn't fit a tablet screen without heavy
+scrolling, defeating the "glance at it" purpose of a callzone board.
+
+**Decision:** when a round has ≥2 named groups, `renderBoard()` shows a
+row of tab buttons (one per group name, taken verbatim from
+`starting_groups[].name` — already "Group A"/"Group B" from the API, no
+translation needed) and renders **only** the selected group's lanes.
+Default is the first group unless the URL/saved selection already names a
+valid group for this round. Switching tabs re-renders instantly from
+`lastRoundData` (the last poll response, cached in a module-level variable)
+rather than waiting for the next 3s poll, and updates both the saved
+selection and the share-link box — so mid-session switching immediately
+becomes the new bookmarkable state.
+
+**Why tabs instead of always showing both:** the two groups climb in
+parallel in reality, so hiding one isn't a data-completeness compromise —
+it's a per-tablet display choice, consistent with 6.4's "one tablet, one
+thing to watch" model. A tablet physically stationed at Group A's boulders
+doesn't need Group B's lanes taking up its screen; the tab (or a
+group-scoped bookmark link) lets it show only what's relevant to it, while
+a different tablet can be scoped to Group B.
+
+### 6.7 Kiosk mode: Fullscreen + Wake Lock behind one button
+
+**Problem:** the whole point of this app is to run unattended on a tablet
+mounted at the venue — but by default, Safari shows its chrome (address
+bar, tab strip) and iPadOS will dim/lock the screen after a few minutes of
+no touch input, both undesirable for a wall-mounted display.
+
+**Decision:** one "Fullscreen + Always On" button (`el.kioskBtn`) triggers
+both browser APIs together, since they're always wanted together for this
+use case: `document.documentElement.requestFullscreen()` and
+`navigator.wakeLock.request("screen")`. Both are wrapped in `try`/`catch`
+independently — a browser without Wake Lock support (or a fullscreen
+request denied for some reason) should still get the other one rather than
+the whole action silently failing.
+
+**Wake Lock re-acquisition:** per spec, the Screen Wake Lock is
+automatically released when the tab is backgrounded (`visibilitychange` to
+`"hidden"`) — e.g. if the tablet's screen was manually turned off and back
+on. A `visibilitychange` listener re-requests the lock once the page is
+visible again, but only while still in fullscreen (treated as a proxy for
+"still in kiosk mode" — exiting fullscreen also drops the wake lock via the
+`fullscreenchange` listener, so both stay in sync through one user action).
+
+**Known constraint:** the Screen Wake Lock API requires iPadOS/Safari 16.4+;
+older iPads will get fullscreen but not the always-on behavior. Not
+detected/warned about explicitly — the button just won't keep the screen
+awake on those devices. Verify on the actual hardware being used before
+relying on it for a competition day.
+
+### 6.8 English-only UI, no language switcher
+
+**Decision:** every app-owned UI string (buttons, labels, error messages —
+`public/index.html` and the strings in `public/app.js`) is English, full
+stop — no `{de: …, en: …}` dictionary, no language toggle. This was an
+explicit user choice, not a default: an earlier version had German UI text,
+and it was replaced outright rather than made switchable, because this app
+is also used at international (IFSC) events where English is the shared
+language and a German-speaking operator can read English UI chrome fine
+either way — the reverse (non-German-speaking staff facing German buttons)
+was the actual problem being solved.
+
+**What stays non-English:** competition data itself (category/round/athlete
+names, e.g. `round.category`/`round.round` — see 4.4) is pass-through from
+results.info and reflects whatever language the organizer entered it in;
+the app does not and cannot translate that. Maintenance documentation
+(`README.md`, `ANLEITUNG.md`, `HOSTING.md`) intentionally stays German —
+see `AGENTS.md` §6 for the full convention — because that audience (the
+person running the app) is different from the audience of the on-screen UI
+(international athletes/officials at the venue).
+
+### 6.9 Hosting: Render (Blueprint) over alternatives
 
 **Why not GitHub Pages alone:** static-only, cannot run the proxy (6.1) —
 a hard requirement, not a preference.
@@ -349,7 +494,17 @@ an architectural one, so it lives in the deployment doc rather than here.
 
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
-- **Speed elimination brackets** (5.5) — different data shape, not a bug.
+- **A visual bracket tree** for Speed elimination (like the PDF heat sheet
+  results.info can export) — the current/next/queue heat-list view (5.5) is
+  the supported approach; a graphical tree would be a materially different,
+  separately-scoped feature.
+- **Speed training / any session with no results.info round behind it** —
+  there's no API data at all in that case (no event, no round, no ascents).
+  A manual/offline queue-advance mode has been discussed but is explicitly
+  deferred, not implemented — see `CHANGELOG.md` "Unreleased — Considered,
+  not built".
+- **A language switcher** — the UI is English-only by deliberate choice
+  (6.8), not because a toggle wasn't considered.
 - **Authentication / access control** — the app has none by design; the
   underlying competition data is already public on results.info.
 - **Persisting anything server-side** — the server is stateless except for
@@ -365,5 +520,7 @@ an architectural one, so it lives in the deployment doc rather than here.
 | `category_round` | One round within a dcat, e.g. "Qualifikation" or "Finale". Has its own `category_round_id`, which is the "round" ID this app's UI asks the user to pick. |
 | `route` | One physical wall/lane/boulder within a round. |
 | `starting_group` | A subdivision of a Boulder round's athletes (e.g. "Group A"/"Group B") climbing on their own separate set of routes in parallel — see Quirk A. |
-| `ascent` | One athlete's attempt/result on one specific route. |
+| `ascent` | One athlete's attempt/result on one specific route (qualification) or one lane of one heat (Speed elimination). |
+| `speed_elimination_stages` | The K.O. bracket for a Speed final: an ordered list of stages ("1/8", "1/4", "1/2", "Small Final", "Final"), each with its `heats[]` — see Quirk F. |
+| `heat` | One head-to-head Speed duel: two athletes, one per lane, racing simultaneously. Has a globally sequential `number` across the whole bracket. |
 | bib | Athlete's start number, shown in the UI as `#123`. Can be `null` (not always assigned, e.g. seen on Speed test data). |

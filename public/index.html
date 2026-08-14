@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -13,40 +13,42 @@
   <div class="setup-row">
     <label>
       Event ID
-      <input id="eventId" type="text" inputmode="numeric" placeholder="z.B. 2101" />
+      <input id="eventId" type="text" inputmode="numeric" placeholder="e.g. 2101" />
     </label>
     <label>
       Server
       <select id="host">
         <option value="prod">dav.results.info</option>
         <option value="ifsc">ifsc.results.info</option>
-        <option value="stage">dav-stage.results.info (Test)</option>
+        <option value="stage">dav-stage.results.info (test)</option>
       </select>
     </label>
-    <button id="loadEvent">Event laden</button>
+    <button id="loadEvent">Load event</button>
   </div>
   <div id="setupError" class="error" hidden></div>
 
   <div id="categoryRow" class="setup-row" hidden>
     <label class="grow">
-      Altersklasse / Runde
+      Category / round
       <select id="roundSelect"></select>
     </label>
-    <button id="watchRound">Anzeigen</button>
+    <button id="watchRound">Show</button>
   </div>
 </header>
 
 <main id="board" class="board" hidden>
   <div class="board-topbar">
-    <button id="backBtn" class="ghost">&larr; andere Runde</button>
+    <button id="backBtn" class="ghost">&larr; switch round</button>
     <div id="roundTitle" class="round-title"></div>
+    <button id="kioskBtn" class="ghost">Fullscreen + Always On</button>
     <div id="statusLine" class="status-line"></div>
   </div>
   <div class="share-row">
-    <span class="share-label">Link für dieses Tablet:</span>
+    <span class="share-label">Link for this tablet:</span>
     <input id="shareLink" class="share-input" type="text" readonly />
-    <button id="copyLink" class="ghost">Kopieren</button>
+    <button id="copyLink" class="ghost">Copy</button>
   </div>
+  <div id="groupTabs" class="group-tabs" hidden></div>
   <div id="lanes" class="lanes"></div>
 </main>
 

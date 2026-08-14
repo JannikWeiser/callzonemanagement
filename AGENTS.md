@@ -59,6 +59,8 @@ athlete data — no need to hunt for a live competition to test against.
 | `stage` | 1594 "Lead TTT Alex & Corinna" | `13709` (BOULDER Herren+ Quali) | `starting_groups` (Group A/B, 5 routes each) — the Boulder-groups case |
 | `stage` | 1594 | `13719` (SPEED Herren+ Quali) | Speed qualification, routes `"A"`/`"B"` |
 | `stage` | 1594 | `13689` (LEAD Herren+ Quali) | `status: "pending"` with 6 routes defined (no startlist published yet as of investigation) |
+| `stage` | 1594 | `13739` (SPEED Herren+ Finale) | `speed_elimination_stages` — the K.O.-bracket case, live/active as of investigation with the "1/4" stage in progress |
+| `stage` | 1594 | `13740` (SPEED Damen+ Finale) | Speed elimination round with `status: "pending"` and no bracket generated yet — baseline "no bracket data" case |
 | `prod` | `2101` "KidsCup Hessen Bouldern + Lead Gießen" | — | Real `dav.results.info` event structure, all rounds pending as of investigation |
 | `ifsc` | `1518` "World Climbing Asia Youth Series Quannan 2026" | — | Real `ifsc.results.info` event structure confirmation |
 
@@ -103,19 +105,30 @@ before saying it's fixed:
 
 ## 6. Language conventions
 
-- User-facing documentation (`README.md`, `ANLEITUNG.md`, `HOSTING.md`) and
+- **The app's own UI** (`public/index.html`, all strings in
+  `public/app.js`): **English only**, deliberately, no toggle — see
+  [ARCHITECTURE.md §6.8](ARCHITECTURE.md#68-english-only-ui-no-language-switcher).
+  Don't add German UI strings back, and don't build a language switcher
+  without being asked — that was explicitly decided against.
+- Maintenance documentation (`README.md`, `ANLEITUNG.md`, `HOSTING.md`) and
   git commit messages: **German** — this matches how the user communicates
-  and who else might read these (other callzone volunteers).
+  and who else might read these (other callzone volunteers). Note this is
+  a *different* audience than the English app UI above (§6.8 explains why
+  that split is intentional, not inconsistent).
 - Code comments, `ARCHITECTURE.md`, this file, `CHANGELOG.md`: **English**.
 - Don't mix within a file; match whichever convention that specific file
   already uses.
+- Competition data itself (category/round names, athlete names) is
+  pass-through from results.info and stays whatever language the organizer
+  entered — never "translate" it.
 
 ## 7. Explicitly out of scope — don't build these without being asked
 
 See [ARCHITECTURE.md §7](ARCHITECTURE.md#7-explicitly-out-of-scope-do-not-fix-without-asking)
-for the full list and reasoning (Speed elimination brackets, auth, a
-database, write access to results.info). If a user report sounds like it
-needs one of these, say so and ask before implementing rather than silently
+for the full list and reasoning (a visual bracket tree, the Speed-training
+manual mode, a language switcher, auth, a database, write access to
+results.info). If a user report sounds like it needs one of these, say so
+and ask before implementing rather than silently
 scoping it in.
 
 ## 8. Keeping docs in sync

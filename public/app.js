@@ -11,14 +11,22 @@ const el = {
   setup: document.getElementById("setup"),
   board: document.getElementById("board"),
   backBtn: document.getElementById("backBtn"),
+  kioskBtn: document.getElementById("kioskBtn"),
   roundTitle: document.getElementById("roundTitle"),
   statusLine: document.getElementById("statusLine"),
+  groupTabs: document.getElementById("groupTabs"),
   lanes: document.getElementById("lanes"),
   shareLink: document.getElementById("shareLink"),
   copyLink: document.getElementById("copyLink"),
 };
 
 let pollTimer = null;
+let lastRoundData = null;
+
+// Tracks what the currently-watched board is showing, so re-renders (poll
+// ticks, group-tab clicks) and the share link stay in sync without having
+// to thread these four values through every function call.
+let currentSelection = null; // { host, eventId, roundId, group }
 
 function saveSelection(sel) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sel));
@@ -31,21 +39,24 @@ function loadSelection() {
   }
 }
 
-// Lets each tablet be bookmarked straight to "its" category, so it doesn't
-// need the setup screen on every reload - see buildShareLink/startWatching.
+// Lets each tablet be bookmarked straight to "its" category (and, for
+// Boulder rounds with groups, "its" group), so it doesn't need the setup
+// screen on every reload - see buildShareLink/startWatching.
 function readUrlSelection() {
   const params = new URLSearchParams(location.search);
   const host = params.get("host");
   const eventId = params.get("event");
   const roundId = params.get("round");
-  return host && eventId ? { host, eventId, roundId } : null;
+  const group = params.get("group");
+  return host && eventId ? { host, eventId, roundId, group } : null;
 }
 
-function buildShareLink({ host, eventId, roundId }) {
+function buildShareLink({ host, eventId, roundId, group }) {
   const url = new URL(location.pathname, location.origin);
   url.searchParams.set("host", host);
   url.searchParams.set("event", eventId);
   url.searchParams.set("round", roundId);
+  if (group) url.searchParams.set("group", group);
   return url.toString();
 }
 
@@ -58,30 +69,30 @@ async function loadEvent() {
   const eventId = el.eventId.value.trim();
   const host = el.host.value;
   if (!eventId) {
-    showError("Bitte Event ID eingeben.");
+    showError("Please enter an Event ID.");
     return;
   }
   showError("");
   el.loadEvent.disabled = true;
-  el.loadEvent.textContent = "Lädt …";
+  el.loadEvent.textContent = "Loading…";
   try {
     const res = await fetch(`/api/event/${host}/${encodeURIComponent(eventId)}`);
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `Fehler ${res.status}`);
+    if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
     populateRounds(data, host, eventId);
   } catch (err) {
-    showError(`Event konnte nicht geladen werden: ${err.message}`);
+    showError(`Couldn't load event: ${err.message}`);
     el.categoryRow.hidden = true;
   } finally {
     el.loadEvent.disabled = false;
-    el.loadEvent.textContent = "Event laden";
+    el.loadEvent.textContent = "Load event";
   }
 }
 
 const STATUS_LABEL = {
-  active: "läuft",
-  pending: "noch nicht gestartet",
-  finished: "beendet",
+  active: "live",
+  pending: "not started",
+  finished: "finished",
 };
 
 function populateRounds(eventData, host, eventId) {
@@ -106,18 +117,20 @@ function populateRounds(eventData, host, eventId) {
     el.roundSelect.appendChild(opt);
   }
   el.categoryRow.hidden = entries.length === 0;
-  if (entries.length === 0) showError("Dieses Event hat keine Altersklassen/Runden.");
+  if (entries.length === 0) showError("This event has no categories/rounds.");
 
   el.watchRound.onclick = () => {
     const roundId = el.roundSelect.value;
     if (!roundId) return;
-    startWatching(host, eventId, roundId);
+    startWatching(host, eventId, roundId, null);
   };
 }
 
-function startWatching(host, eventId, roundId) {
-  saveSelection({ host, eventId, roundId });
-  el.shareLink.value = buildShareLink({ host, eventId, roundId });
+function startWatching(host, eventId, roundId, group) {
+  currentSelection = { host, eventId, roundId, group: group ?? null };
+  lastRoundData = null;
+  saveSelection(currentSelection);
+  el.shareLink.value = buildShareLink(currentSelection);
   el.setup.hidden = true;
   el.board.hidden = false;
   clearInterval(pollTimer);
@@ -135,26 +148,85 @@ el.copyLink.addEventListener("click", async () => {
   el.shareLink.select();
   try {
     await navigator.clipboard.writeText(el.shareLink.value);
-    el.copyLink.textContent = "Kopiert!";
+    el.copyLink.textContent = "Copied!";
   } catch {
     // Clipboard API needs a secure context; on plain http://<lan-ip> (no
     // HTTPS) Safari blocks it. The select() above still lets the user
-    // copy manually with Cmd/Strg+C, so just tell them that.
-    el.copyLink.textContent = "Markiert - jetzt kopieren";
+    // copy manually with Cmd/Ctrl+C, so just tell them that.
+    el.copyLink.textContent = "Selected - copy now";
   }
-  setTimeout(() => (el.copyLink.textContent = "Kopieren"), 2000);
+  setTimeout(() => (el.copyLink.textContent = "Copy"), 2000);
+});
+
+// --- Fullscreen + screen-wake-lock ("kiosk mode") for a tablet mounted on
+// a wall: keeps the board visible full-bleed and stops the OS from locking
+// the screen mid-competition. Both are independent browser APIs behind one
+// button since they're always wanted together for this use case.
+let wakeLockSentinel = null;
+
+async function enterKioskMode() {
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+  } catch (err) {
+    console.warn("Fullscreen request failed:", err);
+  }
+  try {
+    wakeLockSentinel = (await navigator.wakeLock?.request("screen")) ?? null;
+  } catch (err) {
+    console.warn("Wake lock request failed:", err);
+  }
+  el.kioskBtn.textContent = "Exit fullscreen";
+}
+
+async function exitKioskMode() {
+  if (document.fullscreenElement) {
+    try {
+      await document.exitFullscreen();
+    } catch {
+      // ignore - already left fullscreen some other way (Esc key, etc.)
+    }
+  }
+  wakeLockSentinel?.release?.();
+  wakeLockSentinel = null;
+  el.kioskBtn.textContent = "Fullscreen + Always On";
+}
+
+el.kioskBtn.addEventListener("click", () => {
+  if (document.fullscreenElement) exitKioskMode();
+  else enterKioskMode();
+});
+
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement) {
+    wakeLockSentinel?.release?.();
+    wakeLockSentinel = null;
+    el.kioskBtn.textContent = "Fullscreen + Always On";
+  }
+});
+
+// The wake lock is released by the browser whenever the tab is backgrounded
+// (spec-mandated) - re-acquire it once the tablet's screen comes back.
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible" && document.fullscreenElement && !wakeLockSentinel) {
+    try {
+      wakeLockSentinel = (await navigator.wakeLock?.request("screen")) ?? null;
+    } catch {
+      // best-effort only
+    }
+  }
 });
 
 async function pollRound(host, roundId) {
   try {
     const res = await fetch(`/api/round/${host}/${roundId}`);
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `Fehler ${res.status}`);
+    if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+    lastRoundData = data;
     renderBoard(data);
-    el.statusLine.textContent = `Aktualisiert ${new Date().toLocaleTimeString("de-DE")}`;
+    el.statusLine.textContent = `Updated ${new Date().toLocaleTimeString("en-GB")}`;
     el.statusLine.classList.remove("stale");
   } catch (err) {
-    el.statusLine.textContent = `Verbindung verloren: ${err.message}`;
+    el.statusLine.textContent = `Connection lost: ${err.message}`;
     el.statusLine.classList.add("stale");
   }
 }
@@ -239,16 +311,16 @@ function buildLane(round, route, laneLabelPrefix) {
   if (lane.finished) {
     const done = document.createElement("div");
     done.className = "lane-finished";
-    done.textContent = "Runde beendet";
+    done.textContent = "Round finished";
     laneEl.appendChild(done);
   } else {
-    laneEl.appendChild(makeCard("an der wand", athleteLine(lane.atWall), "at-wall"));
-    laneEl.appendChild(makeCard("nächste·r", athleteLine(lane.onDeck), "on-deck"));
+    laneEl.appendChild(makeCard("at the wall", athleteLine(lane.atWall), "at-wall"));
+    laneEl.appendChild(makeCard("next", athleteLine(lane.onDeck), "on-deck"));
 
     if (lane.queue.length) {
       const list = document.createElement("ol");
       list.className = "queue-list";
-      // "Nächste·r" is implicitly queue position 1, so this list continues from 2.
+      // "Next" is implicitly queue position 1, so this list continues from 2.
       list.setAttribute("start", "2");
       for (const athlete of lane.queue) {
         const li = document.createElement("li");
@@ -260,36 +332,6 @@ function buildLane(round, route, laneLabelPrefix) {
   }
 
   return laneEl;
-}
-
-function renderBoard(round) {
-  el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
-  const laneLabelPrefix = round.discipline === "Speed" ? "Bahn" : "Route";
-
-  el.lanes.innerHTML = "";
-  const routeGroups = collectRouteGroups(round);
-  if (!routeGroups.length) {
-    const empty = document.createElement("div");
-    empty.className = "lane-finished";
-    empty.textContent = "Keine Routen-Daten für diese Runde.";
-    el.lanes.appendChild(empty);
-    return;
-  }
-
-  for (const group of routeGroups) {
-    if (group.groupName) {
-      const groupHeading = document.createElement("div");
-      groupHeading.className = "group-heading";
-      groupHeading.textContent = group.groupName;
-      el.lanes.appendChild(groupHeading);
-    }
-    const grid = document.createElement("div");
-    grid.className = "lanes-grid";
-    for (const route of group.routes) {
-      grid.appendChild(buildLane(round, route, laneLabelPrefix));
-    }
-    el.lanes.appendChild(grid);
-  }
 }
 
 function makeCard(label, text, variant) {
@@ -306,6 +348,202 @@ function makeCard(label, text, variant) {
   return card;
 }
 
+// --- Speed elimination (bracket) rounds ------------------------------------
+//
+// Unlike qualification rounds, a Speed final's heats are pre-computed by
+// results.info itself: as soon as a stage (e.g. "1/8") is fully judged, the
+// next stage's heats are populated with the real advancing athletes (still
+// with ascent status "pending"). So there's no bracket-advancement logic to
+// build here - only "which heat is current" needs the same kind of
+// inference used for qualification routes, at heat granularity instead of
+// athlete granularity.
+
+function heatIsReady(heat) {
+  return (heat.athletes?.length ?? 0) === 2;
+}
+function heatIsDone(heat) {
+  if (!heatIsReady(heat)) return false;
+  return heat.athletes.every((a) => (a.ascents?.[0]?.status ?? "pending") !== "pending");
+}
+
+function computeSpeedElimination(round) {
+  const heats = (round.speed_elimination_stages ?? []).flatMap((stage) =>
+    stage.heats.map((heat) => ({ ...heat, stageName: stage.stage_name }))
+  );
+
+  const currentIndex = heats.findIndex((h) => heatIsReady(h) && !heatIsDone(h));
+  if (currentIndex === -1) {
+    return { finished: heats.length > 0, stageName: null, atWall: null, onDeck: null, queue: [] };
+  }
+
+  const current = heats[currentIndex];
+  // "All heats of this round, in the order the athletes are due" - i.e.
+  // every not-yet-decided heat of the current stage, not just the next one.
+  const remaining = heats.filter((h) => h.stageName === current.stageName && !heatIsDone(h));
+
+  return {
+    finished: false,
+    stageName: current.stageName,
+    atWall: remaining[0] ?? null,
+    onDeck: remaining[1] ?? null,
+    queue: remaining.slice(2, 2 + 6),
+  };
+}
+
+function heatAthleteLine(athlete) {
+  if (!athlete) return "";
+  const bib = athlete.bib ? `#${athlete.bib} · ` : "";
+  const last = athlete.lastname?.toUpperCase() ?? "";
+  return `${bib}${last} ${athlete.firstname ?? ""}`.trim();
+}
+
+function sortedHeatAthletes(heat) {
+  return [...(heat?.athletes ?? [])].sort((a, b) => (a.route_name ?? "").localeCompare(b.route_name ?? ""));
+}
+
+function heatMatchupLine(heat) {
+  return sortedHeatAthletes(heat)
+    .map((a) => `${a.route_name}: ${heatAthleteLine(a)}`)
+    .join("   vs   ");
+}
+
+function makeHeatCard(label, heat, variant) {
+  const card = document.createElement("div");
+  card.className = `card card--${variant}`;
+  const labelEl = document.createElement("div");
+  labelEl.className = "card-label";
+  labelEl.textContent = label;
+  card.appendChild(labelEl);
+
+  const athletes = sortedHeatAthletes(heat);
+  if (!athletes.length) {
+    const textEl = document.createElement("div");
+    textEl.className = "card-athlete";
+    textEl.textContent = "—";
+    card.appendChild(textEl);
+    return card;
+  }
+  for (const athlete of athletes) {
+    const line = document.createElement("div");
+    line.className = "card-athlete card-athlete--heat";
+    line.textContent = `Lane ${athlete.route_name}: ${heatAthleteLine(athlete)}`;
+    card.appendChild(line);
+  }
+  return card;
+}
+
+function renderSpeedElimination(round) {
+  const result = computeSpeedElimination(round);
+
+  const grid = document.createElement("div");
+  grid.className = "lanes-grid";
+
+  const laneEl = document.createElement("section");
+  laneEl.className = "lane";
+
+  const heading = document.createElement("div");
+  heading.className = "lane-heading";
+  heading.textContent = result.stageName ? `Stage: ${result.stageName}` : "Bracket";
+  laneEl.appendChild(heading);
+
+  if (result.finished) {
+    const done = document.createElement("div");
+    done.className = "lane-finished";
+    done.textContent = "Round finished";
+    laneEl.appendChild(done);
+  } else {
+    laneEl.appendChild(makeHeatCard("at the wall", result.atWall, "at-wall"));
+    laneEl.appendChild(makeHeatCard("next", result.onDeck, "on-deck"));
+
+    if (result.queue.length) {
+      const list = document.createElement("ol");
+      list.className = "queue-list";
+      list.setAttribute("start", "2");
+      for (const heat of result.queue) {
+        const li = document.createElement("li");
+        li.textContent = heatMatchupLine(heat);
+        list.appendChild(li);
+      }
+      laneEl.appendChild(list);
+    }
+  }
+
+  grid.appendChild(laneEl);
+  el.lanes.appendChild(grid);
+}
+
+// --- Board rendering ---------------------------------------------------
+
+function renderGroupTabs(groupNames) {
+  el.groupTabs.innerHTML = "";
+  if (groupNames.length < 2) {
+    el.groupTabs.hidden = true;
+    return;
+  }
+  el.groupTabs.hidden = false;
+  for (const name of groupNames) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `group-tab${name === currentSelection.group ? " active" : ""}`;
+    btn.textContent = name;
+    btn.addEventListener("click", () => {
+      if (currentSelection.group === name) return;
+      currentSelection.group = name;
+      saveSelection(currentSelection);
+      el.shareLink.value = buildShareLink(currentSelection);
+      if (lastRoundData) renderBoard(lastRoundData);
+    });
+    el.groupTabs.appendChild(btn);
+  }
+}
+
+function renderBoard(round) {
+  el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
+  el.lanes.innerHTML = "";
+
+  if (round.speed_elimination_stages?.length) {
+    el.groupTabs.hidden = true;
+    renderSpeedElimination(round);
+    return;
+  }
+
+  const laneLabelPrefix = round.discipline === "Speed" ? "Lane" : "Route";
+  const routeGroups = collectRouteGroups(round);
+
+  if (!routeGroups.length) {
+    el.groupTabs.hidden = true;
+    const empty = document.createElement("div");
+    empty.className = "lane-finished";
+    empty.textContent = "No route data for this round.";
+    el.lanes.appendChild(empty);
+    return;
+  }
+
+  const groupNames = routeGroups.map((g) => g.groupName).filter(Boolean);
+  if (groupNames.length >= 2) {
+    // Showing every group's lanes at once doesn't fit a tablet screen well
+    // (e.g. 2 groups x 5 boulders = 10 lanes) - default to one group at a
+    // time, switchable via tabs, and rememberable via the share link/URL.
+    if (!currentSelection.group || !groupNames.includes(currentSelection.group)) {
+      currentSelection.group = groupNames[0];
+    }
+    renderGroupTabs(groupNames);
+  } else {
+    el.groupTabs.hidden = true;
+  }
+
+  for (const group of routeGroups) {
+    if (groupNames.length >= 2 && group.groupName !== currentSelection.group) continue;
+
+    const grid = document.createElement("div");
+    grid.className = "lanes-grid";
+    for (const route of group.routes) {
+      grid.appendChild(buildLane(round, route, laneLabelPrefix));
+    }
+    el.lanes.appendChild(grid);
+  }
+}
+
 el.loadEvent.addEventListener("click", loadEvent);
 el.eventId.addEventListener("keydown", (e) => {
   if (e.key === "Enter") loadEvent();
@@ -318,8 +556,8 @@ if (initial?.eventId && initial?.host) {
   if (initial.roundId) {
     // Jump straight to the board so a bookmarked tablet never has to see
     // the setup screen; loadEvent() below fills the dropdown in the
-    // background for when "andere Runde" is used later.
-    startWatching(initial.host, initial.eventId, initial.roundId);
+    // background for when "switch round" is used later.
+    startWatching(initial.host, initial.eventId, initial.roundId, initial.group ?? null);
   }
   loadEvent().then(() => {
     if (initial.roundId && [...el.roundSelect.options].some((o) => o.value === initial.roundId)) {

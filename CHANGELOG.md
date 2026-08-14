@@ -8,6 +8,49 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
+- **Speed elimination (K.O. bracket) support.** Finals rounds
+  (`speed_elimination_stages` present) now render instead of showing "No
+  route data for this round." Shows the current heat as a lane-vs-lane
+  matchup, plus every other not-yet-decided heat of the same stage in
+  order (e.g. all 4 quarterfinal heats), not just a single next-up preview
+  — per explicit user request. See
+  [ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination)
+  and [§4.4 Quirk F](ARCHITECTURE.md#44-response-shape--the-parts-that-matter-and-their-quirks).
+- **Boulder starting-group tabs.** Rounds with ≥2 groups (e.g. "Group A" /
+  "Group B") now show one group at a time via tab buttons instead of all
+  groups' lanes stacked at once (up to 10 tiles), fixing a reported
+  usability problem on tablet screens. The selected group is part of the
+  per-tablet share link (`&group=`) and saved selection, consistent with
+  the existing round-level deep-linking. See
+  [ARCHITECTURE.md §6.6](ARCHITECTURE.md#66-boulder-starting-group-tabs-default-to-one-group-at-a-time).
+- **Kiosk mode.** New "Fullscreen + Always On" button combines the
+  Fullscreen API and the Screen Wake Lock API behind one action, for
+  tablets mounted at the venue. See
+  [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
+  Requires iPadOS/Safari 16.4+ for the always-on part; verify on the actual
+  hardware before relying on it.
+
+### Changed
+- **UI is now English-only**, replacing the previous German UI text
+  (buttons, labels, error messages). Deliberate choice for international
+  (IFSC) events, not a toggle — see
+  [ARCHITECTURE.md §6.8](ARCHITECTURE.md#68-english-only-ui-no-language-switcher).
+  Maintenance docs (this file's prose aside, `README.md`, `ANLEITUNG.md`,
+  `HOSTING.md`) stay German. `ANLEITUNG.md` updated to reference the new
+  English button labels and to document the two features above.
+
+### Considered, not built
+- **Speed training fallback (manual/offline queue mode).** Training
+  sessions have no results.info round behind them at all, so there's no
+  live data to poll — would need a standalone manually-advanced queue (type
+  in a list, "Next"/"Back" buttons) rather than an API integration fix.
+  Explicitly deferred to a later update per user decision; not started.
+
+---
+
+## 2026-08-14 — `d0301c8` Technische Dokumentation ergaenzen (Architecture, Hosting, Changelog, Agents)
+
+### Added
 - `ARCHITECTURE.md` — full technical documentation: results.info API
   reference, the "who's at the wall" algorithm, and rationale for every
   design decision.
@@ -70,7 +113,7 @@ section number); this file is the *what happened, when* log.
 ### Changed
 - Per-lane label changed from "Wand 1"/"Wand 2" to "Route 1"/"Route 2" (Speed
   keeps "Bahn"). See
-  [ARCHITECTURE.md §6.5](ARCHITECTURE.md#65-naming-route-or-bahn-for-speed-not-wand).
+  [ARCHITECTURE.md §6.5](ARCHITECTURE.md#65-naming-route-or-lane-for-speed-not-wandbahn).
 
 ### Added
 - `ifsc.results.info` (IFSC/World Cup competitions) as a third selectable
