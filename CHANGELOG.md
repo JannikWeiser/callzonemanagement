@@ -26,12 +26,13 @@ section number); this file is the *what happened, when* log.
   queued multiple times, this lets a schedule alternate stage-by-stage
   between two (or more) categories' finals (Round-of-16 cat 1, Round-of-16
   cat 2, Quarterfinals cat 1, Quarterfinals cat 2, ...) instead of running
-  one bracket to completion before starting the next. A new "+ Add
-  interleaved pair" shortcut (two category dropdowns + one button, shown
-  whenever an event has 2+ elimination rounds) auto-generates a long
-  alternating sequence for the common two-category case in one click,
-  instead of adding each stage-mode entry by hand. Share link's `&rounds=`
-  param gains an optional `:stage` suffix per entry. See
+  one bracket to completion before starting the next. A new "Match finals
+  (Speed)" checkbox next to the round dropdown (shown whenever the selected
+  round is an elimination round and another one exists to pair it with)
+  auto-generates a 5-stage alternating sequence between the selected round
+  and a chosen opponent category in one "+ Add to sequence" click, instead
+  of adding each stage-mode entry by hand. Share link's `&rounds=` param
+  gains an optional `:stage` suffix per entry. See
   [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-stage-limited-sequence-entries-interleaving-finals-between-categories).
 - **Sequence mode: an ordered, auto-advancing playlist of rounds.** Setup
   screen gained "+ Add to sequence" (next to the existing single-round

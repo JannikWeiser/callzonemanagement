@@ -40,16 +40,14 @@
     <button id="watchRound">Show</button>
   </div>
 
-  <div id="interleaveRow" class="setup-row" hidden>
-    <label class="grow">
-      Interleave two Speed finals (alternates stage-by-stage)
-      <select id="interleaveA"></select>
+  <div id="matchFinalsRow" class="setup-row" hidden>
+    <label class="checkbox-label">
+      <input id="matchFinalsCheckbox" type="checkbox" />
+      Match finals (Speed) — alternate stage-by-stage with
     </label>
     <label class="grow">
-      with
-      <select id="interleaveB"></select>
+      <select id="matchFinalsOpponent"></select>
     </label>
-    <button id="addInterleavedPair" class="ghost">+ Add interleaved pair</button>
   </div>
 
   <div id="sequenceRow" class="sequence-row" hidden>

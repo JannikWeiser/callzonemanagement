@@ -1,8 +1,8 @@
 const STORAGE_KEY = "callzone-selection";
-// How many alternating A/B stage-limited entries the "interleaved pair"
-// shortcut generates - deeper than any realistic elimination bracket
-// (1/32-final down to Final is 6 stages), see the addInterleavedPair handler.
-const INTERLEAVE_REPEATS = 8;
+// How many alternating A/B stage-limited entries "Match finals" generates -
+// covers the typical Speed final stage count (1/8, 1/4, 1/2, small final,
+// big final = 5), see the addToSequence handler's match-finals branch.
+const INTERLEAVE_REPEATS = 5;
 
 const el = {
   eventId: document.getElementById("eventId"),
@@ -17,10 +17,9 @@ const el = {
   sequenceRow: document.getElementById("sequenceRow"),
   sequenceList: document.getElementById("sequenceList"),
   watchSequence: document.getElementById("watchSequence"),
-  interleaveRow: document.getElementById("interleaveRow"),
-  interleaveA: document.getElementById("interleaveA"),
-  interleaveB: document.getElementById("interleaveB"),
-  addInterleavedPair: document.getElementById("addInterleavedPair"),
+  matchFinalsRow: document.getElementById("matchFinalsRow"),
+  matchFinalsCheckbox: document.getElementById("matchFinalsCheckbox"),
+  matchFinalsOpponent: document.getElementById("matchFinalsOpponent"),
   setup: document.getElementById("setup"),
   board: document.getElementById("board"),
   backBtn: document.getElementById("backBtn"),
@@ -186,21 +185,28 @@ function populateRounds(eventData, host, eventId) {
   el.categoryRow.hidden = entries.length === 0;
   if (entries.length === 0) showError("This event has no categories/rounds.");
 
-  // Only Speed elimination rounds have stages to interleave on - quali
+  // Only Speed elimination rounds have stages to match against - quali
   // rounds and non-Speed finals have nothing analogous (6.12).
   const eliminationEntries = entries.filter((e) => e.isElimination);
-  el.interleaveRow.hidden = eliminationEntries.length < 2;
-  el.interleaveA.innerHTML = "";
-  el.interleaveB.innerHTML = "";
-  for (const entry of eliminationEntries) {
-    for (const select of [el.interleaveA, el.interleaveB]) {
-      const opt = document.createElement("option");
-      opt.value = entry.roundId;
-      opt.textContent = `${entry.label} (${STATUS_LABEL[entry.status] ?? entry.status})`;
-      select.appendChild(opt);
+
+  function updateMatchFinalsVisibility() {
+    const opt = el.roundSelect.selectedOptions[0];
+    // entry.roundId comes straight from the API as a number; opt.value is
+    // always a string - compare as strings or self ends up in its own list.
+    const opponents = eliminationEntries.filter((e) => String(e.roundId) !== opt?.value);
+    const eligible = opt?.dataset.elimination === "1" && opponents.length > 0;
+    el.matchFinalsRow.hidden = !eligible;
+    if (!eligible) el.matchFinalsCheckbox.checked = false;
+    el.matchFinalsOpponent.innerHTML = "";
+    for (const entry of opponents) {
+      const o = document.createElement("option");
+      o.value = entry.roundId;
+      o.textContent = `${entry.label} (${STATUS_LABEL[entry.status] ?? entry.status})`;
+      el.matchFinalsOpponent.appendChild(o);
     }
   }
-  if (eliminationEntries.length > 1) el.interleaveB.selectedIndex = 1;
+  el.roundSelect.onchange = updateMatchFinalsVisibility;
+  updateMatchFinalsVisibility();
 
   el.watchRound.onclick = () => {
     const roundId = el.roundSelect.value;
@@ -211,25 +217,23 @@ function populateRounds(eventData, host, eventId) {
   el.addToSequence.onclick = () => {
     const opt = el.roundSelect.selectedOptions[0];
     if (!opt) return;
-    sequenceBuilder.push({
-      roundId: opt.value,
-      label: opt.textContent,
-      isElimination: opt.dataset.elimination === "1",
-      stage: false,
-    });
-    renderSequenceBuilder();
-  };
-
-  el.addInterleavedPair.onclick = () => {
-    const optA = el.interleaveA.selectedOptions[0];
-    const optB = el.interleaveB.selectedOptions[0];
-    if (!optA || !optB || optA.value === optB.value) return;
-    // Generously over-provisioned: excess entries for an already-finished
-    // stage are skipped instantly by isSequenceEntryDone/pollCurrent, so we
-    // don't need to know each bracket's actual depth ahead of time.
-    for (let i = 0; i < INTERLEAVE_REPEATS; i++) {
-      sequenceBuilder.push({ roundId: optA.value, label: optA.textContent, isElimination: true, stage: true });
-      sequenceBuilder.push({ roundId: optB.value, label: optB.textContent, isElimination: true, stage: true });
+    if (el.matchFinalsCheckbox.checked && opt.dataset.elimination === "1") {
+      const oppOpt = el.matchFinalsOpponent.selectedOptions[0];
+      if (!oppOpt) return;
+      // Over-provisioned beyond the typical 5 Speed final stages so excess
+      // entries just get skipped instantly by isSequenceEntryDone/
+      // pollCurrent once both brackets are actually finished.
+      for (let i = 0; i < INTERLEAVE_REPEATS; i++) {
+        sequenceBuilder.push({ roundId: opt.value, label: opt.textContent, isElimination: true, stage: true });
+        sequenceBuilder.push({ roundId: oppOpt.value, label: oppOpt.textContent, isElimination: true, stage: true });
+      }
+    } else {
+      sequenceBuilder.push({
+        roundId: opt.value,
+        label: opt.textContent,
+        isElimination: opt.dataset.elimination === "1",
+        stage: false,
+      });
     }
     renderSequenceBuilder();
   };
@@ -894,6 +898,9 @@ if (initial?.eventId && initial?.host) {
     const firstRoundId = initial.rounds?.[0]?.id;
     if (firstRoundId && [...el.roundSelect.options].some((o) => o.value === firstRoundId)) {
       el.roundSelect.value = firstRoundId;
+      // Setting .value programmatically doesn't fire "change" - nudge the
+      // match-finals visibility (wired to onchange in populateRounds) by hand.
+      el.roundSelect.onchange?.();
     }
   });
 }

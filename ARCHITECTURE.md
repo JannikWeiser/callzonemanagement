@@ -705,22 +705,35 @@ through their whole bracket, doing this by hand turned out to be "sehr
 aufwendig" (very tedious) in practice, which is what motivated the
 shortcut below.
 
-**Shortcut — "+ Add interleaved pair":** a second, simpler entry point for
-the common case. `#interleaveRow` (hidden unless the loaded event has at
-least two elimination-format rounds) offers two dropdowns, pre-populated
-from the same `isElimination`-filtered round list; picking round A and
-round B and clicking the button pushes `INTERLEAVE_REPEATS` (8, i.e. 16
-entries total) alternating `{roundId: A, stage: true}, {roundId: B, stage:
-true}` pairs onto `sequenceBuilder` in one click, then falls through to the
-same `renderSequenceBuilder()` / drag-to-reorder / per-entry mode toggle as
-manually-added entries — it's a bulk-insert convenience, not a separate
-code path. 8 repetitions is deliberately more than any realistic bracket
-needs (a 1/32-final-to-Final elimination tree is at most 6 stages); the
-excess entries aren't wasted because of the next paragraph's insight —
+**Shortcut — "Match finals (Speed)":** a bulk-insert convenience layered
+onto the same "+ Add to sequence" button used for everything else, not a
+separate button/code path. `#matchFinalsRow` appears below the round
+dropdown whenever the currently-selected round is elimination-format *and*
+the event has at least one other elimination round to pair it with
+(`updateMatchFinalsVisibility()`, wired to `roundSelect.onchange` so it
+re-evaluates every time the selection changes — including the initial
+selection restored from a bookmark/localStorage, which sets `.value`
+programmatically and therefore needs the change handler nudged by hand
+since that doesn't fire a native `change` event). Checking the box and
+picking an opponent category, then clicking "+ Add to sequence", pushes
+`INTERLEAVE_REPEATS` (5, i.e. 10 entries total — covers the typical Speed
+final stage count: 1/8, 1/4, 1/2, small final, big final) alternating
+`{roundId: current, stage: true}, {roundId: opponent, stage: true}` pairs
+onto `sequenceBuilder` instead of the single plain entry a normal "+ Add to
+sequence" click would push. From there it's the same
+`renderSequenceBuilder()` / drag-to-reorder / per-entry mode toggle as any
+manually-added entry. If a bracket runs deeper than 5 stages, the excess
+is harmless rather than wasted, thanks to the next paragraph's insight:
 once both brackets are actually finished, `isSequenceEntryDone()` reports
 every remaining paired entry as instantly done, and `pollCurrent()`'s
-catch-up loop skips through all of them in one tick. This means the
-shortcut never needs to know a bracket's real depth ahead of time.
+catch-up loop skips through all of them in one tick.
+
+**Opponent list excludes the round itself:** `eliminationEntries[].roundId`
+comes straight off the API as a number, while `<select>` values are always
+strings — comparing them with `!==` without coercion silently fails to
+exclude the current round from its own opponent dropdown (a real bug hit
+while building this; fixed by comparing `String(e.roundId) !== opt.value`).
+Worth remembering if this list ever needs touching again.
 
 **Why re-queuing the same round "just works" — no extra state needed:**
 `computeSpeedElimination()` (5.5) already derives "which stage is current"

@@ -130,15 +130,17 @@ Startklasse 1 und 2, dann das Viertelfinale von beiden, dann Halbfinale
 usw. – erst wenn beide K.-o.-Bäume fertig sind, geht's mit der nächsten
 Startklassen-Kombination weiter.
 
-**Der einfache Weg – "+ Add interleaved pair":**
+**Der einfache Weg – "Match finals (Speed)":**
 
-1. Event laden wie in Schritt 3. Sobald das Event mindestens zwei
-   Speed-Finalrunden hat, erscheint ein neuer Bereich **„Interleave two
-   Speed finals"** mit zwei Dropdowns.
-2. Die beiden gewünschten Startklassen auswählen (z. B. „SPEED Herren+ —
-   Finale" und „SPEED U15+ Männlich — Finale").
-3. Auf **„+ Add interleaved pair"** klicken. Die App füllt die Sequenz-Liste
-   darunter automatisch mit dem abwechselnden Muster.
+1. Wie in Schritt 5 eine Speed-Finalrunde im Dropdown auswählen. Sobald es
+   noch eine zweite Speed-Finalrunde im Event gibt, erscheint darunter ein
+   neuer Haken **„Match finals (Speed) — alternate stage-by-stage with"**
+   mit einem Dropdown daneben.
+2. Haken setzen und im Dropdown die zweite Startklasse auswählen (z. B.
+   „SPEED U15+ Männlich — Finale").
+3. Auf **„+ Add to sequence"** klicken. Statt eines einzelnen Eintrags
+   erscheint automatisch das abwechselnde Muster (5× pro Startklasse) in
+   der Sequenz-Liste darunter.
 4. Wie gewohnt auf **„Show sequence"** klicken.
 
 Die Anzeige zeigt dann automatisch immer nur die aktuell offene Stufe der
@@ -147,13 +149,14 @@ Startklasse, sobald deren Stufe (z. B. das Achtelfinale) fertig gewertet
 ist – bis beide K.-o.-Bäume komplett durchgelaufen sind.
 
 **Der manuelle Weg (mehr Kontrolle, z. B. für mehr als zwei Startklassen
-oder unregelmäßige Muster):** wie in Schritt 5 jede Runde per
-„+ Add to sequence" einzeln hinzufügen, dabei aber bei jedem
-Speed-Finale-Eintrag in der Liste per Dropdown **„next stage only"** statt
-„whole round" wählen. Dieselbe Runde lässt sich beliebig oft in die Liste
-einfügen – so entsteht z. B. „Achtelfinale Klasse 1 (next stage only),
-Achtelfinale Klasse 2 (next stage only), Viertelfinale Klasse 1, ...", ganz
-nach Bedarf per Drag & Drop sortiert.
+oder unregelmäßige Muster):** wie in Schritt 5 jede Runde einzeln per
+„+ Add to sequence" hinzufügen (Haken bei „Match finals" dabei **nicht**
+setzen), dabei aber bei jedem Speed-Finale-Eintrag in der Liste per
+Dropdown **„next stage only"** statt „whole round" wählen. Dieselbe Runde
+lässt sich beliebig oft in die Liste einfügen – so entsteht z. B.
+„Achtelfinale Klasse 1 (next stage only), Achtelfinale Klasse 2 (next stage
+only), Viertelfinale Klasse 1, ...", ganz nach Bedarf per Drag & Drop
+sortiert.
 
 ## 7. Speed-Training (ohne Live-Ergebnisse)
 
