@@ -8,32 +8,6 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
-- **Training mode: manual advance through the same roster/order as
-  qualification.** For Speed training sessions, which have no live results
-  to poll (results.info has nothing to infer "who's climbing" from). A
-  "Training mode (manual advance)" checkbox on the single-round Show button
-  reuses the selected round's startlist order and adds a shared Next/Back
-  control that steps every lane forward together in lockstep, instead of
-  driving off ascent status. Not composable with sequence mode, and the
-  manual position doesn't persist across reloads (always restarts at the
-  first athlete). See
-  [ARCHITECTURE.md §6.11](ARCHITECTURE.md#611-training-mode-manual-advance-same-rosterorder-as-qualification).
-- **Stage-limited sequence entries, for interleaving Speed finals between
-  categories.** Elimination-format rounds (`speed_elimination_ifsc_2026`)
-  can now be added to a sequence in "next stage only" mode instead of
-  "whole round" — the sequence advances once the *current stage* of the
-  bracket is done, not the whole thing. Because the same round can be
-  queued multiple times, this lets a schedule alternate stage-by-stage
-  between two (or more) categories' finals (Round-of-16 cat 1, Round-of-16
-  cat 2, Quarterfinals cat 1, Quarterfinals cat 2, ...) instead of running
-  one bracket to completion before starting the next. A new "Match finals
-  (Speed)" checkbox next to the round dropdown (shown whenever the selected
-  round is an elimination round and another one exists to pair it with)
-  auto-generates a 5-stage alternating sequence between the selected round
-  and a chosen opponent category in one "+ Add to sequence" click, instead
-  of adding each stage-mode entry by hand. Share link's `&rounds=` param
-  gains an optional `:stage` suffix per entry. See
-  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-stage-limited-sequence-entries-interleaving-finals-between-categories).
 - **Sequence mode: an ordered, auto-advancing playlist of rounds.** Setup
   screen gained "+ Add to sequence" (next to the existing single-round
   dropdown, which is unchanged) and a drag-to-reorder list; "Show sequence"

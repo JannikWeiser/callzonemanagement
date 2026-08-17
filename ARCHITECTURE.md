@@ -585,17 +585,14 @@ clicking "switch round" every time one class wraps up.
 it: "+ Add to sequence" appends the currently-selected round to a
 reorderable list (native HTML5 drag-and-drop, no library), and "Show
 sequence" starts watching the whole ordered list. Internally,
-`currentSelection.rounds` is *always* an array of `{ id, stage }` — a
-single "Show" click is just an array of length 1 with `stage: false` — so
-there's exactly one code path for both cases, not two parallel ones. (The
-`stage` flag is what powers interleaving between rounds — see 6.12.)
+`currentSelection.roundIds` is *always* an array — a single "Show" click is
+just an array of length 1 — so there's exactly one code path for both
+cases, not two parallel ones.
 
 **Auto-advance mechanism (`pollCurrent()`):** each poll checks
-`isSequenceEntryDone()` on the round currently being shown — for a normal
-entry this is `isRoundFullyFinished()` (every lane/group/heat done, not
-just the one visible group tab happens to be on); for a `stage: true` entry
-it's a narrower per-stage check, see 6.12. If done and the sequence has a
-next entry, it fetches and renders
+`isRoundFullyFinished()` on the round currently being shown (every
+lane/group/heat done, not just the one visible group tab happens to be
+on). If finished and the sequence has a next entry, it fetches and renders
 that next round **immediately**, in a loop, rather than waiting for the
 next 3s timer tick — so a tablet that reloads mid-event (or loads a
 sequence where the first few rounds already finished before it was even
@@ -607,8 +604,8 @@ state — simpler to implement correctly than a "was this round watched
 before it finished vs. already-finished on load" distinction, and revisit
 only if the abruptness turns out to matter in practice.
 
-**Why `sequenceIndex` isn't persisted, only `rounds` is:** the share
-link/`localStorage` capture the *configured sequence* (`?rounds=id1,id2:stage,id3`,
+**Why `sequenceIndex` isn't persisted, only `roundIds` is:** the share
+link/`localStorage` capture the *configured sequence* (`?rounds=id1,id2,id3`,
 back-compat `?round=id` for a single round — see `readUrlSelection()`), not
 which entry is currently showing. On every load, `sequenceIndex` restarts
 at 0 and the catch-up behavior above immediately fast-forwards to the right
@@ -624,145 +621,7 @@ just because whichever group tab a given tablet happens to have selected
 finished first — `isRoundFullyFinished()` deliberately checks every group's
 every route via `collectRouteGroups()`, independent of `currentSelection.group`.
 
-### 6.11 Training mode: manual advance, same roster/order as qualification
-
-**Problem this solves:** Speed training sessions don't exist as a scored
-round in results.info at all — there's no live ascent data to poll, so the
-usual `findCurrentIndex()` inference (5.2) has nothing to work with. But
-per the user, training's start order is always the same as the real
-qualification round's — same roster, same per-lane positions.
-
-**Decision:** reuse the *exact same* round-selection UI (Event ID → server
-→ round dropdown) rather than building a separate "type in a roster"
-screen — whatever round is picked (typically the real, not-yet-run
-Qualification round, or a dedicated results.info round set up ahead of
-time with the same start order) supplies `round.startlist` /
-`route_start_positions` exactly as in live mode. A **"Training mode
-(manual advance)" checkbox** next to "Show" switches how "at the wall" is
-determined for that viewing session: instead of `findCurrentIndex()`
-reading ascent status, a plain integer `trainingIndex` (module state,
-starts at 0) is used directly as the position into
-`orderedAthletesForRoute()` — the same start-order builder `computeLane()`
-uses internally, now extracted as its own function specifically so
-training mode could reuse it without duplicating the position/sort logic.
-
-**One shared index across all lanes, not one per lane:** confirmed with
-the user (they run both lanes together, e.g. paired practice runs) — a
-single "Next"/"Back" pair on the board increments/decrements one
-`trainingIndex` that's read by *every* lane shown, Boulder-group tabs
-included. This is deliberately simpler than giving Lane A and Lane B (or
-each Boulder group) independent pointers; revisit only if a genuinely
-per-lane-independent training format comes up.
-
-**Rendering reuse:** `renderLaneBody()` was factored out of `buildLane()`
-specifically for this — it turns `{ atWall, onDeck, queue, finished }` into
-the three familiar cards, regardless of whether those four values came
-from live ascent-status inference (`buildLane`) or a manual click
-(`buildTrainingLane`). `renderBoard()` picks one or the other per route
-based on `currentSelection.training`, everything else (group tabs, lane
-grid layout) is unchanged.
-
-**Explicitly not composable with sequence mode:** sequence auto-advance
-(6.10) needs `isSequenceEntryDone()` to read live results to know when to
-move on; training mode has none. `el.watchSequence`'s click handler always
-passes `training: false` — building a sequence of training rounds isn't
-supported (nothing would ever trigger advancing). If that's wanted later,
-it needs a manual "mark this entry done, advance" control, not automatic
-detection.
-
-**Not persisted across reloads:** `trainingIndex` always restarts at 0 on
-load/reload — a tablet crash or accidental reload mid-training means
-re-clicking "Next" back up to where you were. Chosen for simplicity in the
-first version; revisit if this proves annoying in practice (would need
-per-round manual-progress persistence, which nothing else in this app does
-today).
-
-### 6.12 Stage-limited sequence entries (interleaving finals between categories)
-
-**Problem this solves:** a Speed event schedule commonly doesn't run one
-category's whole final bracket before starting the next — it interleaves
-by *stage* across categories to keep a single wall busy efficiently, e.g.
-Round-of-16 for categories 1 and 2, then Quarterfinals for 1 and 2, ...,
-finish both brackets, *then* Qualification for categories 3 and 4, then
-their Round-of-16/Quarterfinals/... interleaved the same way. Sequence mode
-as originally built (6.10) treats a round as atomic — it can't stop
-partway through a bracket and come back later.
-
-**Decision — extend, don't replace:** each sequence entry gained a
-`stage: boolean` flag (only offered in the UI for rounds whose
-`format_identifier` is `speed_elimination_ifsc_2026`, captured via
-`opt.dataset.elimination` when the round is added — quali rounds have
-nothing analogous, so the toggle doesn't apply to them and isn't shown).
-The **same round ID can be queued multiple times** — nothing dedupes
-`sequenceBuilder` — so building the interleaved schedule above is just:
-add Round-of-16 for cat 1 (stage mode), cat 2 (stage mode), cat 1 again
-(stage mode), cat 2 again, ..., then cat 3/4's Qualification (plain "whole
-round" mode, added once each), then repeat the stage-mode pattern for
-cat 3/4. This gives full manual control over the exact interleave pattern
-(e.g. inserting a third category mid-sequence, or breaking the alternation
-early) — but for the common case of just alternating two categories
-through their whole bracket, doing this by hand turned out to be "sehr
-aufwendig" (very tedious) in practice, which is what motivated the
-shortcut below.
-
-**Shortcut — "Match finals (Speed)":** a bulk-insert convenience layered
-onto the same "+ Add to sequence" button used for everything else, not a
-separate button/code path. `#matchFinalsRow` appears below the round
-dropdown whenever the currently-selected round is elimination-format *and*
-the event has at least one other elimination round to pair it with
-(`updateMatchFinalsVisibility()`, wired to `roundSelect.onchange` so it
-re-evaluates every time the selection changes — including the initial
-selection restored from a bookmark/localStorage, which sets `.value`
-programmatically and therefore needs the change handler nudged by hand
-since that doesn't fire a native `change` event). Checking the box and
-picking an opponent category, then clicking "+ Add to sequence", pushes
-`INTERLEAVE_REPEATS` (5, i.e. 10 entries total — covers the typical Speed
-final stage count: 1/8, 1/4, 1/2, small final, big final) alternating
-`{roundId: current, stage: true}, {roundId: opponent, stage: true}` pairs
-onto `sequenceBuilder` instead of the single plain entry a normal "+ Add to
-sequence" click would push. From there it's the same
-`renderSequenceBuilder()` / drag-to-reorder / per-entry mode toggle as any
-manually-added entry. If a bracket runs deeper than 5 stages, the excess
-is harmless rather than wasted, thanks to the next paragraph's insight:
-once both brackets are actually finished, `isSequenceEntryDone()` reports
-every remaining paired entry as instantly done, and `pollCurrent()`'s
-catch-up loop skips through all of them in one tick.
-
-**Opponent list excludes the round itself:** `eliminationEntries[].roundId`
-comes straight off the API as a number, while `<select>` values are always
-strings — comparing them with `!==` without coercion silently fails to
-exclude the current round from its own opponent dropdown (a real bug hit
-while building this; fixed by comparing `String(e.roundId) !== opt.value`).
-Worth remembering if this list ever needs touching again.
-
-**Why re-queuing the same round "just works" — no extra state needed:**
-`computeSpeedElimination()` (5.5) already derives "which stage is current"
-from live ascent data on every call, not from any memory of what was shown
-last time. So the *second* time a round appears in the sequence, it's
-simply queried fresh again, and naturally reports whatever the next
-unfinished stage is — there's nothing to "resume", the live data already
-encodes it.
-
-**Advance condition (`isSequenceEntryDone()`):** a `stage: true` entry
-advances once `computeSpeedElimination(round).heats.length === 0` — which
-is true in exactly the two situations that mean "nothing left to show for
-*this* stage": the stage is fully confirmed and the next one isn't
-populated yet (5.5's "waiting for next stage" transition), or the whole
-bracket is finished. Either way, it's time to cede the wall to the next
-sequence entry; a `stage: false` entry (or any non-elimination round)
-still uses the original `isRoundFullyFinished()` whole-round check
-unchanged. Verified directly against a live bracket by mocking a stage's
-ascents to `"confirmed"` and confirming `computeSpeedElimination()`
-immediately reports the next stage, with `heats.length === 0` exactly at
-the "waiting for next stage" boundary.
-
-**URL encoding:** a `stage: true` entry is written as `id:stage` inside the
-comma-separated `rounds=` param (e.g. `rounds=13781:stage,13782:stage`);
-absence of the suffix means `stage: false`. Kept inside the existing
-`rounds` param rather than a parallel one, since a stage flag only ever
-makes sense attached to a specific round ID.
-
-### 6.13 Hosting: Render (Blueprint) over alternatives
+### 6.11 Hosting: Render (Blueprint) over alternatives
 
 **Why not GitHub Pages alone:** static-only, cannot run the proxy (6.1) —
 a hard requirement, not a preference.
@@ -786,12 +645,11 @@ an architectural one, so it lives in the deployment doc rather than here.
   results.info can export) — the current/next/queue heat-list view (5.5) is
   the supported approach; a graphical tree would be a materially different,
   separately-scoped feature.
-- **Training-progress persistence across reloads** — `trainingIndex` (6.11)
-  always restarts at 0; a mid-session reload means manually re-advancing.
-  Deferred until it proves annoying in practice, not because it's hard.
-- **Training mode inside a sequence** — sequence auto-advance needs live
-  results to detect "done" (6.10); training mode has none. Combining them
-  would need a manual "mark done, advance" control that doesn't exist yet.
+- **Speed training / any session with no results.info round behind it** —
+  there's no API data at all in that case (no event, no round, no ascents).
+  A manual/offline queue-advance mode has been discussed but is explicitly
+  deferred, not implemented — see `CHANGELOG.md` "Unreleased — Considered,
+  not built".
 - **A language switcher** — the UI is English-only by deliberate choice
   (6.8), not because a toggle wasn't considered.
 - **Authentication / access control** — the app has none by design; the

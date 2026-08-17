@@ -49,22 +49,6 @@ h1 {
 
 .setup-row label.grow { flex: 1; min-width: 260px; }
 
-.setup-row label.checkbox-label {
-  flex-direction: row;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.9rem;
-  color: var(--text);
-  white-space: nowrap;
-}
-.checkbox-label input[type="checkbox"] {
-  width: 1.1rem;
-  height: 1.1rem;
-  min-width: 0;
-  padding: 0;
-  accent-color: var(--accent);
-}
-
 .sequence-row {
   margin: 0 0 1.5rem;
   max-width: 560px;
@@ -97,14 +81,7 @@ h1 {
   cursor: grab;
 }
 .sequence-item.dragging { opacity: 0.4; }
-.sequence-item span { overflow-wrap: anywhere; flex: 1; }
-
-.sequence-mode {
-  font-size: 0.8rem;
-  padding: 0.3rem 0.5rem;
-  min-width: 0;
-  flex-shrink: 0;
-}
+.sequence-item span { overflow-wrap: anywhere; }
 
 .sequence-remove {
   background: transparent;
@@ -191,29 +168,6 @@ button.ghost {
   min-width: 0;
   font-size: 0.85rem;
   color: var(--muted);
-}
-
-.training-controls {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1.25rem;
-  padding: 0.75rem 1rem;
-  background: var(--panel);
-  border: 1px solid #333846;
-  border-radius: 12px;
-}
-
-.training-label {
-  flex: 1;
-  color: var(--muted);
-  font-size: 0.9rem;
-  text-align: center;
-}
-
-.training-controls button {
-  font-size: 1.1rem;
-  padding: 0.75rem 1.5rem;
 }
 
 .group-tabs {

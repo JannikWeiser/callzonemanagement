@@ -1,8 +1,4 @@
 const STORAGE_KEY = "callzone-selection";
-// How many alternating A/B stage-limited entries "Match finals" generates -
-// covers the typical Speed final stage count (1/8, 1/4, 1/2, small final,
-// big final = 5), see the addToSequence handler's match-finals branch.
-const INTERLEAVE_REPEATS = 5;
 
 const el = {
   eventId: document.getElementById("eventId"),
@@ -13,22 +9,15 @@ const el = {
   roundSelect: document.getElementById("roundSelect"),
   addToSequence: document.getElementById("addToSequence"),
   watchRound: document.getElementById("watchRound"),
-  trainingCheckbox: document.getElementById("trainingCheckbox"),
   sequenceRow: document.getElementById("sequenceRow"),
   sequenceList: document.getElementById("sequenceList"),
   watchSequence: document.getElementById("watchSequence"),
-  matchFinalsRow: document.getElementById("matchFinalsRow"),
-  matchFinalsCheckbox: document.getElementById("matchFinalsCheckbox"),
-  matchFinalsOpponent: document.getElementById("matchFinalsOpponent"),
   setup: document.getElementById("setup"),
   board: document.getElementById("board"),
   backBtn: document.getElementById("backBtn"),
   kioskBtn: document.getElementById("kioskBtn"),
   roundTitle: document.getElementById("roundTitle"),
   statusLine: document.getElementById("statusLine"),
-  trainingControls: document.getElementById("trainingControls"),
-  trainingBack: document.getElementById("trainingBack"),
-  trainingNext: document.getElementById("trainingNext"),
   groupTabs: document.getElementById("groupTabs"),
   lanes: document.getElementById("lanes"),
   shareRow: document.getElementById("shareRow"),
@@ -41,14 +30,10 @@ let lastRoundData = null;
 
 // Tracks what the currently-watched board is showing, so re-renders (poll
 // ticks, group-tab clicks) and the share link stay in sync without having
-// to thread these values through every function call. `rounds` is always
-// an array of { id, stage } - a single round is just an array of length 1
-// (stage: false) - see "Sequence mode" below. `stage: true` means "advance
-// past this entry once its current Speed-elimination stage finishes",
-// instead of waiting for the whole round/bracket to finish - what lets the
-// same round be queued multiple times to interleave with other rounds
-// stage-by-stage (e.g. alternating Round-of-16 between two categories).
-let currentSelection = null; // { host, eventId, rounds, group, training }
+// to thread these values through every function call. `roundIds` is always
+// an array - a single round is just an array of length 1 - see "Sequence
+// mode" below.
+let currentSelection = null; // { host, eventId, roundIds, group }
 
 // Which round of the sequence is currently showing. Always restarts at 0
 // on load/reload rather than being persisted - pollCurrent() catches up
@@ -57,13 +42,8 @@ let currentSelection = null; // { host, eventId, rounds, group, training }
 let sequenceIndex = 0;
 
 // Rounds queued up on the setup screen before "Show sequence" is clicked -
-// { roundId, label, isElimination, stage }[], purely local UI state.
+// { roundId, label }[], purely local UI state.
 let sequenceBuilder = [];
-
-// Training mode: a manually-advanced pointer (no live results to poll -
-// see startWatching/buildTrainingLane) shared across every lane shown, so
-// one "Next"/"Back" moves every lane forward/back together in lockstep.
-let trainingIndex = 0;
 
 function saveSelection(sel) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sel));
@@ -79,43 +59,27 @@ function loadSelection() {
 // Lets each tablet be bookmarked straight to "its" category (and, for
 // Boulder rounds with groups, "its" group), so it doesn't need the setup
 // screen on every reload - see buildShareLink/startWatching. `rounds`
-// (comma-separated, each entry optionally suffixed `:stage`) is the
-// sequence-mode form; `round` (singular) is the original single-round
-// form, still read for backwards compatibility with links generated
-// before sequences existed.
-function parseRoundsParam(raw) {
-  return raw
-    .split(",")
-    .filter(Boolean)
-    .map((token) => {
-      const [id, mode] = token.split(":");
-      return { id, stage: mode === "stage" };
-    });
-}
-
+// (comma-separated) is the sequence-mode form; `round` (singular) is the
+// original single-round form, still read for backwards compatibility with
+// links generated before sequences existed.
 function readUrlSelection() {
   const params = new URLSearchParams(location.search);
   const host = params.get("host");
   const eventId = params.get("event");
   const group = params.get("group");
-  const training = params.get("training") === "1";
   const roundsParam = params.get("rounds");
   const roundParam = params.get("round");
-  const rounds = roundsParam ? parseRoundsParam(roundsParam) : roundParam ? [{ id: roundParam, stage: false }] : null;
-  return host && eventId ? { host, eventId, rounds, group, training } : null;
+  const roundIds = roundsParam ? roundsParam.split(",").filter(Boolean) : roundParam ? [roundParam] : null;
+  return host && eventId ? { host, eventId, roundIds, group } : null;
 }
 
-function buildShareLink({ host, eventId, rounds, group, training }) {
+function buildShareLink({ host, eventId, roundIds, group }) {
   const url = new URL(location.pathname, location.origin);
   url.searchParams.set("host", host);
   url.searchParams.set("event", eventId);
-  if (rounds.length > 1) {
-    url.searchParams.set("rounds", rounds.map((r) => (r.stage ? `${r.id}:stage` : r.id)).join(","));
-  } else {
-    url.searchParams.set("round", rounds[0].id);
-  }
+  if (roundIds.length > 1) url.searchParams.set("rounds", roundIds.join(","));
+  else url.searchParams.set("round", roundIds[0]);
   if (group) url.searchParams.set("group", group);
-  if (training) url.searchParams.set("training", "1");
   return url.toString();
 }
 
@@ -167,7 +131,6 @@ function populateRounds(eventData, host, eventId) {
         roundId: round.category_round_id,
         label: `${dcat.dcat_name} — ${round.name}`,
         status: round.status,
-        isElimination: round.format_identifier === "speed_elimination_ifsc_2026",
       });
     }
   }
@@ -179,62 +142,21 @@ function populateRounds(eventData, host, eventId) {
     const opt = document.createElement("option");
     opt.value = entry.roundId;
     opt.textContent = `${entry.label} (${STATUS_LABEL[entry.status] ?? entry.status})`;
-    opt.dataset.elimination = entry.isElimination ? "1" : "";
     el.roundSelect.appendChild(opt);
   }
   el.categoryRow.hidden = entries.length === 0;
   if (entries.length === 0) showError("This event has no categories/rounds.");
 
-  // Only Speed elimination rounds have stages to match against - quali
-  // rounds and non-Speed finals have nothing analogous (6.12).
-  const eliminationEntries = entries.filter((e) => e.isElimination);
-
-  function updateMatchFinalsVisibility() {
-    const opt = el.roundSelect.selectedOptions[0];
-    // entry.roundId comes straight from the API as a number; opt.value is
-    // always a string - compare as strings or self ends up in its own list.
-    const opponents = eliminationEntries.filter((e) => String(e.roundId) !== opt?.value);
-    const eligible = opt?.dataset.elimination === "1" && opponents.length > 0;
-    el.matchFinalsRow.hidden = !eligible;
-    if (!eligible) el.matchFinalsCheckbox.checked = false;
-    el.matchFinalsOpponent.innerHTML = "";
-    for (const entry of opponents) {
-      const o = document.createElement("option");
-      o.value = entry.roundId;
-      o.textContent = `${entry.label} (${STATUS_LABEL[entry.status] ?? entry.status})`;
-      el.matchFinalsOpponent.appendChild(o);
-    }
-  }
-  el.roundSelect.onchange = updateMatchFinalsVisibility;
-  updateMatchFinalsVisibility();
-
   el.watchRound.onclick = () => {
     const roundId = el.roundSelect.value;
     if (!roundId) return;
-    startWatching(host, eventId, [{ id: roundId, stage: false }], null, el.trainingCheckbox.checked);
+    startWatching(host, eventId, [roundId], null);
   };
 
   el.addToSequence.onclick = () => {
     const opt = el.roundSelect.selectedOptions[0];
     if (!opt) return;
-    if (el.matchFinalsCheckbox.checked && opt.dataset.elimination === "1") {
-      const oppOpt = el.matchFinalsOpponent.selectedOptions[0];
-      if (!oppOpt) return;
-      // Over-provisioned beyond the typical 5 Speed final stages so excess
-      // entries just get skipped instantly by isSequenceEntryDone/
-      // pollCurrent once both brackets are actually finished.
-      for (let i = 0; i < INTERLEAVE_REPEATS; i++) {
-        sequenceBuilder.push({ roundId: opt.value, label: opt.textContent, isElimination: true, stage: true });
-        sequenceBuilder.push({ roundId: oppOpt.value, label: oppOpt.textContent, isElimination: true, stage: true });
-      }
-    } else {
-      sequenceBuilder.push({
-        roundId: opt.value,
-        label: opt.textContent,
-        isElimination: opt.dataset.elimination === "1",
-        stage: false,
-      });
-    }
+    sequenceBuilder.push({ roundId: opt.value, label: opt.textContent });
     renderSequenceBuilder();
   };
 
@@ -243,9 +165,8 @@ function populateRounds(eventData, host, eventId) {
     startWatching(
       host,
       eventId,
-      sequenceBuilder.map((s) => ({ id: s.roundId, stage: s.stage })),
-      null,
-      false // sequence mode relies on live API status to advance - not compatible with training mode
+      sequenceBuilder.map((s) => s.roundId),
+      null
     );
   };
 }
@@ -264,23 +185,6 @@ function renderSequenceBuilder() {
     const text = document.createElement("span");
     text.textContent = item.label;
     li.appendChild(text);
-
-    // Only Speed elimination rounds have stages to stop after - a
-    // qualification round has nothing analogous, so it always runs to
-    // completion. This is what lets the same elimination round be queued
-    // multiple times to interleave with another one stage-by-stage - see
-    // ARCHITECTURE.md on sequence mode.
-    if (item.isElimination) {
-      const modeSelect = document.createElement("select");
-      modeSelect.className = "sequence-mode";
-      modeSelect.setAttribute("aria-label", "Advance after");
-      modeSelect.innerHTML = '<option value="round">whole round</option><option value="stage">next stage only</option>';
-      modeSelect.value = item.stage ? "stage" : "round";
-      modeSelect.addEventListener("change", () => {
-        item.stage = modeSelect.value === "stage";
-      });
-      li.appendChild(modeSelect);
-    }
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
@@ -313,29 +217,18 @@ function renderSequenceBuilder() {
   });
 }
 
-function startWatching(host, eventId, rounds, group, training) {
-  currentSelection = { host, eventId, rounds, group: group ?? null, training: !!training };
+function startWatching(host, eventId, roundIds, group) {
+  currentSelection = { host, eventId, roundIds, group: group ?? null };
   sequenceIndex = 0;
-  trainingIndex = 0;
   lastRoundData = null;
   saveSelection(currentSelection);
   el.shareLink.value = buildShareLink(currentSelection);
-  el.trainingControls.hidden = !currentSelection.training;
   el.setup.hidden = true;
   el.board.hidden = false;
   clearInterval(pollTimer);
   pollCurrent();
   pollTimer = setInterval(pollCurrent, 3000);
 }
-
-el.trainingNext.addEventListener("click", () => {
-  trainingIndex++;
-  if (lastRoundData) renderBoard(lastRoundData);
-});
-el.trainingBack.addEventListener("click", () => {
-  trainingIndex = Math.max(0, trainingIndex - 1);
-  if (lastRoundData) renderBoard(lastRoundData);
-});
 
 el.backBtn.addEventListener("click", () => {
   clearInterval(pollTimer);
@@ -443,13 +336,13 @@ async function pollRound(host, roundId) {
 // e.g. a tablet reloaded mid-event lands on the actually-current class
 // within a single call instead of idling through each past one.
 async function pollCurrent() {
-  const { host, rounds } = currentSelection;
+  const { host, roundIds } = currentSelection;
   for (;;) {
-    const entry = rounds[sequenceIndex];
-    const ok = await pollRound(host, entry.id);
+    const roundId = roundIds[sequenceIndex];
+    const ok = await pollRound(host, roundId);
     if (!ok) return;
-    const hasNext = sequenceIndex < rounds.length - 1;
-    if (hasNext && isSequenceEntryDone(entry, lastRoundData)) {
+    const hasNext = sequenceIndex < roundIds.length - 1;
+    if (hasNext && isRoundFullyFinished(lastRoundData)) {
       sequenceIndex++;
       continue;
     }
@@ -469,23 +362,6 @@ function isRoundFullyFinished(round) {
   const routeGroups = collectRouteGroups(round);
   if (!routeGroups.length) return false;
   return routeGroups.every((g) => g.routes.every((r) => computeLane(round, r).finished));
-}
-
-// A sequence entry with `stage: true` (only meaningful for Speed
-// elimination rounds - see the `isElimination` check when it's queued up)
-// advances once its CURRENT stage is done, not the whole bracket - so the
-// same round can be queued multiple times to interleave with a different
-// round one stage at a time (e.g. alternating Round-of-16 between two
-// categories). `computeSpeedElimination().heats` is empty in both cases
-// that mean "this stage is done": a brief transition where the next
-// stage isn't populated yet, and the bracket being fully finished - either
-// way, there's nothing left to show for the current stage, so it's time
-// to move on to the next sequence entry.
-function isSequenceEntryDone(entry, round) {
-  if (entry.stage && round?.speed_elimination_stages?.length) {
-    return computeSpeedElimination(round).heats.length === 0;
-  }
-  return isRoundFullyFinished(round);
 }
 
 // An ascent status counts as fully locked in once it's one of these -
@@ -520,21 +396,6 @@ function findCurrentIndex(items, isActive, isConfirmed) {
   return lastActive !== -1 ? lastActive : lastConfirmed + 1;
 }
 
-// The start order for one route, independent of any results - shared by
-// live mode (computeLane, below) and training mode (buildTrainingLane),
-// which both need the same ordered roster but pick "who's at the wall"
-// from it in completely different ways (live results vs. a manual click).
-function orderedAthletesForRoute(round, route) {
-  return (round.startlist ?? [])
-    .map((athlete) => {
-      const pos = athlete.route_start_positions?.find((p) => p.route_id === route.id);
-      return pos ? { athlete, position: pos.position } : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => a.position - b.position)
-    .map((x) => x.athlete);
-}
-
 function computeLane(round, route) {
   const statusByAthlete = new Map();
   for (const entry of round.ranking ?? []) {
@@ -542,7 +403,14 @@ function computeLane(round, route) {
     if (ascent) statusByAthlete.set(entry.athlete_id, ascent.status);
   }
 
-  const ordered = orderedAthletesForRoute(round, route);
+  const ordered = (round.startlist ?? [])
+    .map((athlete) => {
+      const pos = athlete.route_start_positions?.find((p) => p.route_id === route.id);
+      return pos ? { athlete, position: pos.position } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.position - b.position)
+    .map((x) => x.athlete);
 
   // Before the round has actually begun, nobody is "at the wall" yet, even
   // though every athlete's ascent status is still "pending" - that status
@@ -593,35 +461,6 @@ function collectRouteGroups(round) {
   return [];
 }
 
-// Shared by live mode (buildLane) and training mode (buildTrainingLane) -
-// both just need to turn { atWall, onDeck, queue, finished } into the same
-// three cards, regardless of how those four values were derived.
-function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
-  if (finished) {
-    const done = document.createElement("div");
-    done.className = "lane-finished";
-    done.textContent = "Round finished";
-    laneEl.appendChild(done);
-    return;
-  }
-
-  laneEl.appendChild(makeCard("climbing", athleteLine(atWall), "at-wall"));
-  laneEl.appendChild(makeCard("next", athleteLine(onDeck), "on-deck"));
-
-  if (queue.length) {
-    const list = document.createElement("ol");
-    list.className = "queue-list";
-    // "Next" is implicitly queue position 1, so this list continues from 2.
-    list.setAttribute("start", "2");
-    for (const athlete of queue) {
-      const li = document.createElement("li");
-      li.textContent = athleteLine(athlete);
-      list.appendChild(li);
-    }
-    laneEl.appendChild(list);
-  }
-}
-
 function buildLane(round, route, laneLabelPrefix) {
   const lane = computeLane(round, route);
   const laneEl = document.createElement("section");
@@ -632,30 +471,29 @@ function buildLane(round, route, laneLabelPrefix) {
   heading.textContent = `${laneLabelPrefix} ${lane.routeName}`;
   laneEl.appendChild(heading);
 
-  renderLaneBody(laneEl, lane);
-  return laneEl;
-}
+  if (lane.finished) {
+    const done = document.createElement("div");
+    done.className = "lane-finished";
+    done.textContent = "Round finished";
+    laneEl.appendChild(done);
+  } else {
+    laneEl.appendChild(makeCard("climbing", athleteLine(lane.atWall), "at-wall"));
+    laneEl.appendChild(makeCard("next", athleteLine(lane.onDeck), "on-deck"));
 
-// Training mode: no live results to poll, so "who's at the wall" is
-// whatever `index` a human has manually clicked to via the Next/Back
-// buttons, walking the exact same start order as a live round (Quirk E) -
-// see startWatching/renderBoard for how `index` (trainingIndex) is shared
-// across every lane so one click advances all of them together.
-function buildTrainingLane(route, ordered, index, laneLabelPrefix) {
-  const laneEl = document.createElement("section");
-  laneEl.className = "lane";
+    if (lane.queue.length) {
+      const list = document.createElement("ol");
+      list.className = "queue-list";
+      // "Next" is implicitly queue position 1, so this list continues from 2.
+      list.setAttribute("start", "2");
+      for (const athlete of lane.queue) {
+        const li = document.createElement("li");
+        li.textContent = athleteLine(athlete);
+        list.appendChild(li);
+      }
+      laneEl.appendChild(list);
+    }
+  }
 
-  const heading = document.createElement("div");
-  heading.className = "lane-heading";
-  heading.textContent = `${laneLabelPrefix} ${route.name}`;
-  laneEl.appendChild(heading);
-
-  renderLaneBody(laneEl, {
-    finished: index >= ordered.length,
-    atWall: ordered[index] ?? null,
-    onDeck: ordered[index + 1] ?? null,
-    queue: ordered.slice(index + 2, index + 2 + 6),
-  });
   return laneEl;
 }
 
@@ -828,15 +666,11 @@ function renderGroupTabs(groupNames) {
 }
 
 function renderBoard(round) {
-  const trainingSuffix = currentSelection.training ? " — Training" : "";
-  el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})${trainingSuffix}`.trim();
+  el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
   el.lanes.innerHTML = "";
   el.groupTabs.hidden = true; // only the multi-group branch below re-shows it
 
-  // Training mode always uses the plain per-route lane view below (manual
-  // Next/Back has nothing meaningful to do with a bracket's stages), even
-  // if the round happens to be Speed-elimination-shaped.
-  if (!currentSelection.training && round.speed_elimination_stages?.length) {
+  if (round.speed_elimination_stages?.length) {
     renderSpeedElimination(round);
     return;
   }
@@ -869,11 +703,7 @@ function renderBoard(round) {
     const grid = document.createElement("div");
     grid.className = "lanes-grid";
     for (const route of group.routes) {
-      grid.appendChild(
-        currentSelection.training
-          ? buildTrainingLane(route, orderedAthletesForRoute(round, route), trainingIndex, laneLabelPrefix)
-          : buildLane(round, route, laneLabelPrefix)
-      );
+      grid.appendChild(buildLane(round, route, laneLabelPrefix));
     }
     el.lanes.appendChild(grid);
   }
@@ -888,19 +718,16 @@ const initial = readUrlSelection() ?? loadSelection();
 if (initial?.eventId && initial?.host) {
   el.eventId.value = initial.eventId;
   el.host.value = initial.host;
-  if (initial.rounds?.length) {
+  if (initial.roundIds?.length) {
     // Jump straight to the board so a bookmarked tablet never has to see
     // the setup screen; loadEvent() below fills the dropdown in the
     // background for when "switch round" is used later.
-    startWatching(initial.host, initial.eventId, initial.rounds, initial.group ?? null, initial.training);
+    startWatching(initial.host, initial.eventId, initial.roundIds, initial.group ?? null);
   }
   loadEvent().then(() => {
-    const firstRoundId = initial.rounds?.[0]?.id;
+    const firstRoundId = initial.roundIds?.[0];
     if (firstRoundId && [...el.roundSelect.options].some((o) => o.value === firstRoundId)) {
       el.roundSelect.value = firstRoundId;
-      // Setting .value programmatically doesn't fire "change" - nudge the
-      // match-finals visibility (wired to onchange in populateRounds) by hand.
-      el.roundSelect.onchange?.();
     }
   });
 }

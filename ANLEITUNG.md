@@ -120,66 +120,9 @@ abgeschlossenen Runde der Liste (bereits fertige Runden werden beim Start
 übersprungen) und schaltet danach von selbst weiter, sobald jeweils die
 aktuelle Runde fertig ist. Der Tablet-Link merkt sich die ganze Sequenz,
 lässt sich also genauso als Lesezeichen speichern wie bei einer einzelnen
-Runde (Schritt 8).
+Runde (Schritt 6).
 
-## 6. Speed-Finale verschränkt laufen lassen (zwischen Startklassen abwechseln)
-
-Bei Speed-Finalrunden läuft der Ablauf oft nicht "eine Startklasse komplett
-zu Ende, dann die nächste", sondern verschränkt: erst das Achtelfinale von
-Startklasse 1 und 2, dann das Viertelfinale von beiden, dann Halbfinale
-usw. – erst wenn beide K.-o.-Bäume fertig sind, geht's mit der nächsten
-Startklassen-Kombination weiter.
-
-**Der einfache Weg – "Match finals (Speed)":**
-
-1. Wie in Schritt 5 eine Speed-Finalrunde im Dropdown auswählen. Sobald es
-   noch eine zweite Speed-Finalrunde im Event gibt, erscheint darunter ein
-   neuer Haken **„Match finals (Speed) — alternate stage-by-stage with"**
-   mit einem Dropdown daneben.
-2. Haken setzen und im Dropdown die zweite Startklasse auswählen (z. B.
-   „SPEED U15+ Männlich — Finale").
-3. Auf **„+ Add to sequence"** klicken. Statt eines einzelnen Eintrags
-   erscheint automatisch das abwechselnde Muster (5× pro Startklasse) in
-   der Sequenz-Liste darunter.
-4. Wie gewohnt auf **„Show sequence"** klicken.
-
-Die Anzeige zeigt dann automatisch immer nur die aktuell offene Stufe der
-gerade dran befindlichen Startklasse und springt selbstständig zur anderen
-Startklasse, sobald deren Stufe (z. B. das Achtelfinale) fertig gewertet
-ist – bis beide K.-o.-Bäume komplett durchgelaufen sind.
-
-**Der manuelle Weg (mehr Kontrolle, z. B. für mehr als zwei Startklassen
-oder unregelmäßige Muster):** wie in Schritt 5 jede Runde einzeln per
-„+ Add to sequence" hinzufügen (Haken bei „Match finals" dabei **nicht**
-setzen), dabei aber bei jedem Speed-Finale-Eintrag in der Liste per
-Dropdown **„next stage only"** statt „whole round" wählen. Dieselbe Runde
-lässt sich beliebig oft in die Liste einfügen – so entsteht z. B.
-„Achtelfinale Klasse 1 (next stage only), Achtelfinale Klasse 2 (next stage
-only), Viertelfinale Klasse 1, ...", ganz nach Bedarf per Drag & Drop
-sortiert.
-
-## 7. Speed-Training (ohne Live-Ergebnisse)
-
-Trainingseinheiten laufen nicht über results.info und liefern deshalb keine
-Live-Ergebnisse, aus denen die App "wer klettert gerade" ableiten könnte.
-Die Startreihenfolge im Training entspricht aber meist der Reihenfolge aus
-der echten Qualifikationsrunde – deshalb lässt sich diese Reihenfolge
-wiederverwenden, das Weiterschalten erfolgt dann von Hand:
-
-1. Wie in Schritt 3 die passende Runde auswählen (üblicherweise die
-   **Qualifikationsrunde**, deren Startreihenfolge dem Training entspricht).
-2. Häkchen bei **„Training mode (manual advance)"** setzen.
-3. Auf **„Show"** klicken.
-
-Statt der automatischen Live-Anzeige erscheint oben ein Bedienfeld mit
-**„← Back"** und **„Next →"**. Jeder Klick auf „Next" schaltet **alle**
-Bahnen/Routen gemeinsam einen Platz weiter (ein Klick reicht für alle
-Spalten gleichzeitig) – gedacht für den Fall, dass alle Athlet·innen im
-Training synchron nacheinander klettern. Die Position wird nicht
-gespeichert: nach einem Neuladen der Seite startet die Anzeige wieder von
-vorne.
-
-## 8. Mehrere Tablets gleichzeitig (je eigene Startklasse)
+## 6. Mehrere Tablets gleichzeitig (je eigene Startklasse)
 
 Jedes Gerät kann unabhängig eine eigene Altersklasse/Runde anzeigen – z. B.
 Tablet 1 zeigt Boulder U11, Tablet 2 zeigt Lead U15, gleichzeitig, ohne dass
@@ -199,7 +142,7 @@ Startklasse zeigt (statt der Auswahl-Maske):
 Jedes Tablet bekommt so seinen eigenen Link mit seiner eigenen Runde (und,
 bei Boulder, seiner eigenen Gruppe).
 
-## 9. Vollbild & Bildschirm wach halten
+## 7. Vollbild & Bildschirm wach halten
 
 Oben auf dem Board gibt es den Button **„Fullscreen + Always On"**. Ein
 Klick macht die Seite gleichzeitig vollbildig (keine Safari-Leiste mehr)
@@ -211,7 +154,7 @@ Falls das auf einem älteren iPad nicht funktioniert: das "Wach halten"
 braucht iPadOS 16.4 oder neuer. Vollbild funktioniert unabhängig davon,
 sollte aber vor dem Wettkampf einmal kurz getestet werden.
 
-## 10. Programm beenden
+## 8. Programm beenden
 
 Im Terminal-Fenster `Strg + C` drücken (oder das Fenster schließen).
 
