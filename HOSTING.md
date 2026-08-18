@@ -22,10 +22,6 @@ live sichtbar wird:
    die laufende Version. **Ohne diesen Schritt bleibt die alte Version
    live, auch wenn GitHub schon den neuen Code hat.**
 
-Das ist der Punkt, an dem es zuletzt gehakt hat (die `ifsc.results.info`-
-Option war auf GitHub, aber nicht auf der Live-Seite, weil Schritt 2
-gefehlt hat).
-
 ---
 
 ## A. Jede künftige Änderung live bringen (der Ablauf, den du am häufigsten brauchst)
@@ -91,8 +87,8 @@ und `render.yaml` liegen im Ordner.
 
 ```bash
 cd ~/Desktop/CallZonemanagement
-git config user.name "Jannik Weiser"
-git config user.email "weiser.jannik@gmail.com"
+git config user.name "USER NAME"
+git config user.email "email@example.com"
 git add .
 git commit -m "Callzone Management"
 ```
