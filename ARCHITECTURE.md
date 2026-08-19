@@ -35,14 +35,17 @@ was reverse-engineered from the live site (see method notes inline).
 
 The browser never talks to results.info directly — it can't, see 4.2. The
 Node server is a thin proxy + short-TTL cache + static file host. It has no
-database, no persistent state, no auth, no request logging beyond what
-Express/Render do by default.
+database and no auth. The one exception to "no persistent state" is a tiny
+in-memory counter for Training mode's manual position (6.13) — not backed
+by results.info at all, and lost on restart, but real shared state
+nonetheless; see 6.13 for why that's an acceptable exception to "stateless
+proxy".
 
 ## 3. File map
 
 | File | Responsibility |
 |---|---|
-| `server.js` | Express server: serves `public/`, proxies `/api/event/:host/:eventId` and `/api/round/:host/:roundId` to results.info with the required `Referer` header, short in-memory cache. |
+| `server.js` | Express server: serves `public/`, proxies `/api/event/:host/:eventId` and `/api/round/:host/:roundId` to results.info with the required `Referer` header, short in-memory cache. Also `/api/training/:host/:roundId` (GET/POST), an unrelated tiny in-memory counter for Training mode's remote control (6.13) — not a results.info proxy. |
 | `public/index.html` | Static shell: setup form (Event ID / server / round dropdown) and the board (lanes + share-link box). No inline JS. |
 | `public/app.js` | All client logic: fetching, polling, the at-the-wall/next/queue algorithm, rendering, URL deep-linking, localStorage persistence. Plain script (no bundler, no framework, no modules — loaded via a single `<script src="app.js">`). |
 | `public/styles.css` | All styling. Dark, high-contrast, large type for at-a-glance reading on a mounted tablet. CSS custom properties for colors. |
@@ -298,6 +301,16 @@ time) both rules reduce to the same thing as the original naive "first
 pending" approach - this is a strict generalization, not a behavior change
 for well-behaved data.
 
+**This inference trusts a live `"active"` entry forever, deliberately, with
+one narrow exception:** there's no timeout here, and none should be added -
+an athlete can legitimately stay `"active"` for a long time (a slow climb,
+a judging discussion) and cutting that off early would be worse than
+waiting. The one place a timeout *does* exist is the paired sequence
+entry's category-switch decision (6.12) - a materially different situation
+(a stuck heat there blocks the whole callzone from moving on, not just one
+card going stale), addressed with a narrowly-scoped watchdog rather than by
+changing this core rule.
+
 ### 5.3 Why `round.status` is checked before the ascent-status walk
 
 Naively applying 5.2 has a bug: **before the round has started at all**,
@@ -345,21 +358,64 @@ because Quirk F's data shape has no linear start order to walk.
 2. A heat is **ready** once it has 2 athletes (`athletes.length === 2`) —
    before that, results.info hasn't determined the pairing yet (still
    waiting on the previous stage).
-3. A heat is **active** if either lane's ascent status is `"active"` (a
-   judge is live-scoring one of the two racers right now); it's **confirmed**
-   only once *both* lanes are `"confirmed"`/`"locked"` — see Quirk C and
-   §5.2's rule 1/rule 2 split, applied here per-heat via the same
-   `findCurrentIndex()` helper (not a separate implementation).
-4. Find `currentIndex` via `findCurrentIndex(heats, heatIsActive, heatIsConfirmed)`:
-   the latest **active** heat if any exists, otherwise the position right
-   after the last **confirmed** heat. **Not** "the first ready-and-not-done
-   heat": a heat can stay unconfirmed indefinitely (an unresolved
-   false-start review, an appeal) while later heats — even in the next
-   stage — are already confirmed, which would otherwise permanently block
-   the board on an old stage. Observed live on a real `under_appeal` round:
-   stage "1/8" fully confirmed, stage "1/4" heat 9 already confirmed, heats
-   10-12 still pending — "first not-done" would have stopped at heat 9
-   forever; the frontier approach correctly lands on heat 10.
+3. A heat is **done** once it has a real recorded outcome — checked
+   directly on the data (`heatIsDone()`), **not** via the ascent `status`
+   field the way §5.2's qualification-round rule 2 does.
+   `ascentIsAutoDecided()`/`ascentHasResult()` split `dnf` and `dns` apart
+   deliberately — they behave differently under Speed climbing rules, not
+   interchangeably:
+   - **Either lane is `dns` (false start) OR explicitly marked "not
+     started"** — either one auto-decides the whole heat: the other lane
+     wins/advances as a "wildcard" *without ever getting their own ascent
+     recorded at all*. Confirmed live: the wildcard-winning lane's ascent
+     stays `time_ms: 0 (or null), status: "active"/"pending"` forever — no
+     time, no `dnf`, no `dns` — and results.info's own official standings
+     label that outcome "WILDCARD". Requiring *both* lanes to have a result
+     (an earlier version of this function did) leaves a wildcard heat
+     permanently stuck, since the winning lane's ascent never gets touched
+     at all. "Not started" is a **third, separate outcome from `dnf`/`dns`
+     entirely** — a no-show, not a false start — confirmed live: that
+     ascent has `dnf: false, dns: false`, distinguishable only via
+     `formatted_ascent_score === "NOT STARTED"`. `time_ms === null` alone
+     is *not* a safe stand-in for this check: a completely untouched
+     wildcard-*winner* ascent (the other lane in a `dns` case) can also
+     have `time_ms: null` with no `formatted_ascent_score` at all, so
+     checking the score text specifically is what avoids misfiring on that
+     - confirmed live on the exact heat that exposed this (see the
+     `13739` fixture in AGENTS.md §3).
+   - **A `dnf` (fall) does NOT auto-decide the heat** — unlike a false
+     start, a fall doesn't hand the other lane an automatic win; that lane
+     still has to actually finish their own run and get a real recorded
+     time (a first version of this fix treated `dnf` the same as `dns` and
+     had this backwards — corrected after user feedback). A `dnf` ascent
+     does still count as *that lane's own* result being settled (no more
+     time is coming for them), so once the other lane finishes with a real
+     time, the heat is done — just not before.
+   - **Or both lanes have a real time** (`time_ms > 0`, neither `dnf` nor
+     `dns`) — the normal case, both athletes actually climbed.
+   Any of this is a deliberate divergence from 5.2's ascent-`status`
+   approach, not an oversight: confirmed live against real results.info
+   data (`git show` the fix commits for the reproductions) that a
+   Speed-elimination heat can carry a complete, valid time for both lanes —
+   with the stage explicitly closed in results.info's own admin tool — and
+   still report ascent status `"active"` forever. Unlike qualification
+   rounds, where `"active"` reliably resolves to `"confirmed"` (5.2), it
+   apparently never does here. An earlier version of this function mirrored
+   5.2 exactly (latest-`"active"`-wins, else last-`"confirmed"`-plus-one)
+   and got permanently stuck on whichever heat was last touched, no matter
+   how much real progress happened afterward. Reproduced on multiple rounds
+   across three separate test sessions, not a one-off glitch.
+4. Find `currentIndex` via `findCurrentHeatIndex(heats)`: the position
+   right after the last **done** heat (scanning once, remembering the
+   highest done index seen) — **not** "the first not-done heat". A heat
+   that never gets a result at all (equipment failure, an unresolved
+   dispute) should not permanently block heats after it from being
+   recognized as current, the same "last-frontier, not first-gap"
+   reasoning as §5.2's rule 2, just driven by recorded results instead of
+   ascent status. Observed live on a real `under_appeal` round: stage
+   "1/8" fully confirmed, stage "1/4" heat 9 already confirmed, heats 10-12
+   still pending — "first not-done" would have stopped at heat 9 forever;
+   the frontier approach correctly lands on heat 10.
 5. If `currentIndex` is past the end of the flattened list, the whole
    bracket is done → `finished: true`, rendered as "Round finished".
    If `heats[currentIndex]` exists but isn't **ready** yet, results.info
@@ -580,14 +636,15 @@ Qualification Men, then Qualification Women, then Final Men, then Final
 Women, in order, over the course of an event — without someone manually
 clicking "switch round" every time one class wraps up.
 
-**Decision:** the setup screen keeps its existing single-round dropdown +
-"Show" flow untouched, and adds a **separate, additive** mechanism next to
-it: "+ Add to sequence" appends the currently-selected round to a
-reorderable list (native HTML5 drag-and-drop, no library), and "Show
+**Decision:** the setup screen's "Sequence" mode (6.11) offers "+ Add to
+sequence" next to the round dropdown, appending the currently-selected round
+to a reorderable list (native HTML5 drag-and-drop, no library); "Show
 sequence" starts watching the whole ordered list. Internally,
-`currentSelection.roundIds` is *always* an array — a single "Show" click is
-just an array of length 1 — so there's exactly one code path for both
-cases, not two parallel ones.
+`currentSelection.sequence` is *always* an array — a single "Show" click
+(Single round mode) is just an array of length 1 — so there's one code path
+for both, not two parallel ones. Each entry is `{ type: "round", id }` or
+`{ type: "paired", a, b }` (6.12); this section covers the `"round"` case,
+which behaves exactly as originally built.
 
 **Auto-advance mechanism (`pollCurrent()`):** each poll checks
 `isRoundFullyFinished()` on the round currently being shown (every
@@ -604,7 +661,7 @@ state — simpler to implement correctly than a "was this round watched
 before it finished vs. already-finished on load" distinction, and revisit
 only if the abruptness turns out to matter in practice.
 
-**Why `sequenceIndex` isn't persisted, only `roundIds` is:** the share
+**Why `sequenceIndex` isn't persisted, only `sequence` is:** the share
 link/`localStorage` capture the *configured sequence* (`?rounds=id1,id2,id3`,
 back-compat `?round=id` for a single round — see `readUrlSelection()`), not
 which entry is currently showing. On every load, `sequenceIndex` restarts
@@ -621,7 +678,286 @@ just because whichever group tab a given tablet happens to have selected
 finished first — `isRoundFullyFinished()` deliberately checks every group's
 every route via `collectRouteGroups()`, independent of `currentSelection.group`.
 
-### 6.11 Hosting: Render (Blueprint) over alternatives
+### 6.11 Setup-screen modes instead of independent checkboxes
+
+**Problem this solves:** the setup screen grew several optional behaviors
+over time (sequence-building, training, interleaving) and an early version
+exposed them as a scatter of checkboxes next to the round dropdown ("Match
+finals", "Training mode"). Live-tested and reported back as "semigut" —
+workable, but genuinely confusing which checkbox went with which dropdown,
+especially under the time pressure of running a callzone.
+
+**Decision:** a `#modeTabs` row (`setMode()` in `public/app.js`) replaces
+the checkboxes with three mutually-exclusive, explicit modes: **Single
+round**, **Sequence**, **Training**. Each mode shows only the controls that
+apply to it (`el.watchRound` / `el.addToSequence` / `el.startTraining`,
+`#pairedRow` only in Sequence mode with 2+ elimination rounds available,
+`#sequenceRow` only in Sequence mode). Nothing is inferred from a
+checkbox's state; the visible controls *are* the current mode.
+
+### 6.12 Paired sequence entries (interleaving Speed finals between categories)
+
+**Problem this solves:** a Speed event schedule commonly doesn't run one
+category's whole final bracket before starting the next — it interleaves
+by *stage* across categories to keep a single wall busy efficiently, e.g.
+Round-of-16 for categories 1 and 2, then Quarterfinals for 1 and 2, ...,
+finish both brackets, *then* Qualification for categories 3 and 4, then
+their Round-of-16/Quarterfinals/... interleaved the same way.
+
+**Decision — a first-class entry type, not a checkbox:** a sequence entry
+can be `{ type: "paired", a, b }` — two elimination-format round IDs —
+instead of `{ type: "round", id }`. Built via the "Interleave two Speed
+finals" row (`#pairedRow`, only shown in Sequence mode when the loaded
+event has 2+ elimination rounds, i.e. `round.format_identifier ===
+"speed_elimination_ifsc_2026"`), picking round A and round B and clicking
+"+ Add paired entry". It appears as **one row** in the sequence list
+("A ↔ B"), draggable/removable exactly like a plain entry — not ten
+near-identical rows. This replaced an earlier per-entry "next stage only"
+checkbox design (requiring the *same* round to be added many times, once
+per stage-switch) that live-tested as "sehr aufwendig" (very tedious), and
+a second design (a dedicated two-dropdown "Match finals" shortcut bolted
+onto the round dropdown) that turned out confusing for the same reason as
+6.11.
+
+**Playback — a shared stage cursor, not two independently-reported sides
+(`pollPairedTick()`):** an earlier version let each side report "my current
+stage" from its own live data via `computeSpeedElimination()` and just
+switched whenever the active one ran dry. Live-tested and found broken:
+with two categories' data entered at different paces (confirmed against a
+real event where side B already had recorded times in "1/4" while side A
+hadn't started "1/4" at all), that approach let the faster side race ahead
+instead of waiting its turn — the requested order (1/8 A, 1/8 B, 1/4 A,
+1/4 B, ...) only holds if both sides are kept on the *same named stage* in
+lockstep.
+
+The fix: a shared stage, common to both sides — but computed **fresh on
+every tick** (`earlierStageName(currentStageNameFor(dataA),
+currentStageNameFor(dataB))`), not persisted and only-ever-advanced.
+`currentStageNameFor(round)` runs the same "last done heat, mapped to its
+stage" logic as `computeSpeedElimination()` (5.5), returning the stage
+*name* (e.g. `"1/4"`); `earlierStageName()` picks whichever of the two
+names sits first in the canonical `SPEED_STAGE_ORDER` list
+(`["1/32", "1/16", "1/8", "1/4", "1/2", "Small Final", "Final"]`, via
+`stageNameRank()`), which is what enforces the lockstep — whichever side is
+behind caps the shared stage, so the ahead side can never drag the display
+forward on its own.
+
+**Why by name, not by raw array index (a real bug, fixed after review, no
+live report):** an earlier version compared `Math.min()` of each side's
+*index* into its own `round.speed_elimination_stages` array. That's only
+safe if both sides' arrays have the same stage set at the same offsets — not
+guaranteed, since a smaller bracket can start directly at a later stage
+(e.g. "1/4" with no "1/8"/"1/16"/"1/32" stage at all, `stages[0]` would be
+"1/4" for that side but `stages[0]` might be "1/8" for the other). Comparing
+raw indices in that situation would silently line up two *different* real
+stages under the same index and produce a nonsensical shared stage. Matching
+on the stage's own name instead of its array position is index-shape-
+independent, so it's correct regardless of how deep either side's bracket
+is. Verified live: mocked one side's bracket with its "1/8" stage removed
+entirely (so its "1/4" sits at index 0, while the other side's "1/4" sits at
+index 1 in a full 5-stage array) — `earlierStageName()` correctly resolves
+both to `"1/4"`, where the old index-based `Math.min()` would have picked
+index 0, i.e. the shorter side's "1/4" versus the full side's "1/8".
+
+`stageHeatsRemaining(round, stageName)` — a scoped variant of the same
+heat-selection rule, applied to *one* named stage instead of scanning
+across all of them — then answers "does this side have anything left at
+this specific stage" for each side independently. Both rounds are fetched
+every tick regardless (cheap — the server's 3s cache means this rarely
+reaches results.info twice); if the side currently shown has nothing left
+at the shared stage, the turn passes to the other side at the *same*
+stage; `pairedState` only still needs to persist `activeSide` (which of the
+two co-equal sides to display — there's no data signal for "whose turn it
+is", so that genuinely has to be remembered) and the stuck-heat watchdog
+state below.
+
+**Why fresh-every-tick instead of persisted, and not just "advance
+forward":** a persisted, forward-only cursor can't handle a judge reopening
+and correcting an earlier stage (deleting a result, re-entering it after a
+false-start review is overturned, say) — the cursor would stay stuck ahead
+of where the corrected data now actually says the bracket is, and the app
+has no way back short of a manual override. Recomputing both sides' own
+current-stage index from scratch every tick means a correction like that is
+picked up automatically on the very next poll — no separate
+detection/reset logic needed, and no manual "reset" button either (this was
+discussed and deliberately not built, since the automatic recompute already
+covers it). This mirrors the exact "no memory, always re-derive from live
+data" property the single-round view already had for free (5.5) — the
+paired case just needed the extra `earlierStageName()` step because it's
+tracking two rounds instead of one. Verified live: reset a completed heat back to
+`pending` on the side currently ahead by a stage, and the shared stage
+correctly drops back down on the next poll, no user action required.
+Rendered via `renderPairedBoard()`, a sibling of `renderBoard()` that
+renders a specific already-computed `{stageName, heats}` result instead of
+asking the round what its own current stage is — using the ordinary
+`renderBoard()` here would have reintroduced the original skip-ahead bug.
+The whole entry is "done" (sequence advances to the next entry) once
+**both** rounds report `isRoundFullyFinished()`, which is still allowed to
+be genuinely stage-name-async between the two sides (nothing about "done"
+requires them to have finished at the same stage) — and once both are
+done, the entry doesn't rewind even if something is corrected afterward
+(the sequence has already moved on; the same forward-only limitation
+sequence mode has in general, considered and explicitly out of scope here).
+Because none of this remembers anything about *previous* visits to either
+round beyond the two cursor variables — everything else re-derives fresh
+from live data every tick — the same round can be revisited any number of
+times as the two sides keep alternating, and each revisit "just works"
+without further resume logic.
+
+**Stuck-heat watchdog:** originally added when the suspected cause of a
+stuck category switch was a heat's ascent `status` never reaching
+`"confirmed"`. That root cause turned out to be broader and got fixed
+directly at the source (5.5's `heatIsDone()`, which stopped trusting
+`status` for Speed-elimination heats at all) — so this watchdog is no
+longer covering for that. It stays as a narrower safety net for the case
+`heatIsDone()` still can't resolve: a heat that never gets *any* recorded
+result at all (equipment failure, an unresolved dispute) would otherwise
+block a paired entry from ever ceding the wall to the other category.
+`pollPairedTick()` tracks how long the active side's current heat
+(`sideResult.heats[0].id`) has stayed the same; if it hasn't changed in
+`STUCK_TIMEOUT_MS` (90s), it force-switches to the other side (same
+`stageIndex` — the stage cursor only ever advances once both sides
+genuinely have nothing left, per the previous paragraph), resetting the
+watchdog for whichever side is now shown. Deliberately scoped to just this
+paired-entry switch decision: a stuck *single* round still just shows one
+stale card forever with no timeout (5.2's rule 1 is unaffected by any of
+this — qualification-round `"active"` still reliably resolves to
+`"confirmed"` in practice, unlike Speed-elimination heats), but a stuck
+paired entry blocks the whole callzone from moving on to the next
+category, a materially worse failure mode worth a narrow exception for.
+
+**Manual override (`#pairedBar` / `pairedSwitchBtn`):** always visible
+while a paired entry is active, labelled "⇄ Switch category now" — an
+immediate escape hatch alongside the 90s watchdog above, for when staff
+notice a stall themselves and don't want to wait it out.
+
+**`pairedState.manualPin` — why the button needs it:** clicking the button
+sets `pairedState.activeSide` directly, but the very next line of
+`pollPairedTick()` (the "stick with the current side, else hand the turn to
+the other one" logic from two paragraphs up) would otherwise immediately
+re-evaluate that side and flip straight back if it happens to have nothing
+to show at the current stage yet (e.g. hasn't started) — silently undoing
+the click before it ever became visible. Reported live as "the button
+doesn't work." `manualPin` (set by the click, consumed - reset to `false`
+- on the very next `pollPairedTick()` call regardless of outcome) suppresses
+that auto-revert for exactly one tick, so a manual choice is always
+honored, even as a "Waiting for the next stage…" placeholder, while normal
+ticks afterward resume auto-switching away from a genuinely empty side as
+usual.
+
+### 6.13 Training mode: manual advance, same roster/order as qualification, controllable from a second device
+
+**Problem this solves:** Speed training sessions have no live results.info
+data behind them at all (no round, no ascents to poll) — but the start
+order in training usually matches a real round's (typically the
+qualification round), so that order can be reused while advancement is done
+by hand instead of inferred from ascent status.
+
+**Decision:** Training mode (`startTrainingSession()`) fetches the chosen
+round once for its roster (`orderedAthletesForRoute()`, shared with the
+live inference in `computeLane()`) and renders lanes with
+`renderLaneBody()` (also shared) driven by a manual `index` instead of
+`findCurrentIndex()`. Not composable with Sequence mode — there's no live
+"done" signal to auto-advance on, only a position someone moves by hand.
+
+**Why the position lives on the server, not just `localStorage`:**
+live-tested feedback was that manual advance itself worked well, but only
+from the one device showing the board — there was no way to hand "Next/
+Back" duty to a second person away from the wall (e.g. someone with a
+clearer view of the actual climbing, controlling from their phone). A tiny
+in-memory counter on the server (`/api/training/:host/:roundId`, GET to
+read / POST `{ delta }` to step, floored at 0), keyed by host+round and
+capped like the existing cache (200 entries, oldest evicted first, 6.2),
+lets any number of devices watching the same round stay in sync: the wall
+tablet polls it every second and renders `renderTrainingBoard()`; pressing
+Next/Back on *any* device (the wall tablet itself, or a second one) posts
+to the same endpoint, so all viewers converge within one poll tick. This is
+the one exception to "the server has no persistent state" (2) — accepted
+specifically because a training position is meaningless once the session
+itself ends, so losing it on a server restart costs nothing worth guarding
+against with real persistence.
+
+**Wall tablet vs. controller — same round, two renderings:** a plain
+Training-mode link (`?...&training=<roundId>`) shows the full board plus
+local Next/Back — usable standalone with no second device at all. Sharing
+it with `&control=1` appended instead renders `#controller`
+(`renderController()`): a deliberately minimal view — current athlete name
+per lane plus two large buttons, nothing else — sized for a phone rather
+than a wall tablet, since a full multi-lane board doesn't fit a small
+screen usefully and the person holding it only needs to know who's up and
+to tap with confidence. The wall tablet's board screen shows both its own
+"Link for this tablet" *and* a separate "Link to control from another
+device" (`buildShareLink({ ...selection, control: true })`), so the two
+roles get two distinct, purpose-built links from the same session.
+
+**No auth on the control link:** whoever has the link can drive the
+position — the same trust model the app already uses for the ordinary
+board link (6.4/6.8's "no accounts" decisions apply here too). Acceptable
+for volunteers at a single event; not appropriate to extend this pattern to
+anything with real stakes.
+
+**Gated to Speed rounds only.** Training mode reuses a round's *roster
+order*, driven by manual advance instead of live ascent status (above) —
+that concept doesn't map onto Boulder or Lead at all: Boulder has no linear
+start order once starting groups (6.6) split the field, and Lead's rounds
+are already served well by Single round/Sequence mode with real live
+inference. Raised proactively by the user (not a live bug report): with
+Training mode selected and a multi-group Boulder round chosen in the round
+dropdown, nothing in the UI explained why starting a training session for
+that round wouldn't make sense. `populateRounds()` now tags each dropdown
+entry with `isSpeed` (`round.format_identifier?.startsWith("speed_")`,
+carried into the DOM via `opt.dataset.speed`); `updateTrainingEligibility()`
+(called from `setMode()` and wired to `roundSelect.onchange`) disables
+`el.startTraining` and shows a `#trainingHint` explainer whenever the
+selected round isn't Speed, while in Training mode. `el.startTraining.onclick`
+also re-checks `opt.dataset.speed` itself before starting a session, as a
+belt-and-suspenders guard against the button being triggered some other way.
+
+### 6.14 Poll-overlap protection (`pollToken` / `trainingPollToken`)
+
+**Problem this solves:** every poll path in this app (`pollCurrent()`'s 3s
+timer, the paired-entry fetch pair in `pollPairedTick()`, Training mode's
+1s `pollTrainingIndex()`) is `async`, and a new poll can start (a manual
+"Switch category now" click, a mode switch, a `roundSelect` change starting
+a fresh watch session) while a previous poll's `fetch()` is still
+in flight. Network responses don't necessarily resolve in the order the
+requests were sent — a slower "old" request can resolve *after* a faster
+"new" one — so without any guard, the old response could land last and
+overwrite the board with stale data, clobbering what the new poll had
+already correctly rendered.
+
+**Decision:** a module-level counter per independent polling loop —
+`pollToken` for the main watch-mode chain (`pollCurrent()` /
+`pollPairedTick()` / `pollRound()`), a separate `trainingPollToken` for
+Training mode's independent chain (`pollTrainingIndex()` /
+`trainingStep()`) — bumped at the start of every call that kicks off a new
+poll cycle. That call captures the post-bump value into a local `token`/
+`myToken` and threads it through every `await` in that cycle; each place
+that's about to mutate shared render state (`lastRoundData`, `el.statusLine`,
+`trainingIndex`, the rendered DOM) first checks the captured value against
+the current global counter and silently discards the result if a newer call
+has since taken over. Two independent counters, not one shared one, because
+the main watch chain and Training mode are already mutually exclusive modes
+(6.11) with separate render targets — a single shared counter would make an
+unrelated training step spuriously invalidate an in-flight watch-mode poll
+and vice versa.
+
+**Why a token counter instead of `AbortController`:** the in-flight fetch
+itself is harmless to let finish — the cost isn't wasted network traffic
+(the server's 3s cache already absorbs that, 6.2), it's *applying* a stale
+result after a newer one already rendered. A token check right before each
+state mutation is a smaller, more local change than plumbing an
+`AbortController` through every fetch call and handling `AbortError`
+specially in each `catch` block, for the same net effect.
+
+Verified live: mocked `fetchRoundJson` so an "old" call resolves after a
+300ms delay while a "new" call (started 20ms later) resolves instantly;
+confirmed the board shows the new call's data immediately and — critically —
+still shows it once the delayed old call finally resolves, instead of being
+overwritten. Regression-checked the normal (non-racing) case still updates
+on every tick as before.
+
+### 6.15 Hosting: Render (Blueprint) over alternatives
 
 **Why not GitHub Pages alone:** static-only, cannot run the proxy (6.1) —
 a hard requirement, not a preference.
@@ -645,17 +981,21 @@ an architectural one, so it lives in the deployment doc rather than here.
   results.info can export) — the current/next/queue heat-list view (5.5) is
   the supported approach; a graphical tree would be a materially different,
   separately-scoped feature.
-- **Speed training / any session with no results.info round behind it** —
-  there's no API data at all in that case (no event, no round, no ascents).
-  A manual/offline queue-advance mode has been discussed but is explicitly
-  deferred, not implemented — see `CHANGELOG.md` "Unreleased — Considered,
-  not built".
+- **Training-progress persistence across sessions** — the server-side
+  training counter (6.13) is in-memory only and lost on a server restart; a
+  training session that gets interrupted that way just restarts at 0.
+  Deferred until it proves annoying in practice, not because it's hard.
+- **Training mode inside a sequence** — sequence auto-advance needs live
+  results to detect "done" (6.10); training mode has none. Combining them
+  would need a manual "mark done, advance" control that doesn't exist yet.
 - **A language switcher** — the UI is English-only by deliberate choice
   (6.8), not because a toggle wasn't considered.
 - **Authentication / access control** — the app has none by design; the
-  underlying competition data is already public on results.info.
-- **Persisting anything server-side** — the server is stateless except for
-  the short-TTL cache (6.2); there is no database.
+  underlying competition data is already public on results.info, and the
+  training-control link (6.13) follows the same no-accounts trust model.
+- **A real database** — the server has no persistent storage beyond the
+  short-TTL results.info cache (6.2) and the small in-memory training
+  counter (6.13), both ephemeral by design.
 - **Editing/writing to results.info** — this app is read-only against the
   API; it has no code path that could modify competition data.
 

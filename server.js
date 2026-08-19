@@ -80,6 +80,38 @@ app.get("/api/round/:host/:roundId", requireHost, async (req, res) => {
   }
 });
 
+// Shared, ephemeral position for Training mode - lets a wall-mounted tablet
+// (display) and a second device such as a phone (controller) stay in sync
+// without any account/auth system, since there's no live results.info data
+// to poll during training. Keyed by host+round, not persisted across a
+// server restart - acceptable, since a training position is meaningless
+// once the training session itself restarts anyway.
+const trainingIndex = new Map(); // "host:roundId" -> number
+const MAX_TRAINING_ENTRIES = 200;
+
+function trainingKey(host, roundId) {
+  return `${host}:${roundId}`;
+}
+
+app.get("/api/training/:host/:roundId", requireHost, (req, res) => {
+  const key = trainingKey(req.params.host, req.params.roundId);
+  res.set("Cache-Control", "no-store").json({ index: trainingIndex.get(key) ?? 0 });
+});
+
+app.post("/api/training/:host/:roundId", requireHost, express.json(), (req, res) => {
+  const key = trainingKey(req.params.host, req.params.roundId);
+  const delta = Number(req.body?.delta);
+  if (!Number.isInteger(delta)) {
+    return res.status(400).json({ error: "Body must be { delta: <integer> }" });
+  }
+  if (!trainingIndex.has(key) && trainingIndex.size >= MAX_TRAINING_ENTRIES) {
+    trainingIndex.delete(trainingIndex.keys().next().value);
+  }
+  const next = Math.max(0, (trainingIndex.get(key) ?? 0) + delta);
+  trainingIndex.set(key, next);
+  res.set("Cache-Control", "no-store").json({ index: next });
+});
+
 const PORT = process.env.PORT || 4173;
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Callzone Management laeuft auf http://localhost:${PORT}`);

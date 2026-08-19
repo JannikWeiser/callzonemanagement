@@ -8,6 +8,53 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
+- **Setup-screen modes (Single round / Sequence / Training)** replace an
+  earlier scatter of independent checkboxes ("Match finals", "Training
+  mode") that live-tested as confusing — unclear which checkbox belonged
+  with which dropdown. Each mode now shows only its own controls. See
+  [ARCHITECTURE.md §6.11](ARCHITECTURE.md#611-setup-screen-modes-instead-of-independent-checkboxes).
+- **Paired sequence entries, for interleaving Speed finals between
+  categories.** In Sequence mode, "Interleave two Speed finals" adds a
+  single "A ↔ B" entry to the sequence list (not a bare round entry, and
+  not one row per stage) that alternates between the two categories' stages
+  in lockstep (1/8 A, 1/8 B, 1/4 A, 1/4 B, ...), advancing the outer
+  sequence once both brackets are fully finished. A "⇄ Switch category now"
+  button is always available on the board while such an entry is active, as
+  a manual fallback. Share link's `&rounds=` param gains an `idA+idB` token
+  form for a paired entry. See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- **Fixed: paired sequence entries could skip ahead instead of alternating
+  in lockstep.** The first version let each side report its own "current
+  stage" independently and switched whenever one ran dry; live-tested
+  against two categories entered at different paces and found broken — the
+  faster category raced ahead onto a later stage instead of waiting for the
+  slower one's turn. Replaced with a shared stage cursor
+  (`pairedState.stageIndex`) that only advances once **both** sides
+  genuinely have nothing left at the current named stage, keeping the
+  requested alternating order intact regardless of how unevenly the two
+  brackets' results are actually being entered. See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- **Stuck-heat watchdog for paired sequence entries.** Reported after live
+  testing: the automatic category switch didn't trigger when a stage's last
+  heat never resolved (one lane's ascent status stayed `"active"` forever,
+  suspected upstream live-scoring gap — checked results.info's raw response
+  directly, confirmed there's no separate "stage finished" signal to read
+  instead). If the current heat hasn't changed in 90 seconds, the app now
+  force-switches to the other category anyway; the manual button above
+  remains for an immediate override. Scoped to this switch decision only —
+  the core "who's at the wall" inference still trusts a live `"active"`
+  entry forever, unchanged. See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- **Training mode, now controllable from a second device.** Reuses a
+  chosen round's roster/order with manual Next/Back advance (no live
+  results exist for a training session). The manual position now lives on
+  the server (`/api/training/:host/:roundId`, a small in-memory counter)
+  instead of only in the wall tablet's local state, so a second device
+  (e.g. a phone) can drive it while the wall tablet just displays — the
+  board screen offers a distinct "Link to control from another device"
+  that opens a deliberately minimal controller view (names + two big
+  buttons) instead of the full board. See
+  [ARCHITECTURE.md §6.13](ARCHITECTURE.md#613-training-mode-manual-advance-same-rosterorder-as-qualification-controllable-from-a-second-device).
 - **Sequence mode: an ordered, auto-advancing playlist of rounds.** Setup
   screen gained "+ Add to sequence" (next to the existing single-round
   dropdown, which is unchanged) and a drag-to-reorder list; "Show sequence"
@@ -28,6 +75,100 @@ section number); this file is the *what happened, when* log.
   [ARCHITECTURE.md §6.9](ARCHITECTURE.md#69-climbing-instead-of-at-the-wall-as-the-card-label).
 
 ### Fixed
+- **A paired sequence entry could misalign its shared stage cursor when the
+  two brackets have different sizes.** Raised proactively by the user during
+  a full code review, not a live bug report. The stage cursor compared each
+  side's stage by raw array *index* into `speed_elimination_stages` — only
+  safe if both sides' arrays have the same stages at the same offsets, which
+  isn't guaranteed (a smaller bracket can start directly at a later stage,
+  e.g. "1/4" with no "1/8" before it). `pollPairedTick()` now matches by
+  stage *name* instead (`earlierStageName(currentStageNameFor(dataA),
+  currentStageNameFor(dataB))`, using a canonical `SPEED_STAGE_ORDER` list),
+  which stays correct regardless of how deep either side's bracket is.
+  Verified live with a mocked bracket-size mismatch. See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- **Training mode could be started for Boulder/Lead rounds, where its
+  manual-roster-advance concept doesn't apply.** Raised proactively by the
+  user. The round dropdown now tags each entry as Speed or not; picking a
+  non-Speed round while in Training mode disables "Start training" and shows
+  an inline explainer instead. See
+  [ARCHITECTURE.md §6.13](ARCHITECTURE.md#613-training-mode-manual-advance-same-rosterorder-as-qualification-controllable-from-a-second-device).
+- **No protection against overlapping poll calls landing out of order.**
+  Raised proactively by the user. A slower "old" poll's response could
+  resolve after a faster "new" one and silently overwrite it with stale
+  data. Added a per-polling-loop token counter (`pollToken` for the main
+  watch chain, `trainingPollToken` for Training mode) that every
+  state-mutating step checks before applying its result, discarding it if a
+  newer poll has since started. Verified live with a mocked race between a
+  delayed "old" response and an instant "new" one. See
+  [ARCHITECTURE.md §6.14](ARCHITECTURE.md#614-poll-overlap-protection-polltoken--trainingpolltoken).
+- **A "not started" no-show didn't hand the opponent a wildcard, only a
+  false start did.** Raised by the user after spotting it in results.info's
+  admin tool: an athlete can be marked "Not Started" via a separate control
+  from the FALSE START checkbox - a genuine no-show, not a false start.
+  Confirmed live: that ascent has `dnf: false, dns: false` (neither flag!),
+  distinguishable only via `formatted_ascent_score === "NOT STARTED"`.
+  `ascentIsAutoDecided()` now treats this the same as a `dns` false start -
+  the opponent gets the wildcard without needing their own result either.
+  Deliberately does NOT key off `time_ms === null` as a shortcut - a
+  wildcard-*winner*'s own untouched ascent can also be `null`, which would
+  have caused false positives. See
+  [ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
+- **A paired sequence entry's shared stage cursor couldn't recover if a
+  judge reopened and corrected an earlier stage** (deleting a result,
+  re-entering it - e.g. a false-start ruling overturned on review) while the
+  display had already moved ahead to a later stage. Raised proactively by
+  the user, not reported as a live bug. `pollPairedTick()`'s stage index is
+  now computed fresh every tick (`Math.min()` of both sides' own current
+  stage) instead of being persisted and only ever advancing - so a
+  correction like that is picked up automatically on the next poll, the
+  same "no memory, always re-derive" property the single-round view already
+  had. No manual reset control was added - discussed and found unnecessary,
+  since the automatic recompute already covers it. See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- **A Speed-elimination heat decided by a false start never advanced, even
+  with the earlier `heatIsDone()` fix in place.** Reproduced on a full
+  simulated competition (both U13 categories, interleaved, run through
+  every stage to the Final): when one lane false-starts (`dns`), the other
+  lane wins/advances as a "wildcard" under Speed climbing rules without
+  ever getting its own ascent recorded at all - confirmed live, that
+  lane's ascent stays `time_ms: 0, status: "pending"` forever. `heatIsDone()`
+  required *both* lanes to have a result, so a wildcard heat never resolved
+  and permanently blocked everything after it. Now a `dns` on either lane
+  alone decides the heat, matching how results.info's own official
+  standings label the outcome ("WILDCARD"). A `dnf` (fall) is deliberately
+  handled differently and does NOT auto-decide the heat - the surviving
+  lane still needs their own real time before the heat counts as done
+  (an intermediate version of this fix treated `dnf` the same as `dns`,
+  which was wrong - corrected before shipping). See
+  [ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
+- **"Switch category now" appeared to do nothing on a paired sequence
+  entry.** Root cause: clicking it set the target category, but the very
+  next check ("does this side have anything to show right now?") would
+  immediately flip back to the original side if the newly-chosen category
+  happened to have nothing at its current stage yet (e.g. hasn't started) -
+  silently undoing the click before it was ever visible. A new
+  `pairedState.manualPin` flag now protects a manual choice from that
+  auto-revert for the one tick right after the click; normal ticks
+  afterward still auto-switch away from a genuinely empty side as before.
+  See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- **Speed-elimination heats could get stuck on an old stage forever, even
+  with real complete results recorded past it — reproduced on a plain
+  single-round view, no pairing/interleaving needed.** Root cause: unlike
+  qualification rounds (where the fix below correctly relies on ascent
+  status eventually reaching `"confirmed"`), a Speed-elimination heat's
+  ascent status apparently never reaches `"confirmed"` in this codebase's
+  results.info environment — even after a real, valid time was entered for
+  both lanes and the stage was explicitly closed in results.info's own
+  admin tool. `computeSpeedElimination()`/`stageHeatsRemaining()` now judge
+  a heat as "done" from the recorded result itself (`time_ms > 0`, or
+  `dnf`/`dns`) instead of the `status` field — scoped to Speed elimination
+  only; qualification rounds are untouched, since their `"active"` →
+  `"confirmed"` transition has held up in practice. This also directly
+  fixes "Round finished" detection and sequence-mode advancement for Speed
+  finals, which depend on the same heat-done check. See
+  [ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
 - **Corrected a wrong assumption from the previous fix below: ascent
   status `"active"` does NOT mean "already climbed".** It means a judge is
   live-scoring that attempt right now and hasn't confirmed it yet - during

@@ -21,7 +21,44 @@ previously-reported problems:
   not pending" check. `"active"` specifically means "a judge is
   live-scoring this right now, not yet confirmed" and must NOT be treated
   as done; conflating the two was a real shipped bug (see
-  `CHANGELOG.md`, the entry that corrects the previous one).
+  `CHANGELOG.md`, the entry that corrects the previous one). **This rule is
+  for qualification rounds (`computeLane()`) only.**
+- `heatIsDone()` in `computeSpeedElimination()`/`stageHeatsRemaining()` —
+  Speed-elimination heats deliberately do NOT use the `findCurrentIndex()`
+  active/confirmed rule above. Confirmed live against real results.info
+  data (see the `13740`/`13741`/`13748` fixtures in §3) that a
+  Speed-elimination heat can carry a complete, valid, real time for both
+  lanes - stage explicitly closed in results.info's own admin tool - and
+  still report ascent status `"active"` forever; unlike qualification
+  rounds, `"active"` apparently never resolves to `"confirmed"` here.
+  `heatIsDone()` instead checks the recorded result directly, ignoring
+  `status` entirely for Speed elimination. `dnf` and `dns` are handled
+  *differently* - don't conflate them:
+  - **`dns` (false start) OR `formatted_ascent_score === "NOT STARTED"`
+    auto-decides the whole heat on its own** - the other lane wins as a
+    "wildcard" *without ever getting its own ascent recorded*, confirmed
+    live: `time_ms: 0` or `null`, `status: "active"`/`"pending"` forever on
+    the winning lane. "Not started" is a real, separate results.info
+    outcome (a no-show) with `dnf: false, dns: false` - the `formatted_ascent_score`
+    text is the ONLY way to detect it. **Do NOT use `time_ms === null` as a
+    shortcut for "not started"** - a completely untouched wildcard-*winner*
+    ascent (the other lane in a plain `dns` heat) can also have
+    `time_ms: null` with no `formatted_ascent_score`, so that alone would
+    misfire - verified live on the exact heat that exposed this (see the
+    `13739` fixture in §3).
+  - **`dnf` (fall) does NOT auto-decide the heat** - a first version of
+    this fix treated `dnf` the same as `dns`, which was wrong (corrected
+    after user feedback): a fall only settles *that lane's own* result: the
+    other lane still needs a real `time_ms > 0` before the heat counts as
+    done.
+  Don't simplify this back to "both lanes need a result" (unqualified) -
+  that reintroduces the wildcard-heat-never-resolves bug for `dns`/"not
+  started". Don't treat `dnf` as auto-deciding either - that lets a heat
+  resolve before the surviving lane has actually finished their run. Don't
+  "fix" this back to mirror `computeLane()`'s status-based rule - that's
+  the original bug this replaced, verified stuck live on multiple
+  rounds/events. See
+  [ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
 - `collectRouteGroups()` handling both `round.routes` and
   `round.starting_groups[].routes` — Boulder-with-groups rounds have no
   `routes` field at all; assuming it always exists breaks those rounds.
@@ -29,6 +66,71 @@ previously-reported problems:
 - The `[hidden] { display: none !important; }` rule in `styles.css` —
   needed because a more specific `.setup-row { display: flex }` rule was
   silently overriding the default `[hidden]` behavior.
+- The setup screen's mode tabs (Single round / Sequence / Training) —
+  don't add a new checkbox next to the round dropdown for a new optional
+  behavior, even a small one. An earlier design did exactly that and it
+  live-tested as confusing; new per-mode options belong inside whichever
+  mode's own row, not as a fourth checkbox. See
+  [ARCHITECTURE.md §6.11](ARCHITECTURE.md#611-setup-screen-modes-instead-of-independent-checkboxes).
+- `earlierStageName(currentStageNameFor(dataA), currentStageNameFor(dataB))`
+  in `pollPairedTick()` — the shared stage for a paired entry, computed
+  **fresh every tick**, deliberately NOT persisted/only-ever-advanced.
+  Several things this line buys, don't undo any of them:
+  - `earlierStageName()` (comparing by canonical stage *name*, via
+    `SPEED_STAGE_ORDER`/`stageNameRank()`) is what keeps both sides in
+    lockstep - an earlier version let each side use its own
+    `computeSpeedElimination()` result directly, which let a
+    faster-progressing category skip ahead onto a later stage instead of
+    the requested lockstep order (1/8 A, 1/8 B, 1/4 A, 1/4 B, ...) -
+    reproduced live (see the `13742`+`13741` fixture in §3).
+  - Comparing by **name**, not raw array *index* - a still-earlier version
+    used `Math.min(currentStageIndexFor(dataA), currentStageIndexFor(dataB))`,
+    which silently misaligns if the two sides' `speed_elimination_stages`
+    arrays don't have the same stages at the same offsets (a smaller
+    bracket can start directly at "1/4" with no "1/8" before it) - fixed
+    after a proactive user review, not a live report; verified with a
+    mocked bracket-size mismatch.
+  - Recomputing fresh every tick (rather than a persisted cursor that only
+    moves forward) is what makes a judge's later correction to an earlier
+    stage (deleting and re-entering a result) self-correct automatically on
+    the next poll - verified live (see the `13740`+`13741` reset scenario,
+    discussed with the user rather than adding a manual reset button).
+    Don't reintroduce a persisted `stageName`/`stageIndex` "for efficiency"
+    - the statelessness is the point, not an accident.
+  Don't revert `renderPairedBoard()` to calling the ordinary
+  `renderBoard()`/`computeSpeedElimination()` for a paired entry's active
+  side either - that's the exact mechanism that reintroduces the
+  skip-ahead bug. See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- **Training mode's Speed-only gating** (`updateTrainingEligibility()`,
+  `opt.dataset.speed`, `#trainingHint`) - don't remove this to "simplify" the
+  round dropdown. Boulder/Lead rounds don't fit Training mode's
+  manual-roster-advance concept (no linear start order once Boulder
+  starting groups split the field; Lead already has real live inference via
+  Single round/Sequence mode). See
+  [ARCHITECTURE.md §6.13](ARCHITECTURE.md#613-training-mode-manual-advance-same-rosterorder-as-qualification-controllable-from-a-second-device).
+- **`pollToken`/`trainingPollToken`** - every async poll path checks its
+  captured token against the current counter before mutating render state,
+  and silently discards its result if a newer poll call has since started.
+  Don't remove these checks to "simplify" a poll function - without them, a
+  slower in-flight request can resolve after a newer one and overwrite
+  fresh data with stale data. Two independent counters on purpose (main
+  watch chain vs. Training mode) - don't merge them into one, the two modes
+  are mutually exclusive with separate render targets. See
+  [ARCHITECTURE.md §6.14](ARCHITECTURE.md#614-poll-overlap-protection-polltoken--trainingpolltoken).
+- `STUCK_TIMEOUT_MS` / the 90s watchdog in `pollPairedTick()` — originally
+  added to cover for a heat's `status` never reaching `"confirmed"`; that
+  root cause is now fixed directly at the source (`heatIsDone()` above), so
+  this watchdog is a narrower fallback now, for a heat that never gets any
+  recorded result at all. Not arbitrary and not a bug waiting to be
+  "cleaned up" into the core inference - still needed as a safety net,
+  scoped only to the paired-entry category-switch decision. See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- The in-memory training counter in `server.js` — the one deliberate
+  exception to "the server has no persistent state" (see ARCHITECTURE.md
+  §2). Don't "fix" it into `localStorage` only; the whole point is that a
+  second device can read/write the same counter. See
+  [ARCHITECTURE.md §6.13](ARCHITECTURE.md#613-training-mode-manual-advance-same-rosterorder-as-qualification-controllable-from-a-second-device).
 
 If a change requires touching one of these, update the corresponding
 ARCHITECTURE.md section in the same change — don't let the doc drift from
@@ -66,7 +168,12 @@ athlete data — no need to hunt for a live competition to test against.
 | `stage` | 1594 | `13719` (SPEED Herren+ Quali) | Speed qualification, routes `"A"`/`"B"` |
 | `stage` | 1594 | `13689` (LEAD Herren+ Quali) | `status: "pending"` with 6 routes defined (no startlist published yet as of investigation) |
 | `stage` | 1594 | `13739` (SPEED Herren+ Finale) | `speed_elimination_stages` — the K.O.-bracket case, live/active as of investigation with the "1/4" stage in progress |
-| `stage` | 1594 | `13740` (SPEED Damen+ Finale) | Speed elimination round with `status: "pending"` and no bracket generated yet — baseline "no bracket data" case |
+| `stage` | 1594 | `13739` + `13741` (SPEED Herren+ / U15+ Männlich Finale) | Both live elimination rounds on the same event — used to verify paired sequence entries (6.12): the "Interleave two Speed finals" row, the "A ↔ B" single-row rendering, and the manual "Switch category now" override |
+| `stage` | 1594 | `13742` + `13741` (SPEED U15+ Weiblich / Männlich Finale) | **The lockstep-skip bug, reproduced live.** At investigation time, Weiblich's 1/8 stage had real times entered but nothing yet confirmed, while Männlich's data had real times in *both* 1/8 and 1/4 already — exposed that letting each side report its own "current stage" independently lets a faster-progressing category skip ahead instead of waiting its turn. Also the source round for the stuck-heat watchdog fix (6.12): Weiblich's 1/8 heat 8 had one lane genuinely stuck at `"active"` with no path to `"confirmed"`. |
+| `stage` | 1594 | `13719` (SPEED Herren+ Quali) | Also used to test Training mode's roster reuse (6.13) — finished round, real startlist/positions, safe to repeatedly step through without affecting anything live |
+| `stage` | 1594 | `13739` (SPEED Herren+ Finale) | **The "not started" wildcard bug.** Heat #9 of stage "1/4": "Rutherford Ernest" has `dnf: false, dns: false, status: "confirmed", time_ms: null, formatted_ascent_score: "NOT STARTED"` (set via a distinct red dropdown button in results.info's admin UI, separate from the FALSE START checkbox) - a genuine no-show, not a false start. Opponent "Popper Karl" never got his own ascent touched at all. `heatIsDone()` originally only checked `dns`, so this heat never resolved. Also the fixture that proved `time_ms === null` alone isn't a safe "not started" signal: heat #11's wildcard-*winner* ("Fleming Alexander") also has `time_ms: null` but no `formatted_ascent_score` - only the score-text check correctly tells them apart. |
+| `stage` | 1594 | `13748` (SPEED U 13 m Finale) | **The wildcard/false-start bug, reproduced on a full simulated competition (both U13 categories, interleaved, run through every stage to Final).** Heat #4 of stage "1/8": one lane `dns: true` (false start), the other lane (the wildcard winner, "Schrödinger Erwin") never got any ascent recorded at all - `time_ms: 0, status: "pending"`, no `dnf`/`dns` either. `heatIsDone()` originally required *both* lanes to have a result, so this heat never resolved and blocked all progress past it. Fixed by treating either lane's `dns` (only `dns`, not `dnf` - see the `heatIsDone()` bullet above) as instantly deciding the heat. results.info's own official standings table labels this outcome "WILDCARD" - useful search term if this round's data ever needs re-inspecting. |
+| `stage` | 1594 | `13740` (SPEED Damen+ Finale) | **The `heatIsDone()` bug, reproduced on a plain single-round view (no pairing/interleaving involved).** After stage "1/8" was fully judged with real, complete times and explicitly closed in results.info's admin tool (with "1/4" heats already populated with real opponents), every single ascent in "1/8" still reported `status: "active"` - the board stayed stuck on 1/8's last heat instead of showing the real current stage "1/4". Proved this isn't a pairing-specific bug; the fix (checking `time_ms`/`dnf`/`dns` directly instead of `status`) lives in `computeSpeedElimination()`/`stageHeatsRemaining()` itself. (Earlier note for this fixture, now outdated: it used to be `status: "pending"` with no bracket at investigation time - kept as a reminder that this round's state moves on, re-check before reusing.) |
 | `prod` | `2101` "KidsCup Hessen Bouldern + Lead Gießen" | — | Real `dav.results.info` event structure, all rounds pending as of investigation |
 | `ifsc` | `1518` "World Climbing Asia Youth Series Quannan 2026" | — | Real `ifsc.results.info` event structure confirmation |
 | `stage` | 1595 "Anleitung CallzoneManagement" | `13750` (LEAD Damen+ Quali) | **Two bugs reproduced here, at different times.** (1) Route with `"active"`/gap results at positions 4,5,6,7,9 but permanently-pending gaps at 1,2,3,8 (simulated no-shows) — correct "at the wall" is the position after the last confirmed one, not the first pending one. (2) Live-judging: Route 1 stayed `"active"` (never `"confirmed"`) for several athletes while Route 2's entries progressed to `"confirmed"` - proved `"active"` ≠ done, see Quirk C. This is the user's ongoing edge-case test round for this exact algorithm; keep checking it (or a fresh equivalent) whenever touching `findCurrentIndex()`/`computeLane()`. |
@@ -140,11 +247,11 @@ before saying it's fixed:
 ## 7. Explicitly out of scope — don't build these without being asked
 
 See [ARCHITECTURE.md §7](ARCHITECTURE.md#7-explicitly-out-of-scope-do-not-fix-without-asking)
-for the full list and reasoning (a visual bracket tree, the Speed-training
-manual mode, a language switcher, auth, a database, write access to
-results.info). If a user report sounds like it needs one of these, say so
-and ask before implementing rather than silently
-scoping it in.
+for the full list and reasoning (a visual bracket tree, training-progress
+persistence across server restarts, training mode inside a sequence, a
+language switcher, auth, a real database, write access to results.info).
+If a user report sounds like it needs one of these, say so and ask before
+implementing rather than silently scoping it in.
 
 ## 8. Keeping docs in sync
 

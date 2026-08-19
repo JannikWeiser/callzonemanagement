@@ -58,12 +58,19 @@ ist einfach immer erreichbar.
    IFSC-/Weltcup-Wettkämpfe (die Test-Option braucht ihr normalerweise
    nicht).
 3. Auf **„Load event"** klicken.
-4. Im Dropdown die passende **Altersklasse und Runde** auswählen
+4. Oben erscheinen drei Reiter: **„Single round"**, **„Sequence"**,
+   **„Training"**. Für eine einzelne Runde bleibt ihr bei „Single round"
+   (voreingestellt).
+5. Im Dropdown die passende **Altersklasse und Runde** auswählen
    (z. B. „LEAD U13 m — Qualifikation").
-5. Auf **„Show"** klicken.
+6. Auf **„Show"** klicken.
 
 Die Anzeige aktualisiert sich danach von selbst alle paar Sekunden – ihr
 müsst nichts mehr tun.
+
+Die beiden anderen Reiter — **„Sequence"** (mehrere Runden nacheinander,
+inkl. Speed-Verschränken) und **„Training"** (Speed-Training ohne
+Live-Ergebnisse) — sind in den Schritten 5 und 6 unten beschrieben.
 
 ## 4. Anzeige lesen
 
@@ -106,23 +113,97 @@ Speed Herren" → „Quali Speed Damen" → „Finale Speed Herren" → „Final
 Damen". Sobald eine Runde komplett fertig ausgewertet ist, springt die
 Anzeige von selbst zur nächsten.
 
-1. Wie in Schritt 3 eine Runde im Dropdown auswählen, aber statt „Show"
-   auf **„+ Add to sequence"** klicken. Die Runde erscheint in einer Liste
-   darunter.
-2. Nächste Runde im Dropdown wählen, wieder „+ Add to sequence" – so lange
+1. Oben den Reiter **„Sequence"** wählen.
+2. Eine Runde im Dropdown auswählen, dann auf **„+ Add to sequence"**
+   klicken. Die Runde erscheint in einer Liste darunter.
+3. Nächste Runde im Dropdown wählen, wieder „+ Add to sequence" – so lange
    wiederholen, bis alle gewünschten Runden in der Liste stehen.
-3. Reihenfolge per **Drag & Drop** anpassen (Eintrag anfassen und
+4. Reihenfolge per **Drag & Drop** anpassen (Eintrag anfassen und
    verschieben). Mit dem „×" lässt sich ein Eintrag wieder entfernen.
-4. Auf **„Show sequence"** klicken.
+5. Auf **„Show sequence"** klicken.
 
 Die Anzeige startet dann automatisch bei der ersten noch nicht
 abgeschlossenen Runde der Liste (bereits fertige Runden werden beim Start
 übersprungen) und schaltet danach von selbst weiter, sobald jeweils die
 aktuelle Runde fertig ist. Der Tablet-Link merkt sich die ganze Sequenz,
 lässt sich also genauso als Lesezeichen speichern wie bei einer einzelnen
-Runde (Schritt 6).
+Runde (Schritt 7).
 
-## 6. Mehrere Tablets gleichzeitig (je eigene Startklasse)
+### Speed-Finale verschränkt laufen lassen (zwischen Startklassen abwechseln)
+
+Bei Speed-Finalrunden läuft der Ablauf oft nicht "eine Startklasse komplett
+zu Ende, dann die nächste", sondern verschränkt: erst das Achtelfinale von
+Startklasse 1 und 2, dann das Viertelfinale von beiden, dann Halbfinale
+usw. – erst wenn beide K.-o.-Bäume fertig sind, geht's mit der nächsten
+Startklassen-Kombination weiter.
+
+Im Reiter **„Sequence"** erscheint dafür, sobald das Event mindestens zwei
+Speed-Finalrunden hat, ein eigener Bereich **„Interleave two Speed
+finals"**:
+
+1. Die beiden gewünschten Startklassen in den zwei Dropdowns auswählen
+   (z. B. „SPEED Herren+ — Finale" und „SPEED U15+ Männlich — Finale").
+2. Auf **„+ Add paired entry"** klicken. In der Sequenz-Liste erscheint
+   **ein** Eintrag „A ↔ B" (nicht mehrere Einzeleinträge).
+3. Wie gewohnt auf **„Show sequence"** klicken (ggf. erst weitere
+   Einzelrunden oder Paare hinzufügen).
+
+Die Anzeige hält beide Startklassen dabei bewusst auf derselben Stufe: erst
+wenn **beide** Startklassen mit dem Achtelfinale durch sind, geht's für
+beide gemeinsam mit dem Viertelfinale weiter – auch wenn eine Startklasse
+schneller vorankommt als die andere (z. B. weil dort schon mehr Ergebnisse
+eingetragen wurden). So entsteht zuverlässig genau die Reihenfolge
+Achtelfinale Klasse 1 → Achtelfinale Klasse 2 → Viertelfinale Klasse 1 →
+Viertelfinale Klasse 2 usw. Erst wenn beide K.-o.-Bäume komplett
+durchgelaufen sind, geht die Sequenz zum nächsten Eintrag weiter.
+
+**Falls es mal nicht automatisch weiterspringt** (z. B. weil ein einzelnes
+Ergebnis in der Live-Wertung hängen bleibt): Nach **90 Sekunden ohne
+Änderung** am aktuellen Duell schaltet die App von selbst zur anderen
+Startklasse weiter. Wer nicht so lange warten will, klickt stattdessen
+sofort selbst auf den Knopf **„⇄ Switch category now"**, der oben auf dem
+Board erscheint, solange ein „A ↔ B"-Paar aktiv ist.
+
+## 6. Speed-Training (ohne Live-Ergebnisse)
+
+Trainingseinheiten laufen nicht über results.info und liefern deshalb keine
+Live-Ergebnisse, aus denen die App "wer klettert gerade" ableiten könnte.
+Die Startreihenfolge im Training entspricht aber meist der Reihenfolge aus
+der echten Qualifikationsrunde – deshalb lässt sich diese Reihenfolge
+wiederverwenden, das Weiterschalten erfolgt dann von Hand:
+
+1. Oben den Reiter **„Training"** wählen.
+2. Die passende Runde auswählen (üblicherweise die
+   **Qualifikationsrunde**, deren Startreihenfolge dem Training entspricht).
+3. Auf **„Start training"** klicken.
+
+Statt der automatischen Live-Anzeige erscheint oben ein Bedienfeld mit
+**„← Back"** und **„Next →"**. Jeder Klick auf „Next" schaltet **alle**
+Bahnen/Routen gemeinsam einen Platz weiter (ein Klick reicht für alle
+Spalten gleichzeitig) – gedacht für den Fall, dass alle Athlet·innen im
+Training synchron nacheinander klettern. Die Position wird nicht dauerhaft
+gespeichert: nach einem Neustart des Servers beginnt die Zählung wieder bei
+0 (ein normaler Seiten-Reload ist unproblematisch, siehe unten).
+
+### Von einem zweiten Gerät aus weiterschalten
+
+Ihr müsst das Weiterschalten nicht zwingend auf dem Wand-Tablet selbst
+bedienen. Auf dem Board erscheint zusätzlich zum normalen Tablet-Link ein
+zweites Feld **„Link to control from another device"**:
+
+1. Diesen zweiten Link auf einem beliebigen anderen Gerät öffnen (Handy,
+   zweites Tablet, ...).
+2. Dort erscheint eine schlanke Ansicht: nur die aktuellen Namen pro
+   Bahn/Route, plus große **„← Back"**/**„Next →"**-Tasten.
+3. Ein Tastendruck dort aktualisiert das Wand-Tablet automatisch innerhalb
+   von etwa einer Sekunde – und umgekehrt: Tasten auf dem Wand-Tablet
+   wirken sich genauso auf das zweite Gerät aus. Beide Geräte zeigen also
+   immer denselben Stand.
+
+Der Steuer-Link braucht keinen Login – wer den Link hat, kann mitschalten
+(genau wie beim normalen Board-Link).
+
+## 7. Mehrere Tablets gleichzeitig (je eigene Startklasse)
 
 Jedes Gerät kann unabhängig eine eigene Altersklasse/Runde anzeigen – z. B.
 Tablet 1 zeigt Boulder U11, Tablet 2 zeigt Lead U15, gleichzeitig, ohne dass
@@ -142,7 +223,7 @@ Startklasse zeigt (statt der Auswahl-Maske):
 Jedes Tablet bekommt so seinen eigenen Link mit seiner eigenen Runde (und,
 bei Boulder, seiner eigenen Gruppe).
 
-## 7. Vollbild & Bildschirm wach halten
+## 8. Vollbild & Bildschirm wach halten
 
 Oben auf dem Board gibt es den Button **„Fullscreen + Always On"**. Ein
 Klick macht die Seite gleichzeitig vollbildig (keine Safari-Leiste mehr)
@@ -154,7 +235,7 @@ Falls das auf einem älteren iPad nicht funktioniert: das "Wach halten"
 braucht iPadOS 16.4 oder neuer. Vollbild funktioniert unabhängig davon,
 sollte aber vor dem Wettkampf einmal kurz getestet werden.
 
-## 8. Programm beenden
+## 9. Programm beenden
 
 Im Terminal-Fenster `Strg + C` drücken (oder das Fenster schließen).
 

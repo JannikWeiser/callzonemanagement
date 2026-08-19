@@ -49,6 +49,28 @@ h1 {
 
 .setup-row label.grow { flex: 1; min-width: 260px; }
 
+.mode-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.mode-tab {
+  padding: 0.5rem 1.1rem;
+  border-radius: 999px;
+  border: 1px solid #333846;
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.mode-tab.active {
+  background: var(--accent);
+  color: #1a1305;
+  border-color: var(--accent);
+}
+
 .sequence-row {
   margin: 0 0 1.5rem;
   max-width: 560px;
@@ -126,6 +148,12 @@ button.ghost {
   margin: 0.5rem 0 1rem;
 }
 
+.training-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: -0.5rem 0 1rem;
+}
+
 .board {
   padding: 1rem 1.25rem 2rem;
 }
@@ -149,6 +177,44 @@ button.ghost {
   font-size: 0.85rem;
 }
 .status-line.stale { color: var(--danger); }
+
+.paired-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+  padding: 0.75rem 1rem;
+  background: var(--panel);
+  border: 1px solid #333846;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.training-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  padding: 0.75rem 1rem;
+  background: var(--panel);
+  border: 1px solid #333846;
+  border-radius: 12px;
+}
+
+.training-label {
+  flex: 1;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.training-controls button {
+  font-size: 1.1rem;
+  padding: 0.75rem 1.5rem;
+}
 
 .share-row {
   display: flex;
@@ -274,4 +340,48 @@ button.ghost {
 
 @media (max-width: 640px) {
   .lanes-grid { grid-template-columns: 1fr; }
+}
+
+.controller {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 2rem;
+}
+
+.controller-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.controller-lane {
+  background: var(--panel);
+  border-radius: 16px;
+  padding: 1rem 1.25rem;
+}
+
+.controller-lane .lane-name {
+  display: block;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  margin-bottom: 0.3rem;
+}
+
+.controller-lane .lane-athlete {
+  font-weight: 800;
+  font-size: clamp(1.3rem, 5vw, 1.8rem);
+}
+
+.controller-buttons {
+  display: flex;
+  gap: 1rem;
+}
+
+.controller-buttons button {
+  flex: 1;
+  font-size: 1.2rem;
+  padding: 1rem;
 }

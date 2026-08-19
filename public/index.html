@@ -27,17 +27,39 @@
   </div>
   <div id="setupError" class="error" hidden></div>
 
+  <div id="modeTabs" class="mode-tabs" hidden>
+    <button type="button" class="mode-tab" data-mode="single">Single round</button>
+    <button type="button" class="mode-tab" data-mode="sequence">Sequence</button>
+    <button type="button" class="mode-tab" data-mode="training">Training</button>
+  </div>
+
   <div id="categoryRow" class="setup-row" hidden>
     <label class="grow">
       Category / round
       <select id="roundSelect"></select>
     </label>
-    <button id="addToSequence" class="ghost">+ Add to sequence</button>
     <button id="watchRound">Show</button>
+    <button id="addToSequence" class="ghost">+ Add to sequence</button>
+    <button id="startTraining">Start training</button>
+  </div>
+  <div id="trainingHint" class="training-hint" hidden>
+    Training mode is designed for Speed rounds only. Pick a Speed round, or use Single round / Sequence for Lead and Boulder.
+  </div>
+
+  <div id="pairedRow" class="setup-row" hidden>
+    <label class="grow">
+      Interleave two Speed finals
+      <select id="pairedA"></select>
+    </label>
+    <label class="grow">
+      with
+      <select id="pairedB"></select>
+    </label>
+    <button id="addPaired" class="ghost">+ Add paired entry</button>
   </div>
 
   <div id="sequenceRow" class="sequence-row" hidden>
-    <div class="sequence-label">Sequence (drag to reorder) — plays through in order, auto-advancing once each round finishes:</div>
+    <div class="sequence-label">Sequence (drag to reorder) — plays through in order, auto-advancing once each entry finishes:</div>
     <ol id="sequenceList" class="sequence-list"></ol>
     <button id="watchSequence">Show sequence</button>
   </div>
@@ -50,13 +72,40 @@
     <button id="kioskBtn" class="ghost">Fullscreen + Always On</button>
     <div id="statusLine" class="status-line"></div>
   </div>
+  <div id="pairedBar" class="paired-bar" hidden>
+    <span id="pairedLabel"></span>
+    <button id="pairedSwitchBtn" class="ghost">&hArr; Switch category now</button>
+  </div>
+  <div id="trainingControls" class="training-controls" hidden>
+    <button id="trainingBack" class="ghost">&larr; Back</button>
+    <span class="training-label">Training mode — manual advance</span>
+    <button id="trainingNext">Next &rarr;</button>
+  </div>
   <div id="shareRow" class="share-row">
     <span class="share-label">Link for this tablet:</span>
     <input id="shareLink" class="share-input" type="text" readonly />
     <button id="copyLink" class="ghost">Copy</button>
   </div>
+  <div id="controlShareRow" class="share-row" hidden>
+    <span class="share-label">Link to control from another device:</span>
+    <input id="controlLink" class="share-input" type="text" readonly />
+    <button id="copyControlLink" class="ghost">Copy</button>
+  </div>
   <div id="groupTabs" class="group-tabs" hidden></div>
   <div id="lanes" class="lanes"></div>
+</main>
+
+<main id="controller" class="controller" hidden>
+  <div class="board-topbar">
+    <button id="controllerBackBtn" class="ghost">&larr; switch round</button>
+    <div id="controllerTitle" class="round-title"></div>
+    <div id="controllerStatus" class="status-line"></div>
+  </div>
+  <div id="controllerLanes" class="controller-lanes"></div>
+  <div class="controller-buttons">
+    <button id="controlBack" class="ghost">&larr; Back</button>
+    <button id="controlNext">Next &rarr;</button>
+  </div>
 </main>
 
 <script src="app.js"></script>
