@@ -439,17 +439,38 @@ wireCopyButton(el.controlLink, el.copyControlLink);
 // button since they're always wanted together for this use case.
 let wakeLockSentinel = null;
 
+// Reported live: on an iPad running in Safari Private Browsing, the wake
+// lock silently stops holding the screen awake after about 10 minutes even
+// though the tab stays visible and fullscreen the whole time - Private
+// Browsing is known to apply stricter background/power policies than a
+// normal tab, so the browser can revoke the lock on its own without ever
+// backgrounding the tab (which is the only case the visibilitychange
+// listener below covers). The spec-correct way to catch that is the
+// sentinel's own "release" event, which fires whenever the lock is let go
+// for ANY reason, not just an explicit release() call - listen for it and
+// try to re-acquire immediately. This is best-effort: if the browser keeps
+// revoking it (e.g. a hard policy in Private Browsing that a page can't
+// override), each release just triggers one more retry rather than an
+// infinite tight loop, since the event only fires once per acquisition.
+async function requestWakeLock() {
+  try {
+    wakeLockSentinel = (await navigator.wakeLock?.request("screen")) ?? null;
+    wakeLockSentinel?.addEventListener("release", () => {
+      wakeLockSentinel = null;
+      if (document.visibilityState === "visible" && document.fullscreenElement) requestWakeLock();
+    });
+  } catch (err) {
+    console.warn("Wake lock request failed:", err);
+  }
+}
+
 async function enterKioskMode() {
   try {
     if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
   } catch (err) {
     console.warn("Fullscreen request failed:", err);
   }
-  try {
-    wakeLockSentinel = (await navigator.wakeLock?.request("screen")) ?? null;
-  } catch (err) {
-    console.warn("Wake lock request failed:", err);
-  }
+  await requestWakeLock();
   el.kioskBtn.textContent = "Exit fullscreen";
 }
 
@@ -484,14 +505,14 @@ document.addEventListener("fullscreenchange", () => {
 });
 
 // The wake lock is released by the browser whenever the tab is backgrounded
-// (spec-mandated) - re-acquire it once the tablet's screen comes back.
-document.addEventListener("visibilitychange", async () => {
+// (spec-mandated) - re-acquire it once the tablet's screen comes back. The
+// sentinel's own "release" listener (requestWakeLock() above) covers the
+// silent-drop-while-visible case; this one covers the backgrounded case,
+// where the sentinel was already released before the tab became visible
+// again, so there's no live sentinel left to have fired that event on.
+document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && document.fullscreenElement && !wakeLockSentinel) {
-    try {
-      wakeLockSentinel = (await navigator.wakeLock?.request("screen")) ?? null;
-    } catch {
-      // best-effort only
-    }
+    requestWakeLock();
   }
 });
 
@@ -733,7 +754,20 @@ function findCurrentIndex(items, isActive, isConfirmed) {
     if (isActive(item)) lastActive = i;
     if (isConfirmed(item)) lastConfirmed = i;
   });
-  return lastActive !== -1 ? lastActive : lastConfirmed + 1;
+  // An "active" entry normally wins outright (see the big comment above),
+  // but NOT if it sits behind an already-confirmed frontier - that only
+  // happens when someone re-opens/edits an earlier, already-passed result
+  // (e.g. a score correction), which briefly sets it back to "active" again.
+  // Without the Math.max() here, that edit would yank the display backward
+  // to the athlete being corrected, even though real progress (later
+  // confirmed entries) has already moved well past them. Reported live:
+  // Route 2 appeared to "hang" on an earlier athlete after their result was
+  // edited post-confirmation, while athletes after them were already
+  // confirmed. If nothing further along is confirmed yet, lastConfirmed + 1
+  // is 0 or otherwise behind lastActive, so this still resolves to the
+  // active entry as before - this only changes behavior for the
+  // edited-after-the-fact case.
+  return Math.max(lastActive, lastConfirmed + 1);
 }
 
 // Builds the sorted athlete order for one route from the round's startlist -
@@ -995,6 +1029,18 @@ function earlierStageName(nameA, nameB) {
 // from live data" property the single-round view already has for free
 // (5.5).
 function currentStageNameFor(round) {
+  // A round that hasn't started at all yet (round.status === "pending") must
+  // not anchor the shared stage cursor - e.g. a smaller category's final
+  // round sitting at "pending" while it waits for its own semifinal to
+  // resolve. Without this check, a pre-generated stage skeleton (heats
+  // present with athletes: [] because the field isn't seeded yet) would
+  // still report its first stage's name here, and lockstep comparison
+  // would then make BOTH sides wait on that not-actually-progressing side
+  // instead of automatically showing whichever side genuinely has
+  // something to display right now. Returning null here defers entirely to
+  // the other side's real stage, the same way an empty stages array already
+  // does below.
+  if (round.status === "pending") return null;
   const stages = round.speed_elimination_stages ?? [];
   if (!stages.length) return null;
   const heats = stages.flatMap((stage) => stage.heats.map((h) => ({ ...h, stageName: stage.stage_name })));

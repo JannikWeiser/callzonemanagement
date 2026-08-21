@@ -75,6 +75,45 @@ section number); this file is the *what happened, when* log.
   [ARCHITECTURE.md §6.9](ARCHITECTURE.md#69-climbing-instead-of-at-the-wall-as-the-card-label).
 
 ### Fixed
+- **A Lead/Boulder qualification route could jump backward after a result
+  was edited post-confirmation.** Reported live: "Route 2 hängt" on an IFSC
+  event, traced to a score correction on an already-confirmed athlete,
+  which briefly sets their ascent back to `"active"` while it's re-checked.
+  `findCurrentIndex()` used to let any `"active"` entry win outright, so the
+  display jumped back to the athlete being corrected even though later
+  athletes were already confirmed — real progress had moved well past them.
+  Now takes `Math.max(lastActive, lastConfirmed + 1)` instead: an `"active"`
+  entry still wins whenever nothing further along is confirmed yet (the
+  normal live-judging case, unchanged), but no longer overrides an
+  already-confirmed frontier. See
+  [ARCHITECTURE.md §5.2](ARCHITECTURE.md#52-the-inference-findcurrentindex--computelane-in-publicappjs).
+- **A paired sequence entry didn't hand off to the other category while one
+  side hadn't started at all yet** (e.g. waiting on its own semifinal to
+  determine finalists). `currentStageNameFor()` used to report a
+  not-started round's pre-generated first-stage name regardless of
+  `round.status`, which could rank *earlier* than the other side's real
+  progress and pin the shared stage there — leaving both sides empty
+  (the not-started one because it's not ready, the progressing one because
+  it had already moved past that stage) and the display ping-ponging
+  between two "Waiting for the next stage…" screens instead of showing the
+  side with real content. Now returns `null` immediately for
+  `round.status === "pending"`, deferring unconditionally to the other
+  side, the same as an entirely-absent bracket already did. The manual "⇄
+  Switch category now" button is unaffected and still available. See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- **"Fullscreen + Always On" stopped keeping the screen awake after about
+  10 minutes in Safari Private Browsing**, even with the tab staying
+  visible and fullscreen the whole time (so the existing
+  backgrounded-tab re-acquisition never triggered). Private Browsing
+  applies stricter background/power policies and can silently revoke the
+  Wake Lock outside this app's control. Now also listens for the wake lock
+  sentinel's own `"release"` event — which fires whenever the lock is let
+  go for any reason — and immediately re-requests it, guarded so a
+  deliberate exit doesn't trigger an unwanted re-acquire loop. Best-effort:
+  if Private Browsing keeps revoking it regardless, each release is one
+  more retry, not a fix for the underlying policy — not running the kiosk
+  tablet in Private/Incognito mode remains the reliable option. See
+  [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
 - **A paired sequence entry could misalign its shared stage cursor when the
   two brackets have different sizes.** Raised proactively by the user during
   a full code review, not a live bug report. The stage cursor compared each

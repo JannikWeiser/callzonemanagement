@@ -23,6 +23,16 @@ previously-reported problems:
   as done; conflating the two was a real shipped bug (see
   `CHANGELOG.md`, the entry that corrects the previous one). **This rule is
   for qualification rounds (`computeLane()`) only.**
+  - It's `Math.max(lastActive, lastConfirmed + 1)`, NOT "prefer active
+    whenever one exists" - a real bug ("Route 2 hängt" on an IFSC event),
+    fixed after editing an already-confirmed result (a score correction)
+    briefly set it back to `"active"` again, which used to yank the display
+    backward to the athlete being corrected even though later athletes were
+    already confirmed. Don't revert to unconditionally preferring
+    `lastActive` - that reintroduces exactly this jump-backward bug. The
+    normal live-judging case (nothing further along confirmed yet) is
+    unaffected either way, since `lastConfirmed + 1` is behind `lastActive`
+    there regardless.
 - `heatIsDone()` in `computeSpeedElimination()`/`stageHeatsRemaining()` —
   Speed-elimination heats deliberately do NOT use the `findCurrentIndex()`
   active/confirmed rule above. Confirmed live against real results.info
@@ -90,6 +100,19 @@ previously-reported problems:
     bracket can start directly at "1/4" with no "1/8" before it) - fixed
     after a proactive user review, not a live report; verified with a
     mocked bracket-size mismatch.
+  - `currentStageNameFor()`'s `if (round.status === "pending") return null;`
+    guard at the very top, BEFORE looking at `speed_elimination_stages` at
+    all - a real bug ("wechselt nicht automatisch ... wartet auf 1/2
+    finals"), fixed after a live report. Without it, a round that hasn't
+    started yet (still waiting on its own semifinal to determine finalists)
+    can still report its pre-generated skeleton's first stage name, which
+    then competes on equal footing in `earlierStageName()` and can pin the
+    shared stage on a side that isn't actually progressing - leaving BOTH
+    sides empty and the display ping-ponging between two "Waiting for the
+    next stage…" screens instead of showing whichever side has real
+    content. Don't remove this guard or move it after the
+    `speed_elimination_stages` check - the whole point is to short-circuit
+    on `round.status` regardless of what the bracket skeleton itself says.
   - Recomputing fresh every tick (rather than a persisted cursor that only
     moves forward) is what makes a judge's later correction to an earlier
     stage (deleting and re-entering a result) self-correct automatically on
@@ -131,6 +154,19 @@ previously-reported problems:
   §2). Don't "fix" it into `localStorage` only; the whole point is that a
   second device can read/write the same counter. See
   [ARCHITECTURE.md §6.13](ARCHITECTURE.md#613-training-mode-manual-advance-same-rosterorder-as-qualification-controllable-from-a-second-device).
+- `requestWakeLock()`'s `sentinel.addEventListener("release", ...)` handler
+  in the kiosk-mode code - a real bug ("Always On" stopped holding the
+  screen awake after ~10 minutes in Safari Private Browsing, tab staying
+  visible/fullscreen the whole time), fixed after a live report. The
+  existing `visibilitychange` listener only covers the backgrounded-tab
+  case; it never fires if the browser silently revokes the lock while the
+  tab stays visible, which Private Browsing's stricter power/background
+  policy can do. Don't remove the release listener as "redundant" with
+  `visibilitychange` - they cover two different release triggers. The
+  re-request inside it is guarded on `document.fullscreenElement` so a
+  deliberate exit (which also releases the lock) doesn't cause an
+  unwanted re-acquire loop. See
+  [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
 
 If a change requires touching one of these, update the corresponding
 ARCHITECTURE.md section in the same change — don't let the doc drift from

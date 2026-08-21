@@ -249,11 +249,12 @@ fixed start position on the route (Quirk C).
 
 ### 5.2 The inference (`findCurrentIndex()` / `computeLane()` in `public/app.js`)
 
-For one route (one physical wall/lane), walk the start order and apply two
-rules, in this priority:
+For one route (one physical wall/lane), walk the start order and combine two
+signals:
 
 1. **If anyone has a live (`"active"`) entry, the LATEST one in start order
-   is at the wall.** A judge can start live-scoring the next athlete before
+   is at the wall** — *unless* it sits behind an already-confirmed frontier
+   (see below). A judge can start live-scoring the next athlete before
    confirming the previous one's result, so if two athletes are
    simultaneously `"active"`, the later one in start order is the one
    actually on the wall right now.
@@ -264,8 +265,8 @@ rules, in this priority:
 
 Concretely (`findCurrentIndex(items, isActive, isConfirmed)`): walk `ordered`
 front to back once, remembering the index of the most recent item matching
-each rule; `currentIndex` is the last-active index if one exists, otherwise
-one past the last-confirmed index. Then:
+each rule, then take **`Math.max(lastActive, lastConfirmed + 1)`** — not
+just "prefer active whenever one exists". Then:
 
 - `atWall = ordered[currentIndex]`, `onDeck = ordered[currentIndex + 1]`,
   `queue = ordered.slice(currentIndex + 2, currentIndex + 8)` (next 6).
@@ -300,6 +301,21 @@ In the fully-normal case (no gaps, no live in-progress entries at poll
 time) both rules reduce to the same thing as the original naive "first
 pending" approach - this is a strict generalization, not a behavior change
 for well-behaved data.
+
+**Why `Math.max(lastActive, lastConfirmed + 1)` and not "active always
+wins"** (a real bug, fixed after a live report — "Route 2 hängt" on an
+IFSC event, reproduced as: a result gets edited *after* being confirmed —
+a score correction — which briefly sets that athlete's ascent back to
+`"active"` again while someone re-checks it. An earlier version of this
+function let that `"active"` entry win outright, same as the normal
+live-judging case, which yanked the display backward to the athlete being
+corrected — even though athletes well after them in start order were
+already confirmed, meaning real progress had moved on. `Math.max()` fixes
+this without losing the normal case: if nothing further along is
+confirmed yet, `lastConfirmed + 1` is behind (or equal to) `lastActive`, so
+the active entry still wins exactly as before — this only changes the
+outcome when a stray `"active"` sits *behind* an already-confirmed
+frontier, which only happens for a post-hoc edit.
 
 **This inference trusts a live `"active"` entry forever, deliberately, with
 one narrow exception:** there's no timeout here, and none should be added -
@@ -573,13 +589,38 @@ independently — a browser without Wake Lock support (or a fullscreen
 request denied for some reason) should still get the other one rather than
 the whole action silently failing.
 
-**Wake Lock re-acquisition:** per spec, the Screen Wake Lock is
-automatically released when the tab is backgrounded (`visibilitychange` to
-`"hidden"`) — e.g. if the tablet's screen was manually turned off and back
-on. A `visibilitychange` listener re-requests the lock once the page is
-visible again, but only while still in fullscreen (treated as a proxy for
-"still in kiosk mode" — exiting fullscreen also drops the wake lock via the
-`fullscreenchange` listener, so both stay in sync through one user action).
+**Wake Lock re-acquisition — two separate triggers, not one:**
+
+1. Per spec, the Screen Wake Lock is automatically released when the tab is
+   backgrounded (`visibilitychange` to `"hidden"`) — e.g. if the tablet's
+   screen was manually turned off and back on. A `visibilitychange`
+   listener re-requests the lock once the page is visible again, but only
+   while still in fullscreen (treated as a proxy for "still in kiosk mode"
+   — exiting fullscreen also drops the wake lock via the `fullscreenchange`
+   listener, so both stay in sync through one user action).
+2. **The sentinel's own `"release"` event** (a real bug, fixed after a live
+   report: on an iPad running in Safari Private Browsing, Always On stopped
+   holding the screen awake after about 10 minutes — while the tab stayed
+   visible and fullscreen the whole time, which the `visibilitychange`
+   listener above never covers, since the tab was never backgrounded).
+   Private Browsing is known to apply stricter background/power policies
+   than a normal tab, so the browser can revoke the lock silently, for
+   reasons outside this app's control. The spec-correct way to catch that
+   is listening for the sentinel's own `"release"` event, which fires
+   whenever the lock is let go for *any* reason, not just an explicit
+   `release()` call — `requestWakeLock()` does this and immediately
+   re-requests, guarded by the same "still visible and fullscreen" check
+   (so a deliberate exit, which releases the lock on purpose, doesn't
+   trigger an unwanted re-acquire loop — verified live with a mocked
+   sentinel: releasing while still fullscreen re-requests, releasing after
+   fullscreen has already been exited does not). This is best-effort — if
+   the browser keeps revoking it (a hard policy Private Browsing enforces
+   that a page genuinely cannot override), each release triggers one more
+   retry rather than a tight loop, since the event only fires once per
+   acquisition. **Private Browsing itself is not something this app can
+   detect or work around further** — if retries alone don't hold up over a
+   full competition day, the recommendation is to not run the kiosk tablet
+   in Private/Incognito mode at all, not a code fix.
 
 **Also hides the share-link row while in fullscreen:** the `fullscreenchange`
 listener additionally toggles `el.shareRow.hidden`. Rationale: the "Link for
@@ -758,6 +799,30 @@ entirely (so its "1/4" sits at index 0, while the other side's "1/4" sits at
 index 1 in a full 5-stage array) — `earlierStageName()` correctly resolves
 both to `"1/4"`, where the old index-based `Math.min()` would have picked
 index 0, i.e. the shorter side's "1/4" versus the full side's "1/8".
+
+**A round that hasn't started at all yet must not anchor the shared
+stage** (a real bug, fixed after a live report — "wechselt nicht automatisch,
+wenn eine Runde noch nicht gestartet ist, z. B. wartet auf 1/2 finals"):
+`currentStageNameFor(round)` returns `null` immediately if
+`round.status === "pending"`, before even looking at
+`speed_elimination_stages`. Without this check, a round that's waiting on
+some earlier upstream stage to determine its own finalists (its bracket
+skeleton pre-generated with `athletes: []`, or simply not started yet) would
+still report its first stage's name — a non-null value that then
+participates in the *real* `earlierStageName()` name comparison on equal
+footing with the other, genuinely progressing side. If that not-started
+side's (phantom) stage happened to rank *earlier* than the other side's real
+progress, the shared stage got pinned there, and `stageHeatsRemaining()`
+found nothing for **either** side at that stage (the not-started side
+because it's not ready, the progressing side because it had already moved
+past it) — the display then ping-ponged between two empty "Waiting for the
+next stage…" screens every poll tick instead of ever showing the side that
+actually had something to display. Returning `null` for a pending round
+defers unconditionally to the other side's real stage (same as the
+already-empty-`speed_elimination_stages` case just below it), so a
+not-started side never blocks the other from being shown. The manual
+"⇄ Switch category now" button (below) is unaffected and still available if
+staff want to force a look at the not-started side anyway.
 
 `stageHeatsRemaining(round, stageName)` — a scoped variant of the same
 heat-selection rule, applied to *one* named stage instead of scanning
