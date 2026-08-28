@@ -1,7 +1,4 @@
 const STORAGE_KEY = "callzone-selection";
-// If a paired entry's current heat hasn't changed in this long, force a
-// switch to the other category anyway - see pollPairedTick()'s watchdog.
-const STUCK_TIMEOUT_MS = 90_000;
 
 const el = {
   eventId: document.getElementById("eventId"),
@@ -42,6 +39,7 @@ const el = {
   controlLink: document.getElementById("controlLink"),
   copyControlLink: document.getElementById("copyControlLink"),
   groupTabs: document.getElementById("groupTabs"),
+  boulderModeRow: document.getElementById("boulderModeRow"),
   lanes: document.getElementById("lanes"),
   controllerBackBtn: document.getElementById("controllerBackBtn"),
   controllerTitle: document.getElementById("controllerTitle"),
@@ -113,6 +111,32 @@ function loadSelection() {
   } catch {
     return null;
   }
+}
+
+// Boulder-finals-only display mode (6.17): "interval" (default, matches
+// Qualification's reading) vs "world_series" (padded-distance queue, see
+// computeBoulderLane()). results.info's format_identifier doesn't tell us
+// which physical final format a round actually uses, so this is a manual
+// per-round choice, remembered by round id (not per-tablet) since it's a
+// property of the real event, not a personal display preference.
+const BOULDER_FINAL_MODE_KEY = "callzone-boulder-final-mode";
+function loadBoulderFinalMode(roundId) {
+  try {
+    const modes = JSON.parse(localStorage.getItem(BOULDER_FINAL_MODE_KEY)) ?? {};
+    return modes[roundId] ?? "interval";
+  } catch {
+    return "interval";
+  }
+}
+function saveBoulderFinalMode(roundId, mode) {
+  let modes = {};
+  try {
+    modes = JSON.parse(localStorage.getItem(BOULDER_FINAL_MODE_KEY)) ?? {};
+  } catch {
+    modes = {};
+  }
+  modes[roundId] = mode;
+  localStorage.setItem(BOULDER_FINAL_MODE_KEY, JSON.stringify(modes));
 }
 
 function parseSequenceToken(token) {
@@ -602,16 +626,14 @@ async function pollCurrent() {
 // corrected data now says the bracket actually is - recomputing from
 // scratch every time means that just self-corrects on the next poll, same
 // as the single-round view already does for free (5.5). Only
-// `pairedState.activeSide` (which of the two co-equal sides to display) and
-// the stuck-heat watchdog below still need to persist across ticks - there's
-// no data signal for "whose turn it is", so that has to be remembered.
+// `pairedState.activeSide` (which of the two co-equal sides to display)
+// still needs to persist across ticks - there's no data signal for "whose
+// turn it is", so that has to be remembered.
 async function pollPairedTick(entry, token) {
   if (!pairedState || pairedState.entryIndex !== sequenceIndex) {
     pairedState = {
       entryIndex: sequenceIndex,
       activeSide: "a",
-      stuckHeatId: null,
-      stuckSince: 0,
       manualPin: false,
     };
   }
@@ -659,29 +681,15 @@ async function pollPairedTick(entry, token) {
   pairedState.manualPin = false;
   pairedState.activeSide = side;
 
-  // Stuck-heat watchdog: a heat can have a "current" (not-yet-confirmed)
+  // No automatic stuck-heat watchdog here (deliberately removed - see
+  // ARCHITECTURE.md 6.12): a heat can have a "current" (not-yet-confirmed)
   // athlete forever if the live-scoring source never posts a final result
-  // for one lane - checked directly against results.info's raw response and
-  // confirmed there is no separate "stage finished" flag to read instead
-  // (see ARCHITECTURE.md 6.12). That leaves this stage genuinely non-empty
-  // for one side, so the logic above never hands the turn back on its own.
-  // Force a switch to the other side (same stage) once the same heat has
-  // been "current" for STUCK_TIMEOUT_MS. Deliberately scoped to just this
-  // paired-entry switch decision, not the core inference (5.2), which
-  // still trusts "active" forever by design - a stuck single round "merely"
-  // shows a stale card, but a stuck paired entry blocks the whole callzone
-  // from moving on to the next stage.
-  const currentHeatId = sideResult.heats[0]?.id ?? null;
-  if (currentHeatId !== pairedState.stuckHeatId) {
-    pairedState.stuckHeatId = currentHeatId;
-    pairedState.stuckSince = Date.now();
-  } else if (currentHeatId !== null && Date.now() - pairedState.stuckSince >= STUCK_TIMEOUT_MS) {
-    side = side === "a" ? "b" : "a";
-    pairedState.activeSide = side;
-    pairedState.stuckHeatId = null;
-    pairedState.stuckSince = 0;
-    sideResult = side === "a" ? resultA : resultB;
-  }
+  // for one lane, and the logic above never hands the turn back on its own
+  // in that case. That's intentionally left to staff via the manual
+  // "Switch category now" button (renderPairedBar()) instead of an
+  // automatic timeout - requested explicitly so the display never switches
+  // categories without either a genuine stage completion or a human
+  // choosing to.
 
   const sideData = side === "a" ? dataA : dataB;
   const otherData = side === "a" ? dataB : dataA;
@@ -693,10 +701,10 @@ async function pollPairedTick(entry, token) {
   return { ok: true, bothDone: false };
 }
 
-// The manual "Switch category now" button stays available as an immediate
-// escape hatch alongside the automatic 90s watchdog above - staff can't
-// afford to wait out a timeout mid-competition if they notice a stall
-// themselves first.
+// The manual "Switch category now" button is the ONLY way to move past a
+// stuck heat (6.12) - there is no automatic timeout (deliberately removed,
+// see pollPairedTick() above): the display only ever switches categories
+// on a genuine stage completion or a human choosing to.
 function renderPairedBar(otherData, activeSide) {
   el.pairedBar.hidden = false;
   const otherLabel = `${otherData.category ?? ""} — ${otherData.round ?? ""}`.trim();
@@ -705,8 +713,6 @@ function renderPairedBar(otherData, activeSide) {
     if (!pairedState) return;
     pairedState.activeSide = activeSide === "a" ? "b" : "a";
     pairedState.manualPin = true;
-    pairedState.stuckHeatId = null;
-    pairedState.stuckSince = 0;
     pollCurrent();
   };
 }
@@ -823,19 +829,237 @@ function computeLane(round, route) {
   };
 }
 
+// Boulder qualification (and some final formats) rotate athletes through
+// several boulders in a staggered pipeline: everyone visits boulder 1, then
+// 2, then 3, ... but offset in time, so a later boulder can go completely
+// untouched for a while even after the round itself is already "active"
+// (an earlier boulder already has real progress). computeLane()'s
+// round.status === "pending" guard can't catch this - by the time boulder
+// 2 is still empty, the round as a whole is already well past "pending".
+// Without a per-route guard, computeLane() would show whoever is first in
+// THAT boulder's own queue (route_start_positions) as already "climbing"
+// there, days/intervals before they actually arrive - reproduced live with
+// mocked data: two different boulders both showing the same athlete as
+// "climbing" simultaneously, and boulders nobody had touched yet all
+// showing a (wrong) current climber.
+//
+// Fix, scoped to Boulder only (checked here, not inside computeLane()
+// itself, so Lead/Speed-qualification rounds - which share the exact same
+// computeLane() - are provably unaffected): a route only participates in
+// the normal active/confirmed inference once SOMEONE on it has actually
+// gone active or been confirmed; before that, it gets the same "not
+// started yet" shape computeLane() already gives a whole not-started
+// round. This also naturally covers round.status === "pending" as a
+// special case (if the round hasn't started, nobody's started any route
+// either), so there's no separate check needed for that.
+// A not-yet-reached boulder's candidate (its own first-in-queue athlete)
+// isn't "ready" to show as NEXT just because they're personally done with
+// every route that comes before this one in their own rotation - reported
+// live (World Series-style finals, gap = boulder count): that athlete can
+// still be several intervals away because OTHER athletes are still working
+// through the boulder's shared capacity before it opens. Confirmed against
+// real route_start_positions data (fixtures 13712, 13735, 13711/13709 in
+// AGENTS.md §3) that position values are a literal shared "heat slot"
+// number - not a per-route-independent rank - WITHIN one route group: the
+// same position value can appear on two different routes in the same
+// group for two different athletes, meaning those two ascents genuinely
+// happen at the same moment (e.g. one athlete finishing route N while
+// another starts route N+1). This lets readiness be computed generically
+// from real recorded progress instead of the athlete's own routes alone:
+// a candidate is ready once the group's furthest-progressed position
+// (the highest position with a real active/confirmed ascent, anywhere in
+// the SAME group) reaches one below their own position here.
+//
+// Scoped to the route's own group (via collectRouteGroups(), 6.6) rather
+// than the whole round - confirmed against real data (fixture 13709,
+// starting_groups) that Group A and Group B each have their OWN
+// independent position numbering starting at 1, not a shared round-wide
+// clock. A round-wide frontier would let a faster-judged group's high
+// position values falsely mark a slower group's candidate "ready" early.
+function boulderGroupFrontier(round, route) {
+  const groups = collectRouteGroups(round);
+  const group = groups.find((g) => g.routes.some((r) => r.id === route.id));
+  const groupRouteIds = new Set((group?.routes ?? round.routes ?? [route]).map((r) => r.id));
+  let frontier = 0;
+  for (const entry of round.ranking ?? []) {
+    for (const ascent of entry.ascents ?? []) {
+      if (!groupRouteIds.has(ascent.route_id)) continue;
+      if (ascent.status !== "active" && !DONE_STATUSES.has(ascent.status)) continue;
+      const pos = round.startlist
+        ?.find((a) => a.athlete_id === entry.athlete_id)
+        ?.route_start_positions?.find((p) => p.route_id === ascent.route_id)?.position;
+      if (pos != null && pos > frontier) frontier = pos;
+    }
+  }
+  return frontier;
+}
+
+function computeBoulderLane(round, route, finalMode) {
+  const ordered = orderedAthletesForRoute(round, route);
+  const statusByAthlete = new Map();
+  for (const entry of round.ranking ?? []) {
+    const ascent = entry.ascents?.find((a) => a.route_id === route.id);
+    if (ascent) statusByAthlete.set(entry.athlete_id, ascent.status);
+  }
+  const routeHasStarted = ordered.some((a) => {
+    const status = statusByAthlete.get(a.athlete_id);
+    return status === "active" || DONE_STATUSES.has(status);
+  });
+  if (!routeHasStarted) {
+    // CLIMBING stays blank - showing the eventual first-in-queue athlete
+    // as already "climbing" reads as imminent when they can genuinely be
+    // several rotations away (reported live: the last boulder of a
+    // 5-boulder round showed its very first occupant from the moment the
+    // round opened). NEXT, though, should populate one rotation early -
+    // once the group's real progress (boulderGroupFrontier(), above) has
+    // reached one position before this candidate's own position here -
+    // rather than jumping straight from "just a name in the waiting list"
+    // to "CLIMBING" with no NEXT step in between (also reported live).
+    const candidate = ordered[0] ?? null;
+    let herePos = null;
+    if (candidate) {
+      herePos = round.startlist
+        ?.find((a) => a.athlete_id === candidate.athlete_id)
+        ?.route_start_positions?.find((p) => p.route_id === route.id)?.position ?? null;
+    }
+    // distance: how many heats away the candidate genuinely is, derived
+    // from the group's real recorded progress - 0 means ready right now.
+    const distance = herePos != null ? Math.max(0, herePos - boulderGroupFrontier(round, route) - 1) : Infinity;
+    const candidateIsReady = distance === 0;
+
+    // World Series-style finals (6.17): at most 2 boulders are ever
+    // genuinely live, so a not-yet-reached boulder's candidate can be MANY
+    // heats away, not just one - showing them at the front of the queue
+    // regardless misrepresents how far off they really are. Reported live
+    // off a real event (round 13833): a candidate still 3 heats out from
+    // Boulder 4 was shown right at the top of its queue, when their real
+    // wait is still driven entirely by Boulder 3's own remaining progress.
+    // This mode inserts blank placeholder slots so the candidate visibly
+    // occupies their real distance from the front and slides one slot
+    // closer every heat, only surfacing once genuinely close - opt-in via
+    // the Boulder-finals-only mode toggle (6.17), because Qualification and
+    // the default "Intervall" final reading are correct as-is and must stay
+    // untouched (verified live: distance 1 already renders identically to
+    // the "interval" branch below, so this mode never changes anything
+    // until a candidate is genuinely more than one heat out).
+    if (finalMode === "world_series") {
+      const padding = candidateIsReady ? 0 : Math.max(0, distance - 1);
+      const queue = [...Array(Math.min(padding, 6)).fill(null), ...ordered.slice(candidateIsReady ? 1 : 0, 7)].slice(
+        0,
+        6
+      );
+      return {
+        routeName: route.name,
+        finished: false,
+        atWall: null,
+        onDeck: candidateIsReady ? candidate : null,
+        queue,
+      };
+    }
+
+    return {
+      routeName: route.name,
+      finished: false,
+      atWall: null,
+      onDeck: candidateIsReady ? candidate : null,
+      queue: candidateIsReady ? ordered.slice(1, 7) : ordered.slice(0, 6),
+    };
+  }
+
+  // The route has real activity now, but deliberately does NOT fall
+  // through to computeLane() from here on (unlike the not-yet-started
+  // branch above, which does) - Boulder needs a different frontier rule
+  // for this part: confirmed live against real, currently-being-judged
+  // results.info data (event 1593, round 13840) that a Boulder athlete's
+  // ascent goes STRAIGHT from "pending" to "confirmed" the moment the
+  // judge saves - there is no "active" in-between state until the NEXT
+  // athlete's judge screen actually starts recording a try (a real try
+  // counter increment flips their ascent to "active" with an updated
+  // timestamp - confirmed live, this genuinely happens, it's just not
+  // triggered by merely navigating to their screen). computeLane()'s rule
+  // ("last confirmed + 1" - see 5.2) ASSUMES the next athlete is already
+  // climbing the instant the previous one is confirmed, which is exactly
+  // the gap in between: for however long the next athlete hasn't started a
+  // try yet (could be seconds in a real competition, could be much longer
+  // if judging pauses), computeLane() would show them as "CLIMBING" before
+  // they've done anything at all. Reported live: prefer showing the LAST
+  // CONFIRMED athlete as still current until the NEXT one goes "active" -
+  // "NEXT" already correctly names who that will be, one position ahead.
+  let lastActive = -1;
+  let lastConfirmed = -1;
+  ordered.forEach((a, i) => {
+    const status = statusByAthlete.get(a.athlete_id);
+    if (status === "active") lastActive = i;
+    if (DONE_STATUSES.has(status)) lastConfirmed = i;
+  });
+  // Same post-hoc-edit protection as findCurrentIndex() (5.2) - an
+  // "active" entry behind the confirmed frontier (a judge reopening an
+  // earlier score to correct it) must not pull the display backward.
+  const effectiveActive = lastActive > lastConfirmed ? lastActive : -1;
+  let currentIndex;
+  if (effectiveActive !== -1) {
+    currentIndex = effectiveActive;
+  } else if (lastConfirmed === ordered.length - 1) {
+    currentIndex = ordered.length; // nobody left after the last confirmed athlete - genuinely finished
+  } else {
+    currentIndex = lastConfirmed; // stick here until the next athlete actually goes active
+  }
+  return {
+    routeName: route.name,
+    finished: currentIndex >= ordered.length,
+    atWall: ordered[currentIndex] ?? null,
+    onDeck: ordered[currentIndex + 1] ?? null,
+    queue: ordered.slice(currentIndex + 2, currentIndex + 2 + 6),
+  };
+}
+
 function athleteLine(athlete) {
   if (!athlete) return "";
   const bib = athlete.bib ? `#${athlete.bib} · ` : "";
   return `${bib}${athlete.name}`;
 }
 
+// Boulder's "2 Courses" format (e.g. format_identifier
+// "boulder_one_group_ifsc_2026_two_courses") has no `starting_groups` at
+// all - the course split lives entirely in route NAMING ("A1"/"A2"/"A3"/
+// "B1"/"B2"). Detected structurally (every route name is a letter prefix
+// plus digits, at least two distinct prefixes) rather than hardcoded to
+// that one format_identifier, so a future "3 courses" variant using the
+// same naming convention picks this up automatically too. Returns null
+// (defer to the ungrouped fallback) if the names don't actually follow
+// this convention - e.g. plain "1".."5" boulder names have no letter
+// prefix at all and correctly fall through untouched.
+function groupRoutesByCoursePrefix(routes) {
+  const parsed = routes.map((r) => {
+    const m = /^([A-Za-z]+)\d+$/.exec(r.name);
+    return m ? { route: r, prefix: m[1].toUpperCase() } : null;
+  });
+  if (parsed.some((p) => p === null)) return null;
+  const prefixes = [...new Set(parsed.map((p) => p.prefix))].sort();
+  if (prefixes.length < 2) return null;
+  return prefixes.map((prefix) => ({
+    groupName: `Course ${prefix}`,
+    routes: parsed.filter((p) => p.prefix === prefix).map((p) => p.route),
+  }));
+}
+
 // Most rounds list their routes directly on `round.routes`. Boulder rounds
 // split into starting groups (e.g. "Group A" / "Group B" climbing separate
 // boulders in parallel) instead nest the routes under `round.starting_groups`
 // and have no top-level `routes` at all - group them here so the rest of the
-// rendering code doesn't need to care which shape it got.
+// rendering code doesn't need to care which shape it got. The course-prefix
+// check is scoped to `discipline === "Boulder"` specifically - Lead and
+// Speed qualification share this same function and must stay byte-for-byte
+// unaffected (frozen: "fertig, dürfen nicht mehr verändert werden"), even
+// though neither has ever been observed using letter-prefixed route names.
 function collectRouteGroups(round) {
-  if (round.routes?.length) return [{ groupName: null, routes: round.routes }];
+  if (round.routes?.length) {
+    if (round.discipline === "Boulder") {
+      const courseGroups = groupRoutesByCoursePrefix(round.routes);
+      if (courseGroups) return courseGroups;
+    }
+    return [{ groupName: null, routes: round.routes }];
+  }
   if (round.starting_groups?.length) {
     return round.starting_groups.map((g) => ({ groupName: g.name, routes: g.routes }));
   }
@@ -863,15 +1087,23 @@ function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
     list.setAttribute("start", "2");
     for (const athlete of queue) {
       const li = document.createElement("li");
-      li.textContent = athleteLine(athlete);
+      // A `null` entry is a World Series-mode padding slot (6.17) - not yet
+      // a real athlete, so it renders the same blank dash a card would.
+      li.textContent = athleteLine(athlete) || "—";
       list.appendChild(li);
     }
     laneEl.appendChild(list);
   }
 }
 
-function buildLane(round, route, laneLabelPrefix) {
-  const lane = computeLane(round, route);
+function buildLane(round, route, laneLabelPrefix, boulderFinalMode) {
+  // Discipline check, not a format_identifier check - deliberately covers
+  // every Boulder round shape (qualification, two-group, and any future
+  // final format that reuses the same routes/starting_groups shape), while
+  // strictly excluding Lead and Speed qualification, which must keep using
+  // computeLane() unchanged - see computeBoulderLane()'s comment above.
+  const lane =
+    round.discipline === "Boulder" ? computeBoulderLane(round, route, boulderFinalMode) : computeLane(round, route);
   const laneEl = document.createElement("section");
   laneEl.className = "lane";
 
@@ -1199,10 +1431,44 @@ function renderGroupTabs(groupNames) {
   }
 }
 
+// Only Boulder final rounds get the World Series/Intervall toggle (6.17) -
+// checked via format_identifier's "boulder_finals" prefix (both known final
+// identifiers share it), not just discipline, so Qualification rounds never
+// show it and stay on the single, already-verified "interval" reading.
+function isBoulderFinalRound(round) {
+  return round.discipline === "Boulder" && (round.format_identifier ?? "").startsWith("boulder_finals");
+}
+
+function renderBoulderModeToggle(roundId, activeMode) {
+  el.boulderModeRow.innerHTML = "";
+  el.boulderModeRow.hidden = false;
+  const label = document.createElement("span");
+  label.className = "share-label";
+  label.textContent = "Boulder final format:";
+  el.boulderModeRow.appendChild(label);
+  const options = [
+    { value: "interval", text: "Intervall" },
+    { value: "world_series", text: "World Series" },
+  ];
+  for (const opt of options) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `group-tab${opt.value === activeMode ? " active" : ""}`;
+    btn.textContent = opt.text;
+    btn.addEventListener("click", () => {
+      if (opt.value === activeMode) return;
+      saveBoulderFinalMode(roundId, opt.value);
+      if (lastRoundData) renderBoard(lastRoundData);
+    });
+    el.boulderModeRow.appendChild(btn);
+  }
+}
+
 function renderBoard(round) {
   el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
   el.lanes.innerHTML = "";
   el.groupTabs.hidden = true; // only the multi-group branch below re-shows it
+  el.boulderModeRow.hidden = true; // only the Boulder-final branch below re-shows it
 
   if (round.speed_elimination_stages?.length) {
     renderSpeedElimination(round);
@@ -1231,13 +1497,19 @@ function renderBoard(round) {
     renderGroupTabs(groupNames);
   }
 
+  let boulderFinalMode = "interval";
+  if (isBoulderFinalRound(round)) {
+    boulderFinalMode = loadBoulderFinalMode(round.id);
+    renderBoulderModeToggle(round.id, boulderFinalMode);
+  }
+
   for (const group of routeGroups) {
     if (groupNames.length >= 2 && group.groupName !== currentSelection.group) continue;
 
     const grid = document.createElement("div");
     grid.className = "lanes-grid";
     for (const route of group.routes) {
-      grid.appendChild(buildLane(round, route, laneLabelPrefix));
+      grid.appendChild(buildLane(round, route, laneLabelPrefix, boulderFinalMode));
     }
     el.lanes.appendChild(grid);
   }

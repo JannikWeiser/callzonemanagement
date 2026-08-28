@@ -8,6 +8,42 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
+- **Boulder final display mode toggle ("Intervall" / "World Series"), Boulder
+  finals only.** results.info's `format_identifier` doesn't distinguish
+  IFSC's two physical Boulder final formats, so this is a manual per-round
+  choice (shown in the board header, only for rounds where
+  `format_identifier` starts with `"boulder_finals"` — Qualification never
+  shows it and always keeps the existing "Intervall" reading). "World
+  Series" mode pads a not-yet-reached boulder's queue with blank
+  placeholder slots so a candidate's real waiting-list position reflects
+  how many heats away they genuinely are, instead of always sitting at the
+  front — reported live off a real event (round `13833`): a candidate 3
+  heats out from Boulder 4 was shown right at the top of its queue, when
+  their real wait was still driven by Boulder 3's own remaining progress.
+  Verified live (event `1593`) and via a controlled simulation that the
+  padding count decrements by one every heat, promoting to `"NEXT"` at
+  exactly the same heat "Intervall" mode already would have. See
+  [ARCHITECTURE.md §6.17](ARCHITECTURE.md#617-boulder-final-display-mode-intervall-vs-world-series-manual-toggle-boulder-finals-only).
+- **Feedback footer on the setup screen** ("Request a Feature or Send a
+  Message"), linking out to a Google Form. Nested inside `#setup` so it
+  automatically hides on the board (unattended, wall-mounted during a
+  competition — an external link there would be clutter and an accidental
+  tap risk) without needing any new visibility logic. See
+  [ARCHITECTURE.md §6.16](ARCHITECTURE.md#616-feedback-footer-setup-screen-only).
+- **Boulder qualification and finals support**, covering every
+  `format_identifier` variant checked so far: `boulder_two_groups_ifsc_2026`,
+  `boulder_one_group_ifsc_2026`, `boulder_one_group_ifsc_2026_two_courses`
+  (qualification-style rotations), `boulder_finals_ifsc_2026` (parallel
+  final), `boulder_finals_one_by_one` (sequential final). Fixed a gap where
+  a boulder nobody had reached yet could show a phantom "current climber"
+  (`computeBoulderLane()`, scoped to Boulder only, Lead/Speed untouched).
+  The "2 Courses" format additionally gets the same Group A/B-style tab
+  switching as the nested `starting_groups` format, synthesized from route
+  naming (`A1`/`B1`/... → "Course A"/"Course B") since results.info
+  supplies no group name for this shape. See
+  [ARCHITECTURE.md §5.6](ARCHITECTURE.md#56-boulder-rotation-formats-a-per-route-not-yet-reached-guard-computeboulderlane)
+  and
+  [§6.6](ARCHITECTURE.md#66-boulder-starting-group-tabs-default-to-one-group-at-a-time).
 - **Setup-screen modes (Single round / Sequence / Training)** replace an
   earlier scatter of independent checkboxes ("Match finals", "Training
   mode") that live-tested as confusing — unclear which checkbox belonged
@@ -73,8 +109,101 @@ section number); this file is the *what happened, when* log.
   (shorter, reads better). Label text only — internal field/class names
   unchanged. See
   [ARCHITECTURE.md §6.9](ARCHITECTURE.md#69-climbing-instead-of-at-the-wall-as-the-card-label).
+- **Removed the automatic 90s stuck-heat watchdog from paired (interleaved)
+  Speed entries.** Explicitly requested: the paired display should only
+  switch categories on a genuine stage completion or a human clicking
+  "⇄ Switch category now" — never silently after a timeout. Accepted
+  tradeoff: an unattended tablet with a genuinely stuck heat (no recorded
+  result at all) and nobody noticing now shows a stale category
+  indefinitely instead of self-correcting after 90 seconds; the manual
+  button is the only way to move past it. `STUCK_TIMEOUT_MS` and
+  `pairedState.stuckHeatId`/`stuckSince` removed entirely rather than left
+  unused. See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
 
 ### Fixed
+- **A not-yet-reached Boulder route's `"NEXT"` card showed a candidate
+  several heats too early for a World Series-style final (gap = boulder
+  count, at most 2 boulders live at once)** — reported live off a
+  hand-drawn heat/boulder table: an athlete who only has ONE boulder to
+  finish before this one (the norm for that format) got shown as `"NEXT"`
+  the moment they were confirmed there, well before the target boulder had
+  any real reason to be open (other athletes were still working through
+  the current boulder's own remaining slots). The readiness check only
+  looked at the candidate's own prior obligations, not whether the route
+  itself had genuinely made room. Replaced with `boulderGroupFrontier()`:
+  readiness is now based on the group's real furthest-progressed position
+  (confirmed against real data that `route_start_positions` values are a
+  shared "heat slot" number within one route group, not a per-route
+  independent rank) rather than the candidate's own routes alone. Scoped
+  to the route's own group (Course A/B, or Group A/B) so a faster group
+  can't leak progress into a slower one's readiness — confirmed against
+  real data that each group has its own independent position numbering.
+  Verified: round `13712`'s qualification result (gap 2) unchanged, round
+  `13735`'s World Series-style result (gap = boulder count) now correct —
+  `NEXT` stays blank through the boulder's first 3 heats and populates on
+  the 4th, one heat before it opens — and Course A/B group-scoping holds
+  (one course fully confirmed doesn't affect the other's readiness). See
+  [ARCHITECTURE.md §5.6](ARCHITECTURE.md#56-boulder-rotation-formats-a-per-route-not-yet-reached-guard-computeboulderlane).
+- **A not-yet-reached Boulder route jumped straight from "a name in the
+  waiting list" to `"CLIMBING"`, with no `"NEXT"` step in between** — even
+  for an athlete who had genuinely just finished their previous boulder
+  and was resting, one rotation away. `computeBoulderLane()`'s "not
+  started yet" guard now shows that athlete as `"NEXT"` specifically once
+  the group's real progress reaches one position before their own here
+  (see the entry above for the final version of this rule — this entry's
+  original fix used an athlete-centric readiness check, later replaced).
+  `CLIMBING` still stays blank until the boulder is actually reached, and
+  the waiting list below still shows the fuller upcoming order regardless.
+  This replaces two earlier iterations in this same Unreleased batch (a
+  version that showed `"NEXT"` unconditionally — too early — and one that
+  blanked it unconditionally — too late), both live-reported as wrong in
+  their own direction. Verified with a full rotation simulation (round
+  `13712`): boulder 4 shows `CLIMBING —`/`NEXT —` through heat 5, `NEXT`
+  populates at heat 6 (its candidate now confirmed on boulders 1–3), and
+  `CLIMBING` follows one heat later at heat 7. See
+  [ARCHITECTURE.md §5.6](ARCHITECTURE.md#56-boulder-rotation-formats-a-per-route-not-yet-reached-guard-computeboulderlane).
+- **A Boulder route flipped to the next athlete as `"CLIMBING"` the instant
+  the previous one was confirmed, even though that next athlete hadn't
+  actually started a try yet.** Reported live while watching real judging
+  (event `1593`): the judge confirms LORENTZ on boulder 2, and the app
+  immediately shows MELVILLE as climbing — before MELVILLE has done
+  anything. Confirmed against real, currently-live-judged data that a
+  Boulder ascent goes `pending` → `active` (a genuine try-counter
+  increment — not triggered by the judge merely navigating to that
+  athlete's screen) → `confirmed`, with no separate "moved to next
+  athlete" API signal at all. `computeBoulderLane()` no longer falls
+  through to `computeLane()` once a route has activity — it now keeps
+  showing the last *confirmed* athlete as `"climbing"` until the next one
+  genuinely goes `"active"`, with the same post-hoc-edit backward-jump
+  protection Lead already has (5.2) applied independently here. Verified
+  live against the real event and via a controlled simulation (round
+  `13712`) covering all three cases: sticks until active, doesn't jump
+  backward on a reopened earlier score, and still correctly detects
+  `"Round finished"`. See
+  [ARCHITECTURE.md §5.6](ARCHITECTURE.md#56-boulder-rotation-formats-a-per-route-not-yet-reached-guard-computeboulderlane).
+- **Boulder rotation formats (e.g. `boulder_two_groups_ifsc_2026`) could
+  show a "current climber" on a boulder nobody had reached yet — including
+  the same athlete shown as `"climbing"` on two different boulders at
+  once.** Found during a deliberate investigation, before shipping, not a
+  live report. This format stages athletes through several boulders in a
+  staggered pipeline (results.info already encodes the correct per-boulder
+  arrival order via `startlist[].route_start_positions` — no interval/clock
+  logic needed in the app at all), but a boulder can go completely
+  untouched for several intervals even after the round overall is already
+  `"active"` — `computeLane()`'s existing "has the round started"
+  (`round.status`) guard can't tell that apart from the normal
+  live-judging gap it's designed to catch. New `computeBoulderLane()`
+  additionally checks whether anyone has actually gone active/confirmed on
+  that *specific* boulder yet; if not, it shows the same "not started"
+  state a not-yet-started round already gets, instead of guessing at
+  someone who hasn't arrived. Scoped strictly to Boulder
+  (`round.discipline === "Boulder"`) via a wrapper around, not a change to,
+  `computeLane()` — Lead and Speed qualification (frozen for this round of
+  changes) are verified to never even call the new function, and every
+  already-progressed boulder in real test data produces byte-identical
+  output to before. See
+  [ARCHITECTURE.md §5.6](ARCHITECTURE.md#56-boulder-rotation-formats-a-per-route-not-yet-reached-guard-computeboulderlane).
 - **A Lead/Boulder qualification route could jump backward after a result
   was edited post-confirmation.** Reported live: "Route 2 hängt" on an IFSC
   event, traced to a score correction on an already-confirmed athlete,

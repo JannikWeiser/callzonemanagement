@@ -468,6 +468,278 @@ Detection: `renderBoard()` branches into this path whenever
 `round.speed_elimination_stages` is a non-empty array, before falling back
 to the qualification-style `collectRouteGroups()` path.
 
+### 5.6 Boulder rotation formats: a per-route "not yet reached" guard (`computeBoulderLane()`)
+
+**The physical format:** IFSC-style Boulder qualification (and some final
+formats reusing the same shape — `format_identifier` values like
+`boulder_two_groups_ifsc_2026`) rotates athletes through several boulders
+in a staggered pipeline on a fixed timer (typically 4–5 minutes per
+attempt): athlete 1 climbs boulder 1, rests one interval while athlete 2
+starts boulder 1, then athlete 1 moves to boulder 2 while athlete 3 starts
+boulder 1, and so on — each athlete visiting boulders 1, 2, 3, ... in
+order, offset in time from everyone else. With two starting groups (6.6),
+this runs identically and in parallel per group, each on its own block of
+boulders — no special-casing needed there, it already works the same way
+Lead's starting groups do.
+
+**Confirmed across every qualification format_identifier variant seen so
+far** — `boulder_two_groups_ifsc_2026` (nested `starting_groups`),
+`boulder_one_group_ifsc_2026` (flat `routes[]`, single group), and
+`boulder_one_group_ifsc_2026_two_courses` (flat `routes[]` named e.g.
+`A1`/`A2`/`A3`/`B1`/`B2`, where athletes split into two cohorts starting on
+Course A or B first and swap to the other partway through) — all render
+correctly with zero extra code, `computeBoulderLane()` unchanged.
+`route_start_positions` already encodes whichever physical shape the
+rotation actually takes, including the two-courses swap: verified live
+(mocked) at the exact crossing-point moment, where each boulder's queue
+correctly interleaves both cohorts by position value alone, with no
+awareness in the code of "courses" or "cohorts" as a concept at all — see
+the `13711`/`13712` fixtures in AGENTS.md §3.
+
+**Also confirmed for both Boulder final formats — again with zero extra
+code, superseding an earlier (wrong) assumption.** Two final
+`format_identifier`s were checked with real startlists:
+`boulder_finals_ifsc_2026` and `boulder_finals_one_by_one`. Before seeing
+real data, the working assumption was that a Boulder final needs a
+different, single-shared-card rendering (only one athlete on the wall for
+the whole final, unlike qualification's independent per-boulder lanes) —
+that assumption turned out to be unnecessary. Both finals formats still
+express themselves through the exact same `route_start_positions`
+per-route-queue mechanism as qualification, just with different pacing,
+readable directly off the position numbers:
+
+- `boulder_finals_ifsc_2026`: for a given athlete, their position on
+  boulder *N+1* is their position on boulder *N* plus the **boulder
+  count** (e.g. 4 boulders → +4 per move). This means multiple boulders
+  can be genuinely simultaneously "live" with different athletes on each
+  — a parallel final, structurally identical in spirit to qualification's
+  rotation. Verified live (mocked) that two boulders can correctly show
+  two different athletes as `"climbing"` at the same time.
+- `boulder_finals_one_by_one`: for a given athlete, their position on
+  boulder *N+1* is their position on boulder *N* plus the **total number
+  of finalists** (e.g. 8 finalists → +8 per move). This means boulder
+  *N+1*'s positions never begin until *every* finalist has gone through
+  boulder *N* — only one boulder is ever "live" at a time, and only one
+  athlete on it, matching the "one by one" name. Verified live (mocked)
+  the full boulder-1-to-boulder-2 handoff: boulder 1 correctly resolves to
+  `finished: true` once everyone there is confirmed, boulder 2 correctly
+  picks up with its own first athlete, boulders 3/4 correctly stay in the
+  "not yet reached" state the whole time.
+
+Either way, each boulder is still just an independent lane driven by its
+own `route_start_positions`-ordered queue plus `computeBoulderLane()`'s
+"has anyone started this route yet" guard — the gap size between an
+athlete's own consecutive boulder positions is what encodes the pacing
+difference, and the algorithm never needs to know or care what that gap
+means. Matches the user's confirmed design choice: show all boulders as
+separate cards, with only the one(s) actually in progress showing a real
+climber. See the `13735`/`13736` fixtures in AGENTS.md §3.
+
+**No interval/clock logic needed — confirmed via real data.** results.info
+already encodes each boulder's correct, staggered arrival order directly:
+`startlist[].route_start_positions` gives every athlete an independent
+position *per boulder* (Quirk E), and — confirmed against a real
+`boulder_two_groups_ifsc_2026` round — these values increment by roughly 2
+per boulder for a given athlete (one climbing interval + one rest interval
+per move), producing exactly the queue order the physical rotation
+implies. `orderedAthletesForRoute()` (5.2) already sorts by this per-route
+position, so each boulder can be treated as its own independent "lane"
+with its own queue — same mechanism Lead already uses for its own routes,
+no rotation-schedule math needed in this app at all. This also means the
+app doesn't need to track wall-clock time or interval length — it reacts
+purely to recorded results, so it self-corrects if the real pace deviates
+from the nominal schedule (a delay, a dispute), consistent with the
+"always re-derive from live data" property the rest of the app already
+has.
+
+**The gap this alone doesn't cover, and why (a real bug, found and fixed
+during this rotation-format investigation, before it ever shipped —
+reproduced with mocked data, not a live report):** `computeLane()`'s
+`round.status === "pending"` guard (5.3) only catches "the round as a
+whole hasn't started". For a staggered rotation, the round is already
+`"active"` as soon as boulder 1 has climbers — but boulder 2 can go
+completely untouched by anyone for several intervals after that, and
+`round.status` can't tell the difference. Reproduced live with a mocked
+fresh-start scenario (only boulder 1 has real progress, boulders 2–5
+completely untouched): `computeLane()`'s ordinary "nobody active or
+confirmed → position 0" fallback fired independently on *every* boulder,
+each picking whoever is first in *that* boulder's own queue — including
+the same athlete showing as `"climbing"` on two different boulders
+simultaneously, and boulders 3/4/5 each showing a "current climber" who
+hadn't actually started there at all.
+
+**Fix, scoped to Boulder only:** `computeBoulderLane(round, route)` —
+checks whether *anyone* in that route's own ordered queue has gone
+`"active"` or been confirmed there yet. If nobody has, `atWall` stays
+`null` (blank `CLIMBING`, exactly like a not-yet-started round) and
+`queue` keeps the upcoming order visible in the waiting list below — but
+`onDeck` (the prominent "NEXT" card) needs one more signal before it's
+allowed to show a name: the candidate (the boulder's own first-in-queue
+athlete) must be genuinely one rotation away from starting here, not
+several rotations out. This took **five** iterations to land on, each
+driven by live feedback, not a guess:
+
+1. The *first* version filled `onDeck` with the boulder's first-in-queue
+   athlete unconditionally (same as `queue[0]`) while `atWall` stayed
+   blank — technically accurate, but reported live as misleading: reads as
+   "you're up next" even when that athlete is several rotations away (the
+   last boulder of a 5-boulder round showed its very first occupant as
+   `"NEXT"` from the moment the round opened).
+2. The *second* version blanked `onDeck` **and** emptied `queue`
+   entirely — reported live as having gone too far the other way: staff
+   want to see who's coming up overall, just without the false-urgency
+   framing the `"NEXT"` card specifically carries.
+3. The *third* version restored `queue` but left `onDeck` unconditionally
+   blank — reported live as still missing something: an athlete who has
+   *actually* just finished their previous boulder and is now resting,
+   genuinely one rotation from starting here, should surface as `"NEXT"`
+   rather than jump straight from "a name in the waiting list" to
+   `"CLIMBING"` with no step in between.
+4. The *fourth* version introduced a readiness check: the candidate must
+   be confirmed on every OTHER route where their own position is lower
+   than their position here (checked athlete-first, walking the
+   candidate's own position-ordered ascent list — not by boulder name/order
+   like "is boulder N−1 done", since the "2 Courses" format (6.6) has no
+   single well-defined "previous boulder" to name for a course's first
+   stop). Verified via a full rotation simulation (round `13712`,
+   gap-of-2 pattern): boulder 4 shows `CLIMBING —`, `NEXT —` through heat
+   5, `NEXT` populates at heat 6, `CLIMBING` follows at heat 7 — correct
+   for this format, but reported live as **wrong for a World Series-style
+   final** (gap = boulder count, at most 2 boulders live at once, see the
+   "physical formats" note further down): a candidate who'd only ever
+   climb ONE boulder before this one (the norm for that format) got
+   confirmed on it almost immediately, well before the boulder they're
+   headed to next has any real reason to be open yet — `"NEXT"` showed
+   several heats too early, because this check only looked at the
+   candidate's *own* prior obligations, not at whether the *route itself*
+   had genuinely made room yet (other athletes still working through the
+   current boulder's remaining capacity).
+5. **Current version — `boulderGroupFrontier(round, route)`:** replaces
+   the athlete-centric check with one based on real recorded progress.
+   Confirmed against real `route_start_positions` data (fixtures `13712`,
+   `13735`, `13709`/`13711` in AGENTS.md §3) that position values are a
+   literal shared "heat slot" number *within one route group* — not a
+   per-route-independent rank — so the same position value can appear on
+   two different routes in the same group for two different athletes,
+   meaning those two ascents genuinely happen at the same moment. This
+   lets readiness be computed from the group's actual furthest-progressed
+   position (the highest position with a real active/confirmed ascent,
+   anywhere in the same group) instead of the candidate's own routes
+   alone: the candidate is ready once that frontier reaches one position
+   before their own position here. Scoped to the route's own group (via
+   `collectRouteGroups()`, 6.6), not the whole round — confirmed against
+   real data (fixture `13709`, `starting_groups`) that Group A and Group B
+   each have their own independent position numbering starting at 1, not
+   a shared round-wide clock; a round-wide frontier would let a
+   faster-judged group's high position values falsely mark a slower
+   group's candidate "ready" early. Re-verified round `13712`'s gap-of-2
+   result is unchanged (`NEXT` at heat 6, `CLIMBING` at heat 7) and newly
+   verified the World Series case is now correct (fixture `13735`, gap =
+   boulder count): `NEXT` stays blank through heats 1–3, populates at heat
+   4 — one heat before the boulder actually opens — and `CLIMBING` follows
+   at heat 5. Also verified the group-scoping itself: with Course A (13711)
+   fully confirmed and Course B completely untouched, Course B's routes
+   still correctly show blank `CLIMBING`/`NEXT` — Course A's progress does
+   not leak across the group boundary.
+
+This also naturally subsumes `round.status === "pending"` (if the round
+hasn't started, trivially nobody's touched any route either), so no
+separate check for that is needed.
+
+**Once the route has real activity, it no longer falls through to
+`computeLane()` at all — Boulder has its own "already reached" frontier
+rule, a fourth iteration on top of the three above.** This was originally a
+straight `return computeLane(round, route);` (verified byte-identical to
+calling it directly, for every already-progressed boulder in the hand-edited
+test-stage data available at the time). Real, currently-being-judged data
+(event `1593`, round `13840`, live on-site) showed that assumption doesn't
+hold: `computeLane()`'s rule (5.2 — the athlete after the last *confirmed*
+one is always shown as `"climbing"`) assumes the next athlete starts
+climbing the instant the previous one is confirmed. For Boulder, confirmed
+live judging shows a real gap — an ascent goes `pending` → `active` (the
+judge genuinely starts recording a try — a try-counter increment with an
+updated timestamp; simply navigating to the athlete's screen does **not**
+trigger this) → `confirmed` (Edit/save, instantaneous, no separate
+"advanced to next athlete" signal exists in the API at all). For however
+long the next athlete hasn't started a try yet, `computeLane()` would show
+them as `"climbing"` before they've done anything — reported live as wrong:
+the *previous* (last confirmed) athlete should keep showing as `"climbing"`
+until the *next* one is genuinely `"active"`, not the instant they're
+next in line. `"NEXT"` already correctly names who that will be, one
+position ahead, via the existing `onDeck` field.
+
+`computeBoulderLane()` now computes this frontier itself instead of
+delegating: track `lastActive` and `lastConfirmed` indices in the route's
+own ordered queue. If some entry is `"active"` **and** sits after the last
+confirmed one, that's the new frontier (`atWall`) — normal forward
+progress. If nothing is active, the frontier sticks at `lastConfirmed`
+(the previous athlete keeps showing) unless that's the very last athlete in
+the queue, in which case the route is genuinely `finished`. The "after the
+last confirmed one" condition is deliberate — the exact same post-hoc-edit
+protection `findCurrentIndex()` already has for Lead (5.2, `Math.max(lastActive,
+lastConfirmed + 1)`): a judge reopening an *earlier* athlete's score to
+correct it (setting their ascent back to `"active"`) must not pull the
+display backward past someone already confirmed further along. Verified
+live and via a controlled mocked simulation (round `13712`, real athlete
+IDs, real `route_start_positions` order) against all three cases: sticks on
+the previous athlete until the next genuinely goes active; a reopened
+earlier entry does not pull the frontier backward; the last athlete
+confirmed with nobody active after them correctly resolves to `"Round
+finished"`. Also re-verified against real live data on event `1593`,
+matching the same behavior end-to-end (LORENTZ Hendrik stayed `"climbing"`
+on boulder 2 until MELVILLE Herman's ascent genuinely went `"active"`, at
+which point the display correctly flipped).
+
+`buildLane()` dispatches on `round.discipline === "Boulder"` — a
+discipline check, not a format-identifier check, so it covers qualification,
+the two-group format, and any future Boulder final format reusing the same
+`routes`/`starting_groups` shape, while leaving Lead and Speed
+qualification (which share the exact same `buildLane()`/`computeLane()`
+call path) **provably untouched**: verified live that `computeBoulderLane()`
+is never even invoked when rendering a Lead or Speed-qualification round.
+This was a deliberate constraint, not an afterthought — Lead and Speed
+were explicitly frozen ("fertig, dürfen nicht mehr verändert werden")
+before this investigation started, so the fix could not risk touching
+`computeLane()` itself, even though the same guard would arguably also be
+a correct generalization for Lead's own routes (e.g. a hypothetical
+offset-start multi-route Lead format). That's deliberately out of scope
+here — revisit only if Lead is explicitly reopened.
+
+**Resolved — confirmed against a real, currently-live-judged Boulder
+round (event `1593`, round `13840`, on-site judging, not the hand-edited
+`dav-stage` test data):** Boulder ascent `status` reliably reaches
+`"confirmed"` the same way Lead's does — no Speed-elimination-style
+stuck state (5.5) observed. The real transition sequence is `pending` →
+`active` → `confirmed`, and specifically: `"active"` is set only by a
+genuine try-counter increment (the judge actually starts recording a try),
+**not** by the judge merely navigating to that athlete's screen — confirmed
+by live step-by-step testing (navigate only → no change; start a try →
+`status: "active"` with `top_tries` incremented and an updated timestamp).
+There is no separate API signal for "judge moved to the next athlete" —
+`"confirmed"` happens the instant Edit/save is pressed. This directly
+informed the sticky-frontier "already reached" logic above.
+
+**Open questions — not yet verified, worth re-checking against a real live
+event before fully trusting this for a real competition:**
+- **`boulder_finals_one_by_one`'s actual ascent field shape is unverified
+  against real populated data.** Unlike every other format checked here,
+  this one round had no `points_per_boulder_settings` in its round-level
+  data at all, suggesting a different (non-points) scoring mechanism - but
+  every test against it used a hand-built mock `ranking` array with
+  `status`/`top`/`zone`/`points` fields copied from the other formats,
+  never a real ascent object actually returned by results.info for this
+  specific format. Re-verify field names/shape the first time this format
+  has real recorded results (per AGENTS.md §2 - never trust an assumed
+  shape over real data).
+- **Sequence mode's auto-advance has not been live-tested with a Boulder
+  round in the list.** `isRoundFullyFinished()` still calls plain
+  `computeLane()` directly rather than `computeBoulderLane()` - reasoned to
+  be safe (in every code path `computeBoulderLane()`'s `finished` value is
+  identical to what `computeLane()` alone already returns, so the two are
+  provably interchangeable for this one field), but that reasoning has not
+  been exercised end-to-end via an actual Sequence-mode run with a Boulder
+  entry in it.
+
 ## 6. Design decisions
 
 ### 6.1 Local Node server instead of a static frontend
@@ -573,6 +845,31 @@ thing to watch" model. A tablet physically stationed at Group A's boulders
 doesn't need Group B's lanes taking up its screen; the tab (or a
 group-scoped bookmark link) lets it show only what's relevant to it, while
 a different tablet can be scoped to Group B.
+
+**Extended to Boulder's "2 Courses" format, which has no
+`starting_groups` at all to read a group name from.** Requested by the
+user once the format was confirmed working (5.6) but noted as missing
+this exact tab behavior. `format_identifier:
+"boulder_one_group_ifsc_2026_two_courses"` puts its course split entirely
+in route *naming* (`A1`/`A2`/`A3`/`B1`/`B2`, no `starting_groups`
+wrapper) — `groupRoutesByCoursePrefix()` detects this structurally (every
+route name is a letter prefix plus digits, at least two distinct
+prefixes) rather than hardcoding that one format_identifier string, so a
+future "3 courses" variant using the same naming convention would pick
+this up automatically too. Synthesizes the tab label itself as
+`"Course A"`/`"Course B"` (from the letter prefix, English to match the
+rest of the UI, 6.8) since results.info supplies no group name for this
+shape the way `starting_groups[].name` already does for the nested case.
+Scoped to `round.discipline === "Boulder"` inside `collectRouteGroups()`
+— Lead and Speed qualification share that exact function and must stay
+unaffected (frozen); verified live that neither's route naming
+(plain numbers for Lead, single letters with no digit suffix for Speed)
+would even match the detection pattern regardless, but the discipline
+check is the actual guarantee, not incidental naming luck. Everything
+downstream (tab rendering, `currentSelection.group` persistence, the
+`&group=` share-link param) needed zero changes — it already only cared
+about *how many* named groups came back from `collectRouteGroups()`, not
+where the names came from.
 
 ### 6.7 Kiosk mode: Fullscreen + Wake Lock behind one button
 
@@ -833,8 +1130,7 @@ reaches results.info twice); if the side currently shown has nothing left
 at the shared stage, the turn passes to the other side at the *same*
 stage; `pairedState` only still needs to persist `activeSide` (which of the
 two co-equal sides to display — there's no data signal for "whose turn it
-is", so that genuinely has to be remembered) and the stuck-heat watchdog
-state below.
+is", so that genuinely has to be remembered).
 
 **Why fresh-every-tick instead of persisted, and not just "advance
 forward":** a persisted, forward-only cursor can't handle a judge reopening
@@ -869,32 +1165,33 @@ from live data every tick — the same round can be revisited any number of
 times as the two sides keep alternating, and each revisit "just works"
 without further resume logic.
 
-**Stuck-heat watchdog:** originally added when the suspected cause of a
-stuck category switch was a heat's ascent `status` never reaching
-`"confirmed"`. That root cause turned out to be broader and got fixed
+**No automatic stuck-heat watchdog (removed by explicit request — was a
+90s `STUCK_TIMEOUT_MS` timer).** Originally added when the suspected cause
+of a stuck category switch was a heat's ascent `status` never reaching
+`"confirmed"`; that root cause turned out to be broader and got fixed
 directly at the source (5.5's `heatIsDone()`, which stopped trusting
-`status` for Speed-elimination heats at all) — so this watchdog is no
-longer covering for that. It stays as a narrower safety net for the case
-`heatIsDone()` still can't resolve: a heat that never gets *any* recorded
-result at all (equipment failure, an unresolved dispute) would otherwise
-block a paired entry from ever ceding the wall to the other category.
-`pollPairedTick()` tracks how long the active side's current heat
-(`sideResult.heats[0].id`) has stayed the same; if it hasn't changed in
-`STUCK_TIMEOUT_MS` (90s), it force-switches to the other side (same
-`stageIndex` — the stage cursor only ever advances once both sides
-genuinely have nothing left, per the previous paragraph), resetting the
-watchdog for whichever side is now shown. Deliberately scoped to just this
-paired-entry switch decision: a stuck *single* round still just shows one
-stale card forever with no timeout (5.2's rule 1 is unaffected by any of
-this — qualification-round `"active"` still reliably resolves to
-`"confirmed"` in practice, unlike Speed-elimination heats), but a stuck
-paired entry blocks the whole callzone from moving on to the next
-category, a materially worse failure mode worth a narrow exception for.
+`status` for Speed-elimination heats at all), narrowing the watchdog to a
+safety net for one remaining case: a heat that never gets *any* recorded
+result at all (equipment failure, an unresolved dispute), which would
+otherwise block a paired entry from ever ceding the wall to the other
+category. The user asked for this removed outright: the display should
+only ever switch categories on a genuine stage completion or a human
+clicking "Switch category now" — never silently on its own after a
+timeout, even as a safety net. **The tradeoff, raised and accepted**: an
+unattended tablet (6.7 — these run wall-mounted with no one watching) with
+a genuinely stuck heat and nobody noticing will now show a stale category
+indefinitely instead of self-correcting after 90s. Accepted deliberately,
+consistent with this app's broader preference throughout this investigation
+for showing exactly what's confirmed rather than guessing (5.6's
+sticky-frontier fix follows the same principle) — the manual button is
+considered sufficient, not a fallback of last resort. `pairedState` no
+longer tracks `stuckHeatId`/`stuckSince` at all — removed rather than left
+unused, since nothing reads them any more.
 
 **Manual override (`#pairedBar` / `pairedSwitchBtn`):** always visible
-while a paired entry is active, labelled "⇄ Switch category now" — an
-immediate escape hatch alongside the 90s watchdog above, for when staff
-notice a stall themselves and don't want to wait it out.
+while a paired entry is active, labelled "⇄ Switch category now" — now the
+**only** way to move past a stuck heat, since the automatic watchdog above
+was removed.
 
 **`pairedState.manualPin` — why the button needs it:** clicking the button
 sets `pairedState.activeSide` directly, but the very next line of
@@ -1039,6 +1336,100 @@ available.
 **Deploy trigger is currently manual, not automatic** — see `HOSTING.md`
 section A for why and the exact steps. This is an operational detail, not
 an architectural one, so it lives in the deployment doc rather than here.
+
+### 6.16 Feedback footer, setup screen only
+
+**Decision:** a `<footer class="setup-footer">` inside `#setup` (nested,
+not a sibling) links out to a Google Form ("Request a Feature or Send a
+Message") for feature requests/bug reports. Nesting it inside `#setup`
+rather than making it its own element is deliberate — `#setup`'s existing
+`hidden` toggle (`startWatching()`/`goBackToSetup()` in `public/app.js`)
+then hides/shows the footer for free, with no new element reference or
+visibility logic needed at all.
+
+**Why setup-screen only, not the board too:** the board is meant to run
+unattended on a wall-mounted tablet during a competition (6.7) - a visible
+external link there would be pure clutter (and an easy way for a curious
+finger to accidentally navigate away from the live board mid-competition).
+The setup screen is where a human is actively present adjusting things, so
+it's the only place a feedback link is actually useful to have visible.
+
+**Why a Google Form instead of an in-app mailto/contact form:** no
+extra infrastructure (this app doesn't send email or store submissions
+anywhere), and a Form gives the user a normal inbox of responses to review
+without adding a database or auth of any kind - consistent with §7's "no
+real database" out-of-scope decision elsewhere in this app.
+
+### 6.17 Boulder final display mode: "Intervall" vs "World Series" (manual toggle, Boulder finals only)
+
+**The problem:** IFSC Boulder finals have (at least) two distinct physical
+formats, both reusing the exact same `route_start_positions`-driven queue
+mechanism (5.6) with no algorithmic difference in *when* an athlete
+actually climbs a given boulder — but with a real difference in how far
+away a not-yet-reached boulder's queue should visually show its own
+candidate. "Intervall" reuses qualification's pacing (gap 2, many boulders
+genuinely live at once, a not-yet-reached candidate is realistically close
+once ready). "World Series" paces at most 2 boulders live at once (gap =
+roughly half the finalist field, see below) — a not-yet-reached boulder's
+candidate can be several heats away even once every closer boulder is
+progressing normally, and reported live (a real event, round `13833`) that
+showing them at the very front of the queue regardless misrepresents how
+far off they actually are.
+
+results.info's own `format_identifier` does **not** distinguish these two
+— confirmed by the user directly ("Leider sagt das Format in dav-stage
+nichts darüber, welches der Formate gemacht wird") — so this can't be
+auto-detected the way every other Boulder format variant in this app is.
+Hence a manual, per-round toggle (`renderBoulderModeToggle()`), shown only
+when `isBoulderFinalRound(round)` (`discipline === "Boulder"` **and**
+`format_identifier` starts with `"boulder_finals"`) — Qualification rounds
+never show it and always get the "Intervall" reading, matching the user's
+explicit instruction that Qualification stays untouched. Placed in the
+board header next to the Course A/B group tabs (6.6), reusing the same
+`.group-tab` styling. Remembered per round id (`localStorage`, keyed by
+`round.id`, not per-tablet) since it describes a property of the real
+event, not a personal display preference — a second tablet loading the
+same round sees whatever was last chosen for it.
+
+**"Intervall" is the default and is byte-for-byte the pre-existing
+behavior** (5.6's readiness check) — confirmed unaffected by this change:
+Qualification, both already-verified final formats under their default
+reading, and every already-reached boulder (regardless of mode) render
+identically to before.
+
+**"World Series" mode — padded-distance queue.** Reuses
+`boulderGroupFrontier()` (5.6) to compute a numeric `distance` (not just a
+boolean) for the not-yet-reached candidate: `distance = herePos - frontier
+- 1`, i.e. how many heats away they genuinely are (0 = ready now, matching
+"Intervall"'s existing readiness cutoff exactly — confirmed live that
+`distance === 1` renders byte-identical to the "Intervall" branch, so the
+two modes only ever visibly diverge once a candidate is more than one heat
+out). When `distance > 0`, `distance - 1` blank placeholder slots (`null`
+queue entries, rendered as "—") are prepended before the candidate, so
+their real waiting-list position reflects their real distance instead of
+always sitting at the front. Verified live off the real reported example
+(round `13833`, event `1593`): a candidate 3 heats out from Boulder 4 (the
+boulder immediately before it, Boulder 3, still had 3 more heats of its
+own queue to clear) now shows 2 blank slots before their name (displayed
+rank 4 — CLIMBING, NEXT, 2nd, 3rd all blank, 4th = the candidate),
+matching the user's own description exactly ("Auf 4. steht dann #109
+KANT. Im nächsten Heat rutscht #109 KANT auf 3."). Also verified via a
+controlled heat-by-heat simulation (synthetic 9-athlete round) that the
+padding count decrements by exactly one every heat as the group's real
+frontier advances, until it reaches 0 and the candidate is promoted to
+`onDeck` — at the same heat "Intervall" mode would have promoted them too.
+
+**No new frontier computation was needed** — `boulderGroupFrontier()`
+already scopes correctly per route group (5.6), and this mode only changes
+how its numeric result is *used* (padding count vs a boolean gate), not
+how it's computed. This also means the "orient on the boulder
+immediately before" behavior the user asked for falls out for free: in a
+World Series final (no course split, a single route group covering all
+boulders), the group-wide frontier is, at any real moment, driven by
+whichever boulder is currently most advanced — which in a strict linear
+pipeline is always the boulder immediately preceding the one being
+computed, confirmed by the shared "heat slot" position-value property
+(5.6).
 
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
