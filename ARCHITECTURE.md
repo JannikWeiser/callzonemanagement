@@ -1431,6 +1431,253 @@ pipeline is always the boulder immediately preceding the one being
 computed, confirmed by the shared "heat slot" position-value property
 (5.6).
 
+### 6.18 QR codes next to the tablet/control share links
+
+**Decision:** both share-link rows (`#shareRow` "Link for this tablet",
+`#controlShareRow` "Link to control from another device", 6.1/6.13) get a
+small scannable QR code next to the text field and Copy button, generated
+client-side via `renderQrCode()`.
+
+**Why client-side, vendored, no CDN:** this app already has zero external
+runtime dependencies (only `express` server-side, nothing loaded from a
+CDN in the browser) — a QR code is exactly the kind of small, static,
+pure-function capability that doesn't need a network call or a server
+round-trip, so pulling one in from a CDN would be the only external
+dependency in the whole app for no real benefit. Vendored
+`public/qrcode.js` (Kazuhiko Arase's `qrcode-generator`, MIT, single file,
+no dependencies of its own) instead — loaded via a plain `<script>` tag
+before `app.js`, matching this app's build-less, no-bundler setup (6.1).
+Its top-level `var qrcode = ...` becomes a normal global in that setup, so
+`app.js` can call `qrcode(0, 'M')` directly with no import/require.
+
+**Why SVG, not `<img>`/canvas:** `createSvgTag({ scalable: true })` omits
+fixed pixel width/height, sizing purely off the embedded `viewBox` — lets
+the `.qr-code` CSS box control final size without any raster blur at
+different DPIs, and needs no `<canvas>` element or data-URL round-trip.
+The library's own `<rect fill="white">` background guarantees scan
+contrast regardless of this app's dark theme.
+
+**`setShareLink()`/`setControlLink()` wrap every write to
+`el.shareLink.value`/`el.controlLink.value`** (four call sites:
+`startWatching()`, the Boulder group-tab click handler, and both branches
+of `startTrainingSession()`) so the QR code can never go stale relative to
+the visible text field — don't reintroduce a raw `el.shareLink.value =
+...` assignment anywhere; route it through the setter instead. Verified
+live (real decode, not just "an SVG rendered"): rendered the generated SVG
+to PNG and decoded it with `zbarimg`, confirming byte-for-byte the decoded
+payload matches `el.shareLink.value` exactly, for a plain round link, a
+Boulder group-tab switch, and a Training mode control link.
+
+### 6.19 "Next up" strip in Sequence mode
+
+**Decision:** below the lanes (`#nextInSequence`, only when
+`currentSelection.sequence.length > 1` and the current entry isn't the
+last one) shows "Next up: `<category — round>`" for whatever comes after
+the currently-displayed sequence entry — plain text, updated once
+`pollCurrent()` settles on a stable `sequenceIndex`, not part of the 3s
+poll payload itself.
+
+**Why a fresh fetch instead of reusing the setup screen's round labels:**
+`populateRounds()` (§1) only ever populates `el.roundSelect` when a tablet
+goes through the interactive "Load event" flow — a tablet bookmarked
+straight to a `?host=...&rounds=...` deep link (the whole point of 6.1's
+share links) calls `startWatching()` directly and never touches
+`populateRounds()` at all, so `el.roundSelect` is empty in the common
+real-world case. `getRoundLabel()` instead fetches the next round's own
+`/api/round/:host/:roundId` data (same endpoint `pollRound()` already
+uses) the first time it's needed, building the same `"category — round"`
+string used for `el.roundTitle`.
+
+**`roundLabelCache` (by `"host:roundId"`, never invalidated within a
+session)** — a round's category/round name is immutable for the life of a
+tablet session, so caching it indefinitely is safe and avoids re-fetching
+the same not-yet-current round on every 3s tick while staff wait through
+the current entry. A paired entry's label is built by fetching both sides
+and joining `"A ↔ B"`, matching the sequence-builder list's existing
+convention (6.12's "Show sequence" list).
+
+**Called from exactly the two steady-state `return` points inside
+`pollCurrent()`'s loop** (the paired-tick branch and the round branch),
+not from every branch — the loop's other `return`s are either "superseded
+by a newer poll" or "fetch failed", neither of which represents a settled
+`sequenceIndex` worth reflecting in the strip. Guarded by the same
+`pollToken` comparison as the rest of `pollCurrent()` so a slow label
+fetch from a superseded call can't overwrite a newer one's strip.
+`startWatching()` force-hides the strip immediately (before
+`updateNextInSequence()` gets a chance to run) — needed because Training
+mode shares `#board` with normal Sequence mode but has no sequence concept
+at all and never calls `updateNextInSequence()` itself, so without this a
+stale strip from a previous Sequence-mode session could otherwise persist
+into a Training session. Verified live: a 2-round sequence, a 2-entry
+sequence with the paired entry first, and with the paired entry second —
+all three show the correct "next" label, including the `↔` join.
+
+### 6.20 "Legal Information" disclosure (Impressum, Datenschutzerklärung, Datenquelle, Haftungsausschluss), setup screen only, collapsed by default, pinned to the bottom of the screen
+
+**Decision:** a single `<details class="legal">` disclosure sits in the
+same `<footer class="setup-footer">` as the feedback link (6.16), right
+below it on its own line, summary labelled "Legal Information" — collapsed
+by default, expanding all four legal documents at once when clicked (each
+under its own `<h4>` inside `.legal-body`): Impressum (§ 5 DDG), a
+privacy policy, a data-source note, and a liability disclaimer. Nested
+inside `#setup` for the same reason as the feedback footer: it hides/shows
+for free via `#setup`'s existing `hidden` toggle, no separate visibility
+logic.
+
+**Why "Legal Information" specifically, not just "Legal":** the bare
+adjective "Legal" read ambiguous on its own (legal *what*?). Settled on
+"Legal Information" after checking how `dav.results.info` itself — the
+platform this app's data comes from — labels the exact same kind of
+grouped footer link: it uses "Legal information" verbatim. Matching that
+gives a real, already-in-use precedent from a directly adjacent site
+instead of inventing new wording, and reads unambiguously as "click here
+for legal documents" rather than a floating adjective.
+
+**Pinned to the bottom of the screen, not just following the content:**
+`.setup` (the setup screen's own root element) is `min-height: 100dvh` +
+`display: flex; flex-direction: column`, and `.setup-footer` gets
+`margin-top: auto` instead of a fixed value — the standard flexbox
+"sticky footer" pattern. On a normal viewport with little setup content,
+the footer sits flush at the bottom instead of right after the form
+fields with a lot of dead space below it. On a short viewport, or once
+"Legal Information" is expanded (four documents' worth of text), the auto
+margin naturally collapses to 0 and the page scrolls instead of
+overflowing/overlapping — no separate handling needed for that case, it
+falls out of using `margin-top: auto` rather than `position: fixed`.
+
+**Content decisions from user review, after the first draft (don't
+reintroduce any of these):**
+- **No "this is privately operated, not on behalf of a club/company"
+  sentence in the Impressum** — not a § 5 DDG requirement, was just added
+  context in the first draft; the user asked for it removed as
+  unnecessary. The Impressum's actual content (a private individual's
+  name/address, no Verein/company fields) already conveys this correctly
+  without a sentence spelling it out.
+- **"Deine Rechte" (Art. 15–21 DSGVO rights list) kept as-is** — genuinely
+  applicable here even without accounts/forms, since Render's hosting
+  necessarily processes visitor IP addresses (personal data) to serve the
+  site at all, which triggers Art. 13 information duties.
+- **"Haftung für Links" uses the user's own longer-form wording**, not an
+  earlier shorter draft - it explicitly states the links were checked at
+  the time of linking with no violations recognizable then, and that
+  continuous monitoring without concrete cause isn't reasonable. This
+  tracks the actual German case-law reasoning on link liability more
+  precisely than a bare "not responsible for external content" line.
+
+**Second review round - two law renamings caught, one clause added back
+in (don't revert any of these):**
+- **§ 5 TMG → § 5 DDG, and § 25 Abs. 2 Nr. 2 TTDSG → § 25 Abs. 2 Nr. 2
+  TDDDG.** Both laws were renamed on 14 May 2024 as part of Germany's
+  Digital Services Act implementation (TMG → Digitale-Dienste-Gesetz;
+  TTDSG → Telekommunikation-Digitale-Dienste-Datenschutz-Gesetz) - content
+  essentially unchanged, only the names/section-law-references changed.
+  Confirmed via web search before editing, not taken on faith from either
+  the user's report or a prior memory of the old names. The Impressum and
+  the `localStorage`/TDDDG paragraph both had the stale pre-2024 names in
+  the first draft - if this section is ever rewritten from scratch, use
+  DDG/TDDDG, not TMG/TTDSG.
+- **A short Streitschlichtung (§ 36 VSBG) clause WAS added** - this
+  reverses the first draft's "leave it out, doesn't apply" call. Still
+  true that § 36 VSBG technically only binds "Unternehmer", and this site
+  likely isn't one - but the clause costs nothing to include and closes
+  that "likely isn't, but is it definitely not" gap defensively, which the
+  user preferred once that tradeoff was made explicit. **Do NOT add a link
+  to the EU ODR/"OS-Plattform"** (`ec.europa.eu/consumers/odr`) alongside
+  it, even though many older German Impressum templates still pair the two
+  - confirmed via web search that the OS-Plattform was shut down by the EU
+  Commission on 20 July 2025 (Regulation EU 2024/3228); a site that still
+  links to it now risks being seen as making a misleading claim, which is
+  itself grounds for a competition-law warning. The § 36 VSBG
+  non-participation sentence is a separate, still-valid German national-law
+  mechanism unaffected by that shutdown - the two are easy to conflate but
+  aren't the same thing.
+
+**Why "Legal" as the umbrella label, "Impressum" kept as the document
+title inside:** started as a single Impressum-only disclosure (see the
+original version of this decision, superseded here); the user asked to
+fold in three more documents and questioned whether the container itself
+still had to be called "Impressum". It doesn't — nothing in § 5 DDG
+requires the *section* to carry that exact word, only that the Impressum
+*document itself* be easily recognizable once reached. "Legal" as the
+outer label (matching this app's English-only UI convention, 6.8) with
+"Impressum" as the first `<h4>` inside satisfies that: a visitor clicking
+"Legal" immediately sees "Impressum" as the first heading, unambiguous and
+one click away — still "leicht erkennbar, unmittelbar erreichbar, ständig
+verfügbar".
+
+**Why one shared disclosure instead of four separate ones:** keeps the
+footer to one interactive element regardless of how many legal documents
+exist behind it — "maximal unauffällig" was the explicit ask, and four
+separate `<details>` elements (or a sub-menu) would be more visual surface
+for the same amount of legally-required content. All four sections show
+together on the one click; a visitor scans past the ones they don't need.
+
+**Content decisions worth remembering:**
+- **Datenschutzerklärung** explicitly states there are no cookies and no
+  analytics/tracking (both true — confirmed against the actual app, not
+  just written aspirationally) - the only client-side storage is
+  `localStorage` for the tablet's own last-used selection (6.1/6.13),
+  called out as not requiring TDDDG § 25 Abs. 2 consent since it's
+  strictly technically necessary for the core function, never leaves the
+  device, and isn't used for tracking.
+- **Hosting section names Render Services, Inc. (USA) explicitly** and
+  references Render's own SCCs + EU-US Data Privacy Framework
+  certification as the transfer basis, with direct links to
+  `render.com/privacy` / `render.com/dpa` rather than restating their
+  content - confirmed live via `render.com/privacy` and `render.com/dpa`
+  and a web search on Render's current DPF certification before writing
+  this, not assumed. **The user's Render service runs in the US region**
+  (confirmed directly by the user) - if that ever changes to an EU region,
+  this section's wording (Drittlandtransfer / SCC / DPF) would need
+  revisiting, it's not automatically still accurate.
+- **Datenquelle names results.info / Vertical-Life GmbH as the data
+  source, deliberately without mentioning any permission, arrangement, or
+  exemption** - the user confirmed the API-usage question is "geklärt"
+  (resolved) on their end but explicitly asked that the public-facing text
+  not reference any special permission at all, just state plainly where
+  the live data comes from. Don't add wording implying a formal
+  partnership/license unless the user asks for that specifically.
+- **Haftungsausschluss has two parts, not just the generic external-links
+  boilerplate:** (1) the standard "not liable for externally linked
+  content" clause, and (2) something specific to what this app actually
+  does - no guarantee of accuracy/completeness/timeliness for the live
+  competition data, with the official on-site judges' ruling always taking
+  precedence over what the board shows. That second part is the
+  substantively useful one for this specific app, not boilerplate.
+- **Not written by a lawyer** - the user was told this directly and
+  intends to have it reviewed before relying on it. Don't present this
+  content as legally guaranteed-correct in future conversations; it's a
+  good-faith draft using standard German patterns, not verified legal
+  advice.
+
+**Why the email is assembled in `app.js` instead of written directly in
+the HTML** (`renderImpressumEmail()`, called once at load, right before
+the URL/localStorage bootstrap): keeps the address out of the page source
+as a contiguous, trivially-scraped string, while still rendering a fully
+normal, functional `mailto:` link for an actual visitor — no CAPTCHA-style
+friction, no loss of one-click "open in mail client", nothing that would
+undermine § 5 DDG's "unmittelbare Kommunikation" requirement. This is
+light obfuscation against naive static scrapers, not a claim of blocking
+anything that executes JavaScript - discussed and accepted as the
+tradeoff versus a plain-text `mailto:` link.
+
+**Layout note (a real bug, fixed before shipping, no live report):** an
+earlier version placed the `<details>` as `display: inline-block` on the
+*same* line as the feedback link, separated by a `·`. Once expanded, the
+tall multi-line body content broke the surrounding inline text flow —
+`text-align: center` plus a tall inline-block sibling pushed the feedback
+link to *below* the legal block instead of staying above it, reading in a
+confusing order. Fixed by giving `.legal` its own line (`margin-top`,
+default block display) instead of trying to keep it inline with the
+feedback link — verified by actually opening it and screenshotting, not
+just eyeballing the collapsed state. `.legal-body` additionally gets
+`max-width` + `text-align: left` (unlike the short single-purpose
+Impressum-only version this replaced) - four documents' worth of prose
+centered edge-to-edge across the whole footer width would be hard to
+read, so the body is a width-capped, left-aligned, centered block instead
+while the "Legal" summary itself stays centered like the rest of the
+footer.
+
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
 - **A visual bracket tree** for Speed elimination (like the PDF heat sheet

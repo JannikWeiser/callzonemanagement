@@ -308,6 +308,96 @@ previously-reported problems:
   nobody noticing will show a stale category indefinitely instead of
   self-correcting after 90s. See
   [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- `renderImpressumEmail()` (6.20) - don't inline the email address as a
+  plain string in `index.html` again; it's deliberately assembled in
+  `app.js` to avoid sitting in the page source as a scrapable string,
+  while still rendering a fully normal `mailto:` link. Also don't put
+  `.legal` back to `display: inline-block` on the same line as the
+  feedback link - that was a real layout bug (fixed): once expanded, the
+  tall body content broke the surrounding centered inline flow and
+  visually reordered the two footer items. It needs its own line.
+- The `.legal` disclosure (6.20) is ONE `<details>` covering FOUR documents
+  (Impressum, Datenschutzerklärung, Datenquelle, Haftungsausschluss), each
+  its own `<h4>` inside `.legal-body` - don't split it back into four
+  separate `<details>` elements without a real reason, that was a
+  deliberate choice to keep the footer to one interactive element
+  ("maximal unauffällig"). The Datenquelle section deliberately does NOT
+  mention any permission/arrangement/exemption for using the results.info
+  API, even though one exists - the user explicitly asked for the public
+  text to just name the data source plainly, nothing about a special
+  arrangement. Don't add that back in without being asked. The Hosting
+  paragraph assumes Render runs in a US region (confirmed by the user) -
+  if that ever changes, the Drittlandtransfer/SCC/DPF wording needs
+  updating, don't assume it's still accurate. None of this text is
+  lawyer-reviewed - the user was told this explicitly and plans to have it
+  checked; don't treat it as verified-correct in a future session. Summary
+  label is "Legal Information" (matching `dav.results.info`'s own footer
+  wording for the same kind of link, confirmed live) - not just "Legal".
+  After user review of the first draft: no "privately operated, not on
+  behalf of a club/company" sentence in the Impressum (not a § 5 DDG
+  requirement, just noise); "Deine Rechte" IS kept (genuinely applicable,
+  Render processes IPs to serve the site at all); "Haftung für Links" uses
+  the user's own longer-form wording (states links were checked at the
+  time of linking, no ongoing monitoring duty without concrete cause)
+  rather than a shorter draft - don't silently swap any of these back.
+  **Legal text uses § 5 DDG and § 25 Abs. 2 Nr. 2 TDDDG, NOT the older
+  § 5 TMG / § 25 Abs. 2 Nr. 2 TTDSG** - both laws were renamed 14 May 2024
+  (DSA implementation); confirmed live via web search, don't revert to the
+  old names if this section is touched again. **A short Streitschlichtung
+  (§ 36 VSBG) non-participation sentence IS included** (reverses an
+  earlier "leave it out" call - kept as cheap defensive boilerplate even
+  though § 36 VSBG likely doesn't strictly bind a private, non-commercial
+  operator) - but do NOT add a link to the EU ODR/"OS-Plattform"
+  (`ec.europa.eu/consumers/odr`) next to it, even though the two are often
+  paired in older templates: that platform was shut down by the EU
+  Commission on 20 July 2025, and a still-live link to it now risks being
+  read as a misleading claim in itself. The two are legally separate
+  mechanisms - don't conflate them if asked to touch this again.
+- `.setup`'s `min-height: 100dvh` + `display: flex; flex-direction: column`
+  and `.setup-footer`'s `margin-top: auto` (6.20) are a matched pair - the
+  standard flexbox sticky-footer pattern, pinning the footer to the bottom
+  of the setup screen when its content doesn't fill the viewport, while
+  still scrolling normally (not overlapping) once content or the expanded
+  Legal Information body exceeds it. Don't swap this for `position: fixed`
+  - that would overlap content instead of gracefully falling back on a
+  short viewport or once the disclosure is expanded.
+- `public/qrcode.js` (6.18) — a vendored third-party file (Kazuhiko Arase's
+  `qrcode-generator`, MIT), NOT project code - don't "clean up" its style,
+  reformat it, or fold it into `app.js`. It's the ONE exception to "no
+  external dependencies" in the browser, and it's an exception specifically
+  because it's vendored (no CDN, no network call) - don't replace it with a
+  CDN `<script src="https://...">` for "simplicity". Loaded before `app.js`
+  in `index.html`; its top-level `var qrcode` becomes a plain global in
+  this build-less setup, callable directly as `qrcode(0, 'M')`.
+- `setShareLink()`/`setControlLink()` (6.18) - route every write to
+  `el.shareLink.value`/`el.controlLink.value` through these, never assign
+  the input's `.value` directly. There are four call sites
+  (`startWatching()`, the Boulder group-tab click handler,
+  `startTrainingSession()` x2) - missing even one leaves that link's QR
+  code showing a stale/wrong URL while the text field itself is correct,
+  which is worse than not having a QR code at all (looks right, scans
+  wrong). Verified via a real decode (SVG → PNG → `zbarimg`), not just
+  "an SVG got rendered" - if you touch this again, re-verify the same way,
+  not just that `innerHTML` changed.
+- `roundLabelCache`/`getRoundLabel()`/`updateNextInSequence()` (6.19) -
+  don't reuse `el.roundSelect`'s `<option>` labels for this instead of a
+  fresh fetch, even though it looks like duplicate work: `el.roundSelect`
+  is only populated by the interactive "Load event" setup-screen flow
+  (`populateRounds()`) and is EMPTY for the common real-world case of a
+  tablet opened straight from a bookmarked `?host=...&rounds=...` link
+  (6.1) - `startWatching()` is called directly there, `populateRounds()`
+  never runs. The cache is keyed `"host:roundId"` and never invalidated
+  within a session - safe because a round's category/round name is
+  immutable for the tablet's lifetime; don't add TTL/expiry logic to it.
+  `updateNextInSequence()` is called from exactly the two steady-state
+  `return`s inside `pollCurrent()`'s loop, not the "superseded"/"fetch
+  failed" ones - and is guarded by the same `pollToken` check as the rest
+  of that function, so don't remove that guard even though this function
+  "just" updates a text strip. `startWatching()` force-hides
+  `#nextInSequence` immediately, before any poll can run - required
+  because Training mode shares `#board` with Sequence mode but never calls
+  `updateNextInSequence()`, so without the forced hide a stale strip from
+  a prior Sequence-mode session would leak into a Training session.
 - The in-memory training counter in `server.js` — the one deliberate
   exception to "the server has no persistent state" (see ARCHITECTURE.md
   §2). Don't "fix" it into `localStorage` only; the whole point is that a

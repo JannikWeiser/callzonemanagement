@@ -24,6 +24,9 @@ body {
   max-width: 720px;
   margin: 0 auto;
   padding: 2rem 1.5rem 3rem;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
 
 h1 {
@@ -155,7 +158,10 @@ button.ghost {
 }
 
 .setup-footer {
-  margin-top: 2.5rem;
+  margin-top: auto; /* pushes the footer to the bottom of the viewport
+    when the setup screen's own content doesn't fill it - see .setup's
+    flex column above; naturally becomes 0 and the footer just follows
+    the content when there's enough of it to fill the screen anyway */
   padding-top: 1rem;
   border-top: 1px solid #333846;
   text-align: center;
@@ -170,6 +176,58 @@ button.ghost {
 .setup-footer a:focus-visible {
   color: var(--accent);
   text-decoration: underline;
+}
+
+.legal {
+  margin-top: 0.5rem;
+}
+.legal summary {
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  list-style: none;
+}
+.legal summary::-webkit-details-marker {
+  display: none;
+}
+.legal summary:hover,
+.legal summary:focus-visible,
+.legal[open] summary {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.legal-body {
+  margin: 0.75rem auto 0;
+  max-width: 480px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  text-align: left;
+}
+.legal-body h4 {
+  margin: 1.25rem 0 0.4rem;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.legal-body h4:first-child {
+  margin-top: 0;
+}
+.legal-body p {
+  margin: 0 0 0.6rem;
+}
+.legal-body code {
+  font-size: 0.75rem;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+}
+.legal-body a {
+  color: var(--muted);
+  text-decoration: underline;
+}
+.legal-body a:hover,
+.legal-body a:focus-visible {
+  color: var(--accent);
 }
 
 .board {
@@ -254,6 +312,21 @@ button.ghost {
   color: var(--muted);
 }
 
+.qr-code {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+  padding: 3px;
+}
+.qr-code svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .group-tabs {
   display: flex;
   gap: 0.5rem;
@@ -289,6 +362,17 @@ button.ghost {
   font-weight: 700;
   font-size: 1.05rem;
   margin: 0 0 0.75rem;
+}
+
+.next-in-sequence {
+  margin-top: 0.5rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid #333846;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.next-in-sequence strong {
+  color: var(--text);
 }
 
 .lane {

@@ -35,12 +35,15 @@ const el = {
   shareRow: document.getElementById("shareRow"),
   shareLink: document.getElementById("shareLink"),
   copyLink: document.getElementById("copyLink"),
+  shareQr: document.getElementById("shareQr"),
   controlShareRow: document.getElementById("controlShareRow"),
   controlLink: document.getElementById("controlLink"),
   copyControlLink: document.getElementById("copyControlLink"),
+  controlQr: document.getElementById("controlQr"),
   groupTabs: document.getElementById("groupTabs"),
   boulderModeRow: document.getElementById("boulderModeRow"),
   lanes: document.getElementById("lanes"),
+  nextInSequence: document.getElementById("nextInSequence"),
   controllerBackBtn: document.getElementById("controllerBackBtn"),
   controllerTitle: document.getElementById("controllerTitle"),
   controllerStatus: document.getElementById("controllerStatus"),
@@ -77,6 +80,12 @@ let currentSelection = null;
 // any already-finished entries immediately, so this converges on the right
 // one within a poll or two regardless.
 let sequenceIndex = 0;
+
+// Caches a round's "Category — Round" label by id (6.10's "next up" strip
+// below the lanes) - round metadata (category/round name) never changes
+// within a session, so this is safe to keep indefinitely and avoids
+// re-fetching the same not-yet-current round on every 3s poll tick.
+const roundLabelCache = new Map();
 
 // State for the paired ("interleaved") entry currently active, if any -
 // { entryIndex, activeSide: "a" | "b" }. Reset whenever sequenceIndex moves
@@ -191,6 +200,31 @@ function buildShareLink(sel) {
   else url.searchParams.set("round", tokens[0]);
   if (sel.group) url.searchParams.set("group", sel.group);
   return url.toString();
+}
+
+// Renders a scannable QR code for `url` into `container` (replacing any
+// previous content) - lets a second device (phone, another tablet) open
+// the exact same link without typing or copy-pasting it, alongside the
+// existing "Link for this tablet" / "Link to control from another device"
+// text fields. `qrcode` comes from the vendored qrcode.js (Kazuhiko Arase,
+// MIT) loaded before this script - no network/CDN dependency, consistent
+// with this app having no other external runtime dependencies. `scalable:
+// true` omits fixed pixel width/height on the generated <svg> so it scales
+// via CSS (`.qr-code`) purely off the embedded viewBox.
+function renderQrCode(container, url) {
+  const qr = qrcode(0, "M");
+  qr.addData(url);
+  qr.make();
+  container.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+}
+
+function setShareLink(url) {
+  el.shareLink.value = url;
+  renderQrCode(el.shareQr, url);
+}
+function setControlLink(url) {
+  el.controlLink.value = url;
+  renderQrCode(el.controlQr, url);
 }
 
 function showError(msg) {
@@ -411,6 +445,7 @@ function startWatching(selection) {
   el.pairedBar.hidden = true;
   el.trainingControls.hidden = true;
   el.controlShareRow.hidden = true;
+  el.nextInSequence.hidden = true; // re-shown by updateNextInSequence() once pollCurrent() settles, watch mode only - training has no sequence concept
 
   if (selection.kind === "training") {
     el.board.hidden = !!selection.control;
@@ -424,7 +459,7 @@ function startWatching(selection) {
   sequenceIndex = 0;
   pairedState = null;
   lastRoundData = null;
-  el.shareLink.value = buildShareLink(selection);
+  setShareLink(buildShareLink(selection));
   pollCurrent();
   pollTimer = setInterval(pollCurrent, 3000);
 }
@@ -564,6 +599,47 @@ async function pollRound(host, roundId, token) {
   }
 }
 
+async function getRoundLabel(host, roundId) {
+  const cacheKey = `${host}:${roundId}`;
+  if (roundLabelCache.has(cacheKey)) return roundLabelCache.get(cacheKey);
+  try {
+    const data = await fetchRoundJson(host, roundId);
+    const label = `${data.category ?? ""} — ${data.round ?? ""}`.trim();
+    roundLabelCache.set(cacheKey, label);
+    return label;
+  } catch {
+    return null; // shown as "…" below rather than blocking the whole strip
+  }
+}
+
+// The "next up" strip below the lanes (6.10) - only meaningful in Sequence
+// mode with more than one entry, and only once the CURRENT entry is known
+// (sequenceIndex has settled - see the two call sites in pollCurrent()).
+// Deliberately a one-off lookup, not part of the 3s poll payload: the next
+// entry's category/round name doesn't change while it's waiting its turn,
+// so re-fetching it every tick would be pure waste.
+async function updateNextInSequence() {
+  const seq = currentSelection?.sequence;
+  if (!seq || seq.length <= 1 || sequenceIndex >= seq.length - 1) {
+    el.nextInSequence.hidden = true;
+    return;
+  }
+  const myToken = pollToken;
+  const next = seq[sequenceIndex + 1];
+  const host = currentSelection.host;
+  const label =
+    next.type === "paired"
+      ? (await Promise.all([getRoundLabel(host, next.a), getRoundLabel(host, next.b)])).map((l) => l ?? "…").join(" ↔ ")
+      : (await getRoundLabel(host, next.id)) ?? "…";
+  if (myToken !== pollToken) return; // superseded while fetching labels
+  el.nextInSequence.hidden = false;
+  el.nextInSequence.innerHTML = "";
+  el.nextInSequence.appendChild(document.createTextNode("Next up: "));
+  const strong = document.createElement("strong");
+  strong.textContent = label;
+  el.nextInSequence.appendChild(strong);
+}
+
 // Sequence mode: poll the current entry, and if it's done and there's a
 // next one queued up, jump straight to it (no artificial delay) rather than
 // waiting for the next 3s tick - this catches up through any already-
@@ -590,6 +666,7 @@ async function pollCurrent() {
         pairedState = null;
         continue;
       }
+      updateNextInSequence();
       return;
     }
     el.pairedBar.hidden = true;
@@ -601,6 +678,7 @@ async function pollCurrent() {
       sequenceIndex++;
       continue;
     }
+    updateNextInSequence();
     return;
   }
 }
@@ -1424,7 +1502,7 @@ function renderGroupTabs(groupNames) {
       if (currentSelection.group === name) return;
       currentSelection.group = name;
       saveSelection(currentSelection);
-      el.shareLink.value = buildShareLink(currentSelection);
+      setShareLink(buildShareLink(currentSelection));
       if (lastRoundData) renderBoard(lastRoundData);
     });
     el.groupTabs.appendChild(btn);
@@ -1547,9 +1625,9 @@ function renderPairedBoard(round, stageResult) {
 
 async function startTrainingSession(selection) {
   if (!selection.control) {
-    el.shareLink.value = buildShareLink(selection);
+    setShareLink(buildShareLink(selection));
     el.controlShareRow.hidden = false;
-    el.controlLink.value = buildShareLink({ ...selection, control: true });
+    setControlLink(buildShareLink({ ...selection, control: true }));
     el.trainingControls.hidden = false;
   }
 
@@ -1682,6 +1760,19 @@ for (const btn of el.modeTabs.querySelectorAll(".mode-tab")) {
   btn.addEventListener("click", () => setMode(btn.dataset.mode));
 }
 setMode("single");
+
+// Impressum email (§ 5 TMG): assembled here rather than written directly
+// into the HTML so it doesn't sit in the page source as a plain scrapable
+// string - joined back into a normal mailto: link at load time, so it's
+// fully functional and accessible for an actual visitor, just not for a
+// naive static scraper.
+(function renderImpressumEmail() {
+  const link = document.getElementById("impressumEmail");
+  if (!link) return;
+  const address = ["weiser", "jannik"].join(".") + "@" + ["gmail", "com"].join(".");
+  link.href = `mailto:${address}`;
+  link.textContent = address;
+})();
 
 const initial = readUrlSelection() ?? loadSelection();
 if (initial?.host && initial?.eventId) {

@@ -8,6 +8,43 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
+- **"Legal Information" disclosure, setup screen only, pinned to the
+  bottom of the screen** — a collapsed `<details>` under the feedback
+  link, expanding five sections at once when clicked: Impressum (§ 5 DDG),
+  a privacy policy (no cookies/tracking; `localStorage` usage explained
+  with reference to § 25 Abs. 2 Nr. 2 TDDDG; Render Services, Inc. hosting
+  in the US, with SCCs + EU-US Data Privacy Framework as the transfer
+  basis; Art. 15-21 DSGVO rights), a data-source note (results.info /
+  Vertical-Life GmbH, no mention of any usage arrangement), a liability
+  disclaimer (no guarantee on live-data accuracy — on-site judges' ruling
+  always wins; full-form "Haftung für Links" clause), and a short
+  Streitschlichtung (§ 36 VSBG) non-participation sentence (deliberately
+  without a link to the EU ODR/OS-Plattform, which was shut down 20 July
+  2025). Stays minimally intrusive (one small link, collapsed by default)
+  while remaining always reachable, and now sits flush at the bottom of
+  the setup screen (flexbox sticky-footer pattern) instead of right after
+  the form with dead space below it. Email assembled client-side (not
+  written as a plain string in the HTML) to avoid casual scraping while
+  staying a fully functional `mailto:` link. Drafted using standard German
+  patterns, not legal advice — the user plans to have it reviewed before
+  relying on it. Two outdated law references (§ 5 TMG, § 25 Abs. 2 Nr. 2
+  TTDSG) caught in a second review pass and corrected to their current
+  names (§ 5 DDG, § 25 Abs. 2 Nr. 2 TDDDG — both renamed 14 May 2024). See
+  [ARCHITECTURE.md §6.20](ARCHITECTURE.md#620-legal-information-disclosure-impressum-datenschutzerklärung-datenquelle-haftungsausschluss-setup-screen-only-collapsed-by-default-pinned-to-the-bottom-of-the-screen).
+- **QR codes next to both share-link fields** ("Link for this tablet",
+  "Link to control from another device") — scan with a phone to open the
+  exact same link instead of typing or copy-pasting. Generated client-side
+  via a vendored, dependency-free library (`public/qrcode.js`, MIT), no
+  CDN/network dependency. Verified with a real decode (rendered to PNG,
+  read back with `zbarimg`) that the QR payload matches the visible link
+  text exactly, including after a Boulder group-tab switch. See
+  [ARCHITECTURE.md §6.18](ARCHITECTURE.md#618-qr-codes-next-to-the-tabletcontrol-share-links).
+- **"Next up" strip in Sequence mode** — shows the upcoming category/round
+  below the lanes once the current sequence entry is confirmed and there's
+  another one queued after it, including the "A ↔ B" form for a paired
+  (interleaved Speed) entry. Only appears with 2+ sequence entries; hidden
+  for a single round or in Training mode. See
+  [ARCHITECTURE.md §6.19](ARCHITECTURE.md#619-next-up-strip-in-sequence-mode).
 - **Boulder final display mode toggle ("Intervall" / "World Series"), Boulder
   finals only.** results.info's `format_identifier` doesn't distinguish
   IFSC's two physical Boulder final formats, so this is a manual per-round
