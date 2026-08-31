@@ -416,6 +416,29 @@ previously-reported problems:
   deliberate exit (which also releases the lock) doesn't cause an
   unwanted re-acquire loop. See
   [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
+- The `fullscreenchange` handler's `el.controlShareRow` toggle (6.7/6.11) -
+  **do NOT make this unconditional like `el.shareRow`'s toggle right above
+  it.** `el.shareRow` is relevant in every mode this app has, so
+  `el.shareRow.hidden = fullscreen` alone is correct. `el.controlShareRow`
+  (the Training "link to control from another device" row, now with a QR
+  code - 6.18) is normally hidden by default and only shown from inside
+  `startTrainingSession()`'s non-control branch - copying the unconditional
+  pattern here would incorrectly reveal it on exiting fullscreen from ANY
+  mode, not just training. It must only be restored on exit when
+  `currentSelection?.kind === "training" && !currentSelection?.control`.
+  This was a real security-relevant bug (reported live): a wall tablet in
+  fullscreen still showed a scannable QR code granting no-login control
+  over the training session. See
+  [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
+- `updateHostLabel()` (6.21) reads `#host`'s own `<option>` text via
+  `el.host.querySelector(...)` rather than a second hardcoded copy of the
+  host display strings - if a host is ever added/renamed, only
+  `index.html`'s `<option>`s and `server.js`'s `HOSTS` map need updating,
+  not a third place. Don't hide `#hostLabel` in the `fullscreenchange`
+  handler alongside `#shareRow`/`#controlShareRow` - unlike those, it's
+  informational/troubleshooting text with no access-control concern, and
+  deliberately stays visible in kiosk mode. See
+  [ARCHITECTURE.md §6.21](ARCHITECTURE.md#621-host-label-next-to-the-status-line).
 
 If a change requires touching one of these, update the corresponding
 ARCHITECTURE.md section in the same change — don't let the doc drift from

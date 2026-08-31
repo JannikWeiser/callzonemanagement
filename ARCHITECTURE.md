@@ -944,6 +944,30 @@ detected/warned about explicitly — the button just won't keep the screen
 awake on those devices. Verify on the actual hardware being used before
 relying on it for a competition day.
 
+**Also hides the Training "link to control from another device" row (6.11)
+while in fullscreen, but only for the tablet where it's actually
+relevant** — reported live: unlike the plain "Link for this tablet" row
+(clutter, but low stakes if seen), the Training control link is a genuine
+access-control concern once a wall tablet is running unattended: it grants
+control over advancing the training session with no login at all (6.11's
+whole design), and now also carries a scannable QR code (6.18) - anyone
+near the tablet who shouldn't have that control could otherwise scan it
+straight off the fullscreen wall display. `el.controlShareRow.hidden` is
+forced `true` on entering fullscreen (same trigger, same reasoning as
+`el.shareRow` above), but on exiting fullscreen it's only restored to
+visible if `currentSelection.kind === "training" && !currentSelection.control`
+— i.e. this tablet is genuinely the training wall-display side. Unlike
+`el.shareRow` (which is relevant in every mode this app has, so an
+unconditional toggle is correct for it), `el.controlShareRow` starts
+`hidden` by default and is normally shown only from inside
+`startTrainingSession()`'s non-control branch — an unconditional toggle
+here would incorrectly reveal it on exiting fullscreen from a completely
+unrelated mode (regular watch/sequence) where it was never meant to be
+visible at all. Verified live: entering/exiting fullscreen on a training
+wall-display session correctly hides/restores it; the same sequence on a
+plain watch-mode board leaves it hidden throughout, never incorrectly
+revealed.
+
 ### 6.8 English-only UI, no language switcher
 
 **Decision:** every app-owned UI string (buttons, labels, error messages —
@@ -1686,6 +1710,44 @@ centered edge-to-edge across the whole footer width would be hard to
 read, so the body is a width-capped, left-aligned, centered block instead
 while the "Legal" summary itself stays centered like the rest of the
 footer.
+
+### 6.21 Host label next to the status line
+
+**Decision:** `#hostLabel`, a small, muted text element right next to
+`#statusLine` ("Updated HH:MM:SS") in the board topbar, shows which
+results.info tenant this specific board is actually pointed at (e.g.
+"fasi.results.info") — set once in `startWatching()` via
+`updateHostLabel(selection.host)`, not re-derived on every poll tick since
+a board's host never changes without a full page reload.
+
+**Why this became worth adding:** with three hosts (4.1's original
+`prod`/`ifsc`/`stage`), which tenant a tablet was pointed at was rarely in
+doubt. Once `fasi`/`usac`/`saccas` were added (six options in the Server
+dropdown now), a tablet accidentally pointed at the wrong tenant became a
+real, plausible mistake — and nothing on the board itself said which one
+was active, only the URL (not visible on a wall-mounted kiosk tablet).
+Useful specifically for remote troubleshooting: "what does the small text
+next to Updated say" is answerable over the phone without needing someone
+to check the address bar.
+
+**Reads the label from `#host`'s own `<option>` text, not a second copy of
+the same strings** - `document.getElementById("host")`'s options are
+static markup in `index.html`, always present regardless of whether this
+tablet went through the interactive "Load event" setup flow or opened
+directly via a deep link (unlike `#roundSelect`'s options, which only
+`populateRounds()` fills in - see 6.19's "Next up" strip, which hit this
+exact distinction and had to fetch its own labels for the same reason).
+Falls back to the raw host key if somehow not found (defensive, shouldn't
+happen since the dropdown and `server.js`'s `HOSTS` map are kept in sync
+by hand).
+
+**Deliberately NOT hidden in fullscreen/kiosk mode**, unlike the share-link
+rows (6.7) - this is informational/troubleshooting text with no access-
+control concern (nothing sensitive, nothing actionable), and is if
+anything *more* useful while a tablet is actually running unattended at a
+venue, which is exactly when someone might need to remotely confirm what
+it's showing. Verified live that it stays visible through a simulated
+fullscreen enter/exit cycle, unlike `#shareRow`/`#controlShareRow`.
 
 ## 7. Explicitly out of scope (do not "fix" without asking)
 

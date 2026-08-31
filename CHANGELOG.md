@@ -8,6 +8,15 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
+- **Host label next to the status line** — small, muted text showing which
+  results.info tenant the board is pointed at (e.g. "fasi.results.info"),
+  right next to "Updated HH:MM:SS". Added now that the Server dropdown has
+  six options instead of three, making a wrong-host mistake more plausible
+  and harder to notice from the board alone. Stays visible in fullscreen
+  (unlike the share-link rows) since it's informational, not a security
+  concern, and most useful for remote troubleshooting exactly while a
+  tablet is running unattended. See
+  [ARCHITECTURE.md §6.21](ARCHITECTURE.md#621-host-label-next-to-the-status-line).
 - **Three new results.info hosts**: `fasi.results.info` (FASI, Italy),
   `usac.results.info` (USA Climbing), `sac-cas.results.info` (SAC/CAS,
   Switzerland), added to the Server dropdown alongside DAV and IFSC — the
@@ -169,6 +178,18 @@ section number); this file is the *what happened, when* log.
   [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
 
 ### Fixed
+- **The Training "link to control from another device" row (with its QR
+  code) stayed visible in fullscreen/kiosk mode** — reported live: unlike
+  the plain tablet-link row (already hidden in fullscreen), this one is a
+  genuine access-control concern on an unattended wall tablet, since the
+  control link needs no login and now carries a scannable QR code.
+  `fullscreenchange` now hides it too, restoring it on exit only for the
+  tablet that's actually the training wall-display side
+  (`kind === "training" && !control`) — not unconditionally, which would
+  have incorrectly revealed it after exiting fullscreen in any unrelated
+  mode. Verified live for both the training case (hides/restores
+  correctly) and a plain watch-mode board (stays hidden throughout). See
+  [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
 - **A not-yet-reached Boulder route's `"NEXT"` card showed a candidate
   several heats too early for a World Series-style final (gap = boulder
   count, at most 2 boulders live at once)** — reported live off a

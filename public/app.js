@@ -26,6 +26,7 @@ const el = {
   kioskBtn: document.getElementById("kioskBtn"),
   roundTitle: document.getElementById("roundTitle"),
   statusLine: document.getElementById("statusLine"),
+  hostLabel: document.getElementById("hostLabel"),
   pairedBar: document.getElementById("pairedBar"),
   pairedLabel: document.getElementById("pairedLabel"),
   pairedSwitchBtn: document.getElementById("pairedSwitchBtn"),
@@ -216,6 +217,21 @@ function renderQrCode(container, url) {
   qr.addData(url);
   qr.make();
   container.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+}
+
+// Small, unobtrusive "which server is this tablet actually pointed at"
+// hint next to the "Updated HH:MM:SS" status line - with six selectable
+// hosts now (4.1) instead of the original three, a tablet accidentally
+// pointed at the wrong tenant (e.g. `usac` instead of `dav`) would
+// otherwise be invisible from the board alone, only visible in the URL.
+// Reads the host's display label from #host's own <option> text rather
+// than a second copy of the same strings - those options are static
+// markup in index.html, always present regardless of whether this tablet
+// went through the interactive "Load event" flow or a direct deep link
+// (unlike #roundSelect's options, which only populateRounds() fills in -
+// see 6.19's "Next up" strip for why that distinction matters here too).
+function updateHostLabel(hostKey) {
+  el.hostLabel.textContent = el.host.querySelector(`option[value="${hostKey}"]`)?.textContent ?? hostKey;
 }
 
 function setShareLink(url) {
@@ -441,6 +457,7 @@ function startWatching(selection) {
   clearInterval(trainingPollTimer);
   currentSelection = selection;
   saveSelection(selection);
+  updateHostLabel(selection.host);
   el.setup.hidden = true;
   el.pairedBar.hidden = true;
   el.trainingControls.hidden = true;
@@ -552,11 +569,26 @@ el.kioskBtn.addEventListener("click", () => {
 });
 
 document.addEventListener("fullscreenchange", () => {
+  const fullscreen = !!document.fullscreenElement;
   // The "link for this tablet" row is only useful for setting a bookmark up
   // in the first place - once mounted and running in kiosk mode, it's just
-  // clutter (and a copy-able URL) on an otherwise clean wall display.
-  el.shareRow.hidden = !!document.fullscreenElement;
-  if (!document.fullscreenElement) {
+  // clutter (and a copy-able URL, now with a scannable QR code too - 6.18)
+  // on an otherwise clean wall display.
+  el.shareRow.hidden = fullscreen;
+  // The Training "link to control from another device" row (6.11) is more
+  // than clutter if left up in fullscreen - reported live: whoever's near
+  // a wall-mounted, unattended tablet could scan its QR code and take over
+  // advancing the training session, with no login required by design. Hide
+  // it in fullscreen the same way; only restore it on exit if this tablet
+  // is genuinely the training wall-display side (`kind === "training" &&
+  // !control`) - it must stay hidden everywhere else (every non-training
+  // context, and the controller's OWN view), not just during fullscreen.
+  if (fullscreen) {
+    el.controlShareRow.hidden = true;
+  } else if (currentSelection?.kind === "training" && !currentSelection?.control) {
+    el.controlShareRow.hidden = false;
+  }
+  if (!fullscreen) {
     wakeLockSentinel?.release?.();
     wakeLockSentinel = null;
     el.kioskBtn.textContent = "Fullscreen + Always On";
