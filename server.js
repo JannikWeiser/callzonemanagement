@@ -8,6 +8,9 @@ const HOSTS = {
   prod: "https://dav.results.info",
   ifsc: "https://ifsc.results.info",
   stage: "https://dav-stage.results.info",
+  fasi: "https://fasi.results.info",
+  usac: "https://usac.results.info",
+  saccas: "https://sac-cas.results.info",
 };
 
 // Upstream requires a Referer from its own origin (anti-hotlink check),

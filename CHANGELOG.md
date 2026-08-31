@@ -8,6 +8,16 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
+- **Three new results.info hosts**: `fasi.results.info` (FASI, Italy),
+  `usac.results.info` (USA Climbing), `sac-cas.results.info` (SAC/CAS,
+  Switzerland), added to the Server dropdown alongside DAV and IFSC — the
+  respective federations wanted the same tool. Confirmed live against real
+  events on all three (auth gate behavior, and the actual event/round JSON
+  shapes, not just assumed from the existing hosts) before adding. No
+  logic changes needed — `server.js`'s `HOSTS` map is host-agnostic by
+  design (4.1), this was purely three new map entries plus three
+  `<option>`s. Legal Information disclosure (see below) stays German-only
+  for now, per explicit request.
 - **"Legal Information" disclosure, setup screen only, pinned to the
   bottom of the screen** — a collapsed `<details>` under the feedback
   link, expanding five sections at once when clicked: Impressum (§ 5 DDG),

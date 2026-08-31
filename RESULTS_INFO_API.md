@@ -120,12 +120,22 @@ window, not N.
 |---|---|
 | `dav.results.info` | Production DAV (Deutscher Alpenverein) competitions |
 | `ifsc.results.info` | Production IFSC / World Cup competitions |
+| `fasi.results.info` | Production FASI (Federazione Arrampicata Sportiva Italiana, Italy) competitions |
+| `usac.results.info` | Production USA Climbing competitions |
+| `sac-cas.results.info` | Production SAC/CAS (Swiss Alpine Club) competitions |
 | `dav-stage.results.info` | Staging/test tenant — same API, test events with fake-name athletes, safe to hit repeatedly during development |
 
-All three (and presumably any other `*.results.info` tenant) run the
-identical API and identical Referer-gate mechanism — confirmed by testing
-the same request shape against each. Adding a new tenant is just adding its
-base URL and using its own origin as the Referer.
+All six (and presumably any other `*.results.info` tenant) run the
+identical API and identical Referer-gate mechanism. Confirmed directly for
+`fasi`/`usac`/`sac-cas` (not just assumed from the pattern holding for the
+first three) — same 401-without-Referer/200-with-Referer behavior, same
+`/api/v1/events/{id}` and `/api/v1/category_rounds/{id}/results` response
+shapes against real live events on each, and the same "POWERED BY / Legal
+information" Vertical-Life footer on all three sites. Adding a new tenant
+is just adding its base URL and using its own origin as the Referer -
+confirmed in practice, not just in theory, when these three were added to
+this app's `HOSTS` map (`server.js`) and the setup screen's Server
+dropdown, with zero other code changes needed.
 
 `dav-stage.results.info` in particular is useful for development: it has
 long-lived test events with real API response shapes but placeholder

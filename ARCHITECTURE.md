@@ -71,12 +71,21 @@ without notice.
 |---|---|---|
 | `prod` | `https://dav.results.info` | DAV (Deutscher Alpenverein) competitions |
 | `ifsc` | `https://ifsc.results.info` | IFSC / World Cup competitions |
+| `fasi` | `https://fasi.results.info` | FASI (Federazione Arrampicata Sportiva Italiana, Italy) competitions |
+| `usac` | `https://usac.results.info` | USA Climbing competitions |
+| `saccas` | `https://sac-cas.results.info` | SAC/CAS (Swiss Alpine Club) competitions |
 | `stage` | `https://dav-stage.results.info` | Staging/test environment, used for development |
 
-All three run the identical API and identical auth mechanism (verified with
-`curl` against each — see 4.2). Adding another `*.results.info` tenant is a
-one-line change in `server.js`'s `HOSTS` map plus one `<option>` in
-`index.html`.
+All six run the identical API and identical auth mechanism (verified with
+`curl` against each — see 4.2). `fasi`/`usac`/`saccas` were added on
+request (the respective federations wanted the same tool DAV/IFSC already
+use) — confirmed live against real events on each (not just the auth gate:
+the actual `/api/v1/events/{id}` and `/api/v1/category_rounds/{id}/results`
+shapes, matching byte-for-byte) before adding them, exactly the same
+verification already done for the first three. Adding another
+`*.results.info` tenant really is just the one-line `HOSTS` map change plus
+one `<option>` this section already predicted — no other code needed
+changing, confirming that prediction in practice.
 
 ### 4.2 Auth: the Referer gate
 
