@@ -7,7 +7,30 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Changed
+- **"Switch round" button hidden in fullscreen/kiosk mode**, same as the
+  share-link row — clutter on an unattended wall display, rarely needed
+  mid-event, always reachable by exiting fullscreen first. Group tabs,
+  route tabs, and the Boulder-format toggle deliberately stay visible,
+  since those may need adjusting without leaving kiosk mode. See
+  [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
+
 ### Added
+- **Route tabs — dedicate one tablet to one or more routes/boulders** — a
+  new tab row below the group tabs lets a tablet show just "Boulder 2" (or
+  several, e.g. "Boulder 1" + "Boulder 3" together) instead of the full
+  lanes grid, for events with enough tablets to give each route its own
+  dedicated wall display, or to split routes across a few extra tablets.
+  Tab labels use the same "Route"/"Lane"/"Boulder" prefix as the lane
+  headings, so a Boulder round reads "Boulder 1"/"Boulder 2" rather than
+  just "1"/"2". Reuses the existing group-tabs/URL-param/share-link
+  mechanism (6.6/6.4/6.18) at one level deeper granularity, so picking
+  route(s) once and bookmarking the resulting share link/QR code pins that
+  tablet to them permanently, same workflow as the existing round
+  deep-links. Selecting exactly one route also renders it noticeably
+  larger (bigger cards, bigger text) than the multi-lane grid, since the
+  point is legibility from further away. See
+  [ARCHITECTURE.md §6.22](ARCHITECTURE.md#622-route-tabs-dedicating-one-tablet-to-one-or-more-routesboulders).
 - **Host label next to the status line** — small, muted text showing which
   results.info tenant the board is pointed at (e.g. "fasi.results.info"),
   right next to "Updated HH:MM:SS". Added now that the Server dropdown has

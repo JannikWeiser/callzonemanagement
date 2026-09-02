@@ -42,6 +42,7 @@ const el = {
   copyControlLink: document.getElementById("copyControlLink"),
   controlQr: document.getElementById("controlQr"),
   groupTabs: document.getElementById("groupTabs"),
+  routeTabs: document.getElementById("routeTabs"),
   boulderModeRow: document.getElementById("boulderModeRow"),
   lanes: document.getElementById("lanes"),
   nextInSequence: document.getElementById("nextInSequence"),
@@ -69,8 +70,12 @@ let pollToken = 0;
 // Tracks what the currently-watched board is showing, so re-renders (poll
 // ticks, group-tab clicks) and the share link stay in sync without having
 // to thread these values through every function call.
-//   - watch:    { kind: "watch", host, eventId, group, sequence }
-//   - training: { kind: "training", host, eventId, roundId, control }
+//   - watch:    { kind: "watch", host, eventId, group, route, sequence }
+//   - training: { kind: "training", host, eventId, roundId, control, route }
+// `route`, like `group`, dedicates this tablet to one or several
+// routes/boulders instead of the full lanes grid (6.22) - `null`/absent
+// means "show all"; otherwise an array of route names (a single route is
+// just an array of length one, same convention as `sequence` below).
 // `sequence` is always an array - a single round is just an array of length
 // one - see "Sequence mode" below. Each entry is either
 // { type: "round", id } or { type: "paired", a, b } (see 6.12).
@@ -169,9 +174,22 @@ function readUrlSelection() {
   const eventId = params.get("event");
   if (!host || !eventId) return null;
 
+  // `route` is a comma-separated list of route names (6.22) - one or
+  // several routes/boulders this tablet is dedicated to, or absent/empty
+  // for "show everything".
+  const routeParam = params.get("route");
+  const route = routeParam ? routeParam.split(",").filter(Boolean) : null;
+
   const trainingRoundId = params.get("training");
   if (trainingRoundId) {
-    return { kind: "training", host, eventId, roundId: trainingRoundId, control: params.get("control") === "1" };
+    return {
+      kind: "training",
+      host,
+      eventId,
+      roundId: trainingRoundId,
+      control: params.get("control") === "1",
+      route,
+    };
   }
 
   const group = params.get("group");
@@ -182,7 +200,7 @@ function readUrlSelection() {
     : roundParam
     ? [{ type: "round", id: roundParam }]
     : null;
-  return sequence ? { kind: "watch", host, eventId, group, sequence } : null;
+  return sequence ? { kind: "watch", host, eventId, group, route, sequence } : null;
 }
 
 function buildShareLink(sel) {
@@ -193,6 +211,7 @@ function buildShareLink(sel) {
   if (sel.kind === "training") {
     url.searchParams.set("training", sel.roundId);
     if (sel.control) url.searchParams.set("control", "1");
+    if (sel.route?.length) url.searchParams.set("route", sel.route.join(","));
     return url.toString();
   }
 
@@ -200,6 +219,7 @@ function buildShareLink(sel) {
   if (tokens.length > 1) url.searchParams.set("rounds", tokens.join(","));
   else url.searchParams.set("round", tokens[0]);
   if (sel.group) url.searchParams.set("group", sel.group);
+  if (sel.route?.length) url.searchParams.set("route", sel.route.join(","));
   return url.toString();
 }
 
@@ -363,7 +383,7 @@ function populateRounds(eventData, host, eventId) {
   el.watchRound.onclick = () => {
     const roundId = el.roundSelect.value;
     if (!roundId) return;
-    startWatching({ kind: "watch", host, eventId, group: null, sequence: [{ type: "round", id: roundId }] });
+    startWatching({ kind: "watch", host, eventId, group: null, route: null, sequence: [{ type: "round", id: roundId }] });
   };
 
   el.addToSequence.onclick = () => {
@@ -392,13 +412,13 @@ function populateRounds(eventData, host, eventId) {
     const sequence = sequenceBuilder.map((item) =>
       item.type === "paired" ? { type: "paired", a: item.aId, b: item.bId } : { type: "round", id: item.roundId }
     );
-    startWatching({ kind: "watch", host, eventId, group: null, sequence });
+    startWatching({ kind: "watch", host, eventId, group: null, route: null, sequence });
   };
 
   el.startTraining.onclick = () => {
     const opt = el.roundSelect.selectedOptions[0];
     if (!opt || opt.dataset.speed !== "1") return; // belt-and-suspenders - button is also disabled for this case
-    startWatching({ kind: "training", host, eventId, roundId: opt.value, control: false });
+    startWatching({ kind: "training", host, eventId, roundId: opt.value, control: false, route: null });
   };
 
   el.roundSelect.onchange = updateTrainingEligibility;
@@ -575,6 +595,13 @@ document.addEventListener("fullscreenchange", () => {
   // clutter (and a copy-able URL, now with a scannable QR code too - 6.18)
   // on an otherwise clean wall display.
   el.shareRow.hidden = fullscreen;
+  // "Switch round" is only needed to leave the current round/sequence
+  // entirely - rarely done mid-event, and always reachable by exiting
+  // fullscreen first. Unlike the group/route tabs and the Boulder-format
+  // toggle (deliberately left visible - see 6.22), it's not something
+  // someone would want to tap without leaving kiosk mode anyway, so it's
+  // just clutter on the wall display like the share-link row above.
+  el.backBtn.hidden = fullscreen;
   // The Training "link to control from another device" row (6.11) is more
   // than clutter if left up in fullscreen - reported live: whoever's near
   // a wall-mounted, unattended tablet could scan its QR code and take over
@@ -1206,6 +1233,17 @@ function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
   }
 }
 
+// Lane heading prefix by discipline - "Boulder 1"/"Boulder 2" reads better
+// than "Route 1" for Boulder specifically (where "route" isn't the term
+// climbers/judges actually use), while Lead keeps "Route" and Speed keeps
+// "Lane". Shared by every place that builds a lane/route heading so the
+// three stay in sync.
+function laneLabelPrefixFor(round) {
+  if (round.discipline === "Speed") return "Lane";
+  if (round.discipline === "Boulder") return "Boulder";
+  return "Route";
+}
+
 function buildLane(round, route, laneLabelPrefix, boulderFinalMode) {
   // Discipline check, not a format_identifier check - deliberately covers
   // every Boulder round shape (qualification, two-group, and any future
@@ -1533,11 +1571,74 @@ function renderGroupTabs(groupNames) {
     btn.addEventListener("click", () => {
       if (currentSelection.group === name) return;
       currentSelection.group = name;
+      // A route selected in the old group may not exist (or may mean
+      // something different) in the new one - back out to "all routes".
+      currentSelection.route = null;
       saveSelection(currentSelection);
       setShareLink(buildShareLink(currentSelection));
       if (lastRoundData) renderBoard(lastRoundData);
     });
     el.groupTabs.appendChild(btn);
+  }
+}
+
+// Returns just the routes selected via the route tabs, or all of `routes`
+// if nothing (valid) is selected - shared by renderBoard() and
+// renderTrainingBoard() (6.22). `routeNames` scopes the check to the
+// round/group currently being rendered, so a selection left over from a
+// different round/group (different route names) safely falls back to "all"
+// instead of silently filtering everything out.
+function filterRoutesBySelection(routes, routeNames) {
+  const selected = (currentSelection.route ?? []).filter((name) => routeNames.includes(name));
+  return selected.length ? routes.filter((r) => selected.includes(r.name)) : routes;
+}
+
+// Dedicates this tablet to one or several routes/boulders instead of the
+// full lanes grid (6.22) - e.g. one tablet per boulder, or one tablet
+// covering two boulders when there aren't enough tablets for one each.
+// `currentSelection.route` is `null` ("all") or an array of route names,
+// each toggled independently by tapping its tab - tapping "All routes"
+// clears the selection outright. `routeNames` is whatever the currently
+// visible group/round actually has, so switching group or round can't
+// leave a stale selection on screen; `onSelect` re-renders whichever board
+// is currently active (watch vs. training use different render
+// functions/state); `prefix` is "Route"/"Lane"/"Boulder" (laneLabelPrefixFor())
+// so the tabs read the same as the lane headings they filter.
+function renderRouteTabs(routeNames, prefix, onSelect) {
+  el.routeTabs.innerHTML = "";
+  if (routeNames.length < 2) {
+    el.routeTabs.hidden = true;
+    return;
+  }
+  el.routeTabs.hidden = false;
+  const selected = (currentSelection.route ?? []).filter((name) => routeNames.includes(name));
+
+  const allBtn = document.createElement("button");
+  allBtn.type = "button";
+  allBtn.className = `group-tab${selected.length ? "" : " active"}`;
+  allBtn.textContent = `All ${prefix.toLowerCase()}s`;
+  allBtn.addEventListener("click", () => {
+    if (!selected.length) return;
+    currentSelection.route = null;
+    saveSelection(currentSelection);
+    setShareLink(buildShareLink(currentSelection));
+    onSelect();
+  });
+  el.routeTabs.appendChild(allBtn);
+
+  for (const name of routeNames) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `group-tab${selected.includes(name) ? " active" : ""}`;
+    btn.textContent = `${prefix} ${name}`;
+    btn.addEventListener("click", () => {
+      const next = selected.includes(name) ? selected.filter((n) => n !== name) : [...selected, name];
+      currentSelection.route = next.length ? next : null;
+      saveSelection(currentSelection);
+      setShareLink(buildShareLink(currentSelection));
+      onSelect();
+    });
+    el.routeTabs.appendChild(btn);
   }
 }
 
@@ -1578,6 +1679,7 @@ function renderBoard(round) {
   el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
   el.lanes.innerHTML = "";
   el.groupTabs.hidden = true; // only the multi-group branch below re-shows it
+  el.routeTabs.hidden = true; // only the per-group branch below re-shows it
   el.boulderModeRow.hidden = true; // only the Boulder-final branch below re-shows it
 
   if (round.speed_elimination_stages?.length) {
@@ -1585,7 +1687,7 @@ function renderBoard(round) {
     return;
   }
 
-  const laneLabelPrefix = round.discipline === "Speed" ? "Lane" : "Route";
+  const laneLabelPrefix = laneLabelPrefixFor(round);
   const routeGroups = collectRouteGroups(round);
 
   if (!routeGroups.length) {
@@ -1616,9 +1718,15 @@ function renderBoard(round) {
   for (const group of routeGroups) {
     if (groupNames.length >= 2 && group.groupName !== currentSelection.group) continue;
 
+    const routeNames = group.routes.map((r) => r.name);
+    renderRouteTabs(routeNames, laneLabelPrefix, () => {
+      if (lastRoundData) renderBoard(lastRoundData);
+    });
+    const routesToShow = filterRoutesBySelection(group.routes, routeNames);
+
     const grid = document.createElement("div");
-    grid.className = "lanes-grid";
-    for (const route of group.routes) {
+    grid.className = routesToShow.length === 1 ? "lanes-grid lanes-grid--single" : "lanes-grid";
+    for (const route of routesToShow) {
       grid.appendChild(buildLane(round, route, laneLabelPrefix, boulderFinalMode));
     }
     el.lanes.appendChild(grid);
@@ -1634,6 +1742,7 @@ function renderPairedBoard(round, stageResult) {
   el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
   el.lanes.innerHTML = "";
   el.groupTabs.hidden = true;
+  el.routeTabs.hidden = true;
 
   if (!stageResult.heats.length) {
     const empty = document.createElement("div");
@@ -1734,6 +1843,7 @@ function renderTrainingBoard(round, index) {
 
   const routes = collectRouteGroups(round).flatMap((g) => g.routes);
   if (!routes.length) {
+    el.routeTabs.hidden = true;
     const empty = document.createElement("div");
     empty.className = "lane-finished";
     empty.textContent = "No route data for this round.";
@@ -1741,10 +1851,14 @@ function renderTrainingBoard(round, index) {
     return;
   }
 
-  const laneLabelPrefix = round.discipline === "Speed" ? "Lane" : "Route";
+  const routeNames = routes.map((r) => r.name);
+  const laneLabelPrefix = laneLabelPrefixFor(round);
+  renderRouteTabs(routeNames, laneLabelPrefix, () => renderTrainingBoard(trainingRoundData, trainingIndex));
+  const routesToShow = filterRoutesBySelection(routes, routeNames);
+
   const grid = document.createElement("div");
-  grid.className = "lanes-grid";
-  for (const route of routes) {
+  grid.className = routesToShow.length === 1 ? "lanes-grid lanes-grid--single" : "lanes-grid";
+  for (const route of routesToShow) {
     grid.appendChild(buildTrainingLane(route, orderedAthletesForRoute(round, route), index, laneLabelPrefix));
   }
   el.lanes.appendChild(grid);
@@ -1759,7 +1873,7 @@ function renderController(round, index) {
   el.controllerLanes.innerHTML = "";
 
   const routes = collectRouteGroups(round).flatMap((g) => g.routes);
-  const laneLabelPrefix = round.discipline === "Speed" ? "Lane" : "Route";
+  const laneLabelPrefix = laneLabelPrefixFor(round);
   for (const route of routes) {
     const ordered = orderedAthletesForRoute(round, route);
     const atWall = ordered[index] ?? null;

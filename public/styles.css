@@ -444,6 +444,15 @@ button.ghost {
   .lanes-grid { grid-template-columns: 1fr; }
 }
 
+/* One route/boulder selected via the route tabs (6.22) - a tablet parked
+   next to a single wall gets a bigger, more legible display instead of the
+   same card size used in the multi-lane grid. */
+.lanes-grid--single .lane { padding: 2rem; }
+.lanes-grid--single .lane-heading { font-size: 1.3rem; }
+.lanes-grid--single .card--at-wall .card-athlete { font-size: clamp(2.4rem, 8vw, 5rem); }
+.lanes-grid--single .card--on-deck .card-athlete { font-size: clamp(1.8rem, 5vw, 3rem); }
+.lanes-grid--single .queue-list { font-size: 1.3rem; }
+
 .controller {
   max-width: 480px;
   margin: 0 auto;

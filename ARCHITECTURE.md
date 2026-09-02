@@ -827,7 +827,14 @@ the athlete currently climbing is still described as being "at the wall" in
 the card label, which is a different, correct use of the word (a
 description of the athlete's location, not a lane identifier). Speed lanes
 use the term "Lane" (was "Bahn" before the English-only pass, 6.8), the
-climbing-specific term for side-by-side speed lanes.
+climbing-specific term for side-by-side speed lanes. Boulder later got its
+own term, "Boulder 1" / "Boulder 2" instead of "Route 1" / "Route 2" - added
+once the route tabs (6.22) made the label show up twice on screen at once
+(lane heading + its own tab), where "Route" reads noticeably less natural
+for Boulder than it does for Lead. All three share one function,
+`laneLabelPrefixFor(round)`, used by every place that builds a lane/route
+heading or tab label so the three terms can't drift out of sync with each
+other.
 
 ### 6.6 Boulder starting-group tabs, default to one group at a time
 
@@ -937,6 +944,16 @@ off a public-facing screen). Tied to `fullscreenchange` rather than the
 button's own click handler so it also reacts correctly if fullscreen is
 exited some other way (Esc key, swipe-down on iPadOS), not just via the
 kiosk button.
+
+**Also hides the "switch round" button (`el.backBtn`) while in fullscreen,**
+the same way and for the same clutter reasons as the share-link row above -
+rarely tapped mid-event, and already reachable by exiting fullscreen first.
+Deliberately **not** extended to the group tabs, route tabs (6.22), or the
+Boulder-format toggle - unlike "switch round" (leaving the current
+round/sequence entirely), those are operational controls someone may
+legitimately want to use *while* the tablet keeps running in kiosk mode
+(e.g. narrowing to one boulder, or correcting the Intervall/World Series
+choice, without dropping fullscreen to do it).
 
 **Known constraint:** the Screen Wake Lock API requires iPadOS/Safari 16.4+;
 older iPads will get fullscreen but not the always-on behavior. Not
@@ -1748,6 +1765,91 @@ anything *more* useful while a tablet is actually running unattended at a
 venue, which is exactly when someone might need to remotely confirm what
 it's showing. Verified live that it stays visible through a simulated
 fullscreen enter/exit cycle, unlike `#shareRow`/`#controlShareRow`.
+
+### 6.22 Route tabs: dedicating one tablet to one or more routes/boulders
+
+**Decision:** a second small tab row, `#routeTabs` (right below `#groupTabs`,
+same `.group-tabs`/`.group-tab` styling, same on/off pattern), lets a tablet
+be pinned to one or several routes/boulders within whatever group is
+currently showing, instead of always rendering the full lanes grid. Reuses
+the exact mechanism `group` already established (6.6): a
+`currentSelection.route` field, a `route` URL query param
+(`readUrlSelection()`/`buildShareLink()`), persisted the same way as the
+rest of `currentSelection` (6.4) and folded into the share link/QR code
+(6.18) automatically - pick route(s) once, copy the link, bookmark it on
+that tablet.
+
+**Why:** requested for events with enough tablets to give each route/boulder
+its own dedicated wall display instead of one shared "everything" board -
+the deep-link workflow already existed for *rounds* (6.4), this extends the
+same idea one level deeper, to individual routes within a round. Multiple
+routes per tablet (not just exactly one) followed immediately after, for
+the in-between case: enough extra tablets to split a round's routes across
+a few displays, but not one tablet per route.
+
+**`currentSelection.route` is `null` ("all") or an array of route names,**
+each toggled independently by tapping its tab - tapping "All
+routes"/"All boulders"/"All lanes" clears the array outright rather than
+being just another toggle target. The URL encodes it as a comma-separated
+list (`route=1,3`); a single route is just an array of length one, the same
+convention `sequence` already uses for a lone round. Old single-route share
+links (`route=2`, from before multi-select existed) still parse correctly -
+`split(",")` on a value with no comma just returns a one-element array.
+
+**Computed fresh per render, not cached:** `renderBoard()` derives
+`routeNames` from whichever `group.routes` is actually about to be shown
+(post the existing group filter), calls `renderRouteTabs(routeNames, prefix,
+...)`, then calls `filterRoutesBySelection(group.routes, routeNames)` to
+narrow it down to the selected route(s) - intersecting `currentSelection.route`
+against `routeNames` and falling back to "all routes" if nothing in the
+selection actually matches. This means a stale selection (e.g. routes from a
+round that has fewer routes, or a name that only existed in a different
+Boulder group) can never leave the board silently empty; it just shows
+everything, same as if nothing were selected. A *partially* stale selection
+(one valid name, one that no longer matches) silently drops just the invalid
+part rather than falling back entirely - intentional, since the valid part
+is still exactly what the tablet should show. `renderTrainingBoard()` (6.13)
+does the same, reading from `collectRouteGroups(round).flatMap(...)`
+directly since training has no group concept. Switching groups (the
+`#groupTabs` click handler, 6.6) resets `currentSelection.route` to null - a
+route name selected under the old group may not mean the same thing (or
+exist at all) under the new one.
+
+**Tab labels use the same discipline prefix as the lane headings**
+(`laneLabelPrefixFor(round)` - "Route"/"Lane"/"Boulder", see 6.5) instead of
+the bare route name - so a Boulder round's tabs read "Boulder 1"/"Boulder 2"
+rather than just "1"/"2", matching what's printed above each lane. The "all"
+tab reads `All ${prefix.toLowerCase()}s` ("All boulders"/"All routes"/"All
+lanes").
+
+**Bigger single-lane display (`.lanes-grid--single`):** when exactly one
+route ends up selected (via multi-select or plain single-select, doesn't
+matter which), the grid gets a modifier class that scales up the lane
+padding, heading, card, and queue-list font sizes well past what the normal
+multi-lane grid uses (the existing `clamp(...vw...)` sizes are tuned for
+several lanes sharing the screen, not one lane owning it alone) - the point
+of dedicating a whole tablet to one route is legibility from further away,
+so the extra screen space should actually get used rather than just leaving
+the lane the same size with empty space around it. Selecting two or more
+routes keeps the normal grid sizing.
+
+**Deliberately generic, not hidden for Speed qualification:** Speed
+qualification rounds go through the same `collectRouteGroups()` → per-route
+`buildLane()` path as Lead/Boulder, so a 2-lane Speed quali round gets route
+tabs too, for free - a per-lane tablet is just as plausible there. Speed
+*elimination* rounds (`renderSpeedElimination()`/`renderSpeedStage()`, 5.5)
+are a genuinely different, heats-based rendering path with no per-route
+`buildLane()` call at all, so they're untouched and never show route tabs -
+not a deliberate exclusion of Speed as a discipline, just a consequence of
+elimination rounds not going through this code path.
+
+**Cross-category combining (e.g. "Boulder 2 Männlich" and "Boulder 2
+Weiblich" side by side on one tablet) is explicitly out of scope for this
+mechanism** - `currentSelection.route` only ever filters routes *within* the
+one round this tablet is already watching. Combining routes from two
+different rounds/categories at once would need a genuinely new display mode
+(parallel polling of multiple round IDs, not just filtering one already-
+fetched round) - proposed separately, not yet built as of this section.
 
 ## 7. Explicitly out of scope (do not "fix" without asking)
 

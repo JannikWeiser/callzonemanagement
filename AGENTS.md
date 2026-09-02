@@ -416,6 +416,13 @@ previously-reported problems:
   deliberate exit (which also releases the lock) doesn't cause an
   unwanted re-acquire loop. See
   [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
+- The `fullscreenchange` handler also hides `el.backBtn` ("switch round")
+  unconditionally, same pattern as `el.shareRow` (6.7). **Do NOT extend this
+  to `el.groupTabs`/`el.routeTabs`/`el.boulderModeRow`** - those are
+  deliberately left visible in fullscreen (unlike "switch round", someone
+  may legitimately need to adjust them mid-event without leaving kiosk
+  mode). See
+  [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
 - The `fullscreenchange` handler's `el.controlShareRow` toggle (6.7/6.11) -
   **do NOT make this unconditional like `el.shareRow`'s toggle right above
   it.** `el.shareRow` is relevant in every mode this app has, so
@@ -439,6 +446,28 @@ previously-reported problems:
   informational/troubleshooting text with no access-control concern, and
   deliberately stays visible in kiosk mode. See
   [ARCHITECTURE.md §6.21](ARCHITECTURE.md#621-host-label-next-to-the-status-line).
+- `#routeTabs`/`renderRouteTabs()`/`filterRoutesBySelection()`/
+  `currentSelection.route` (6.22) - route tabs dedicate a tablet to one or
+  several routes/boulders within whatever group is currently showing,
+  reusing the exact `group` mechanism (6.6/6.4) one level deeper.
+  `currentSelection.route` is `null` ("all") or an **array** of route names
+  (not a single string) - the URL param is a comma-separated list
+  (`route=1,3`). Always derive `routeNames` from the round/group actually
+  about to render and filter through `filterRoutesBySelection()`, which
+  intersects the selection against `routeNames` and falls back to "all
+  routes" only if NONE of the selection matches - never let a fully stale
+  selection (different round, different Boulder group) leave the board
+  silently empty. Switching groups must reset `currentSelection.route` to
+  null. Tab labels are prefixed with `laneLabelPrefixFor(round)` ("Route
+  1"/"Lane A"/"Boulder 2", not the bare route name) - keep that in sync if
+  a discipline's prefix ever changes. `.lanes-grid--single`'s bigger font
+  sizes only apply when exactly one route ends up selected - don't reuse
+  those selectors for the normal multi-lane grid. Combining routes from
+  *different* rounds/categories on one tablet (e.g. Boulder 2 Männlich +
+  Weiblich side by side) is a distinct, larger feature (parallel polling of
+  multiple rounds) - do not attempt to bolt that onto `currentSelection.route`,
+  which only ever filters within the one round already being watched. See
+  [ARCHITECTURE.md §6.22](ARCHITECTURE.md#622-route-tabs-dedicating-one-tablet-to-one-or-more-routesboulders).
 
 If a change requires touching one of these, update the corresponding
 ARCHITECTURE.md section in the same change — don't let the doc drift from
