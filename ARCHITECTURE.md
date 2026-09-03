@@ -1024,15 +1024,45 @@ Qualification Men, then Qualification Women, then Final Men, then Final
 Women, in order, over the course of an event — without someone manually
 clicking "switch round" every time one class wraps up.
 
-**Decision:** the setup screen's "Sequence" mode (6.11) offers "+ Add to
-sequence" next to the round dropdown, appending the currently-selected round
-to a reorderable list (native HTML5 drag-and-drop, no library); "Show
-sequence" starts watching the whole ordered list. Internally,
-`currentSelection.sequence` is *always* an array — a single "Show" click
-(Single round mode) is just an array of length 1 — so there's one code path
-for both, not two parallel ones. Each entry is `{ type: "round", id }` or
-`{ type: "paired", a, b }` (6.12); this section covers the `"round"` case,
-which behaves exactly as originally built.
+**Decision:** the setup screen's "Sequence" mode (6.11) builds up a
+reorderable list (native HTML5 drag-and-drop, no library) via "+ Add
+round"/"+ Add paired entry" (6.12); "Show sequence" starts watching the
+whole ordered list. Internally, `currentSelection.sequence` is *always* an
+array — a single "Show" click (Single round mode) is just an array of
+length 1 — so there's one code path for both, not two parallel ones. Each
+entry is `{ type: "round", id }` or `{ type: "paired", a, b }` (6.12); this
+section covers the `"round"` case, which behaves exactly as originally
+built regardless of how it got added.
+
+**Every entry in the list is its own live `<select>`, not a static label
+added via a separate shared dropdown+button** - redesigned to match
+Multimode's per-column sequence builder (6.23) after the original
+shared-dropdown version turned out to have the exact same usability bug
+Multimode's first version had: "+ Add" appended whatever the one shared
+dropdown currently showed, so clicking it without first changing the
+dropdown just duplicated the entry already there. `renderSequenceBuilder()`
+now renders one `<li>` per `sequenceBuilder` entry with its own `<select>`
+(a plain round) or two side-by-side `<select>`s (a paired entry, 6.12,
+separated by a small "↔"), each live-updating that entry via its own
+`change` handler - no confirm click for any entry, matching the philosophy
+Multimode's per-column rows use. Every row's own options exclude whichever
+round every *other* row/side in the list is already using (`usedInSequenceBuilder()`,
+shared by the row-rendering and the "+ Add round"/"+ Add paired entry"
+handlers' auto-seed defaults) - a round repeating later in the same
+sequence would never be reached anyway (the catch-up loop above only ever
+moves forward), so re-offering it is never useful. Drag-reorder is kept
+(unlike Multimode's per-column rows, which don't support it) - order
+genuinely matters here and always has, whereas a Multimode column's steps
+were always meant to be added in play order to begin with.
+
+**The shared "Category / round" picker (`#roundSelect`/`#categoryRow`) is
+no longer used by Sequence mode at all** - like Multimode, it now picks its
+rounds entirely within its own section. "+ Add round"/"+ Add paired entry"
+disable themselves once nothing valid remains to add (every round already
+used, or fewer than two unused Speed elimination rounds for pairing) rather
+than silently doing nothing - the same lesson Multimode's very first "Show
+Multimode" bug taught. "Show sequence" with an empty list now shows an
+explicit error instead of doing nothing, for the same reason.
 
 **Auto-advance mechanism (`pollCurrent()`):** each poll checks
 `isRoundFullyFinished()` on the round currently being shown (every
@@ -1076,12 +1106,17 @@ workable, but genuinely confusing which checkbox went with which dropdown,
 especially under the time pressure of running a callzone.
 
 **Decision:** a `#modeTabs` row (`setMode()` in `public/app.js`) replaces
-the checkboxes with three mutually-exclusive, explicit modes: **Single
-round**, **Sequence**, **Training**. Each mode shows only the controls that
-apply to it (`el.watchRound` / `el.addToSequence` / `el.startTraining`,
-`#pairedRow` only in Sequence mode with 2+ elimination rounds available,
-`#sequenceRow` only in Sequence mode). Nothing is inferred from a
-checkbox's state; the visible controls *are* the current mode.
+the checkboxes with mutually-exclusive, explicit modes: **Single round**,
+**Sequence**, **Training**, and later **Multimode** (6.23). Each mode
+shows only the controls that apply to it (`el.watchRound` for Single
+round, `el.startTraining` for Training, `#sequenceRow` - including its own
+"+ Add round"/"+ Add paired entry", the latter only with 2+ elimination
+rounds available - for Sequence, `#multiSetup` for Multimode). Nothing is
+inferred from a checkbox's state; the visible controls *are* the current
+mode. The shared "Category / round" picker (`#categoryRow`/`#roundSelect`)
+is hidden entirely for Sequence and Multimode, which each pick their own
+round(s) within their own section - only Single round and Training still
+use it.
 
 ### 6.12 Paired sequence entries (interleaving Speed finals between categories)
 
@@ -1094,18 +1129,24 @@ their Round-of-16/Quarterfinals/... interleaved the same way.
 
 **Decision — a first-class entry type, not a checkbox:** a sequence entry
 can be `{ type: "paired", a, b }` — two elimination-format round IDs —
-instead of `{ type: "round", id }`. Built via the "Interleave two Speed
-finals" row (`#pairedRow`, only shown in Sequence mode when the loaded
-event has 2+ elimination rounds, i.e. `round.format_identifier ===
-"speed_elimination_ifsc_2026"`), picking round A and round B and clicking
-"+ Add paired entry". It appears as **one row** in the sequence list
-("A ↔ B"), draggable/removable exactly like a plain entry — not ten
-near-identical rows. This replaced an earlier per-entry "next stage only"
-checkbox design (requiring the *same* round to be added many times, once
-per stage-switch) that live-tested as "sehr aufwendig" (very tedious), and
-a second design (a dedicated two-dropdown "Match finals" shortcut bolted
-onto the round dropdown) that turned out confusing for the same reason as
-6.11.
+instead of `{ type: "round", id }`. Added via "+ Add paired entry" (only
+shown in Sequence mode when the loaded event has 2+ elimination rounds,
+i.e. `round.format_identifier === "speed_elimination_ifsc_2026"`), which
+auto-seeds the first two not-already-used elimination rounds - the actual
+choice happens afterward, live, in the row's own two `<select>`s (6.10),
+same pattern every other entry type in this app now uses. It appears as
+**one row** in the sequence list, its two sides separated by "↔",
+draggable/removable exactly like a plain entry — not ten near-identical
+rows. This replaced an earlier per-entry "next stage only" checkbox design
+(requiring the *same* round to be added many times, once per
+stage-switch) that live-tested as "sehr aufwendig" (very tedious); a
+second design (a dedicated two-dropdown "Match finals" shortcut bolted
+onto the round dropdown, picked *before* adding rather than edited *after*)
+turned out confusing for the same reason as 6.11; a later, related bug in
+that second design (the "+ Add" button always appending whatever the
+dropdown(s) happened to show, letting a duplicate slip in if you forgot to
+change them first) is what prompted moving to the current live-per-row
+design in the first place.
 
 **Playback — a shared stage cursor, not two independently-reported sides
 (`pollPairedTick()`):** an earlier version let each side report "my current
@@ -1257,6 +1298,26 @@ honored, even as a "Waiting for the next stage…" placeholder, while normal
 ticks afterward resume auto-switching away from a genuinely empty side as
 usual.
 
+**`#pairedEntryHint` — a permanent visible label, not a tooltip (discoverability
+regression, fixed after a live report):** the Sequence-mode setup redesign (6.10)
+replaced the old `#pairedRow` block — which had carried its own explanatory
+sentence ("Interleave two Speed finals...") right alongside its controls — with
+a bare "+ Add paired entry" button next to "+ Add round", no explanation left
+in the UI at all. Reported live as the feature being "missing"
+(`"Ich finde den Button... nicht"`) even though nothing about the underlying
+mechanism above had actually broken — confirmed by testing the paired board's
+lockstep/switch-button behavior end to end, unaffected. The fix is a small
+`<span id="pairedEntryHint">` ("or interleave two Speed finals:") placed between
+the two buttons, sharing `el.addPairedToSequence`'s exact visibility condition
+(`mode !== "sequence" || eliminationCount < 2`) in `setMode()`, so the two
+always show or hide together. Deliberately a permanent visible label rather
+than a `title` tooltip: this app runs on wall-mounted tablets (6.7), where
+hover is not a discoverable interaction. **Lesson for future setup-screen
+redesigns:** when replacing a control that carried its own inline explanation,
+carry the explanation forward too, not just the control's function — the
+button's *purpose* is as much a feature as its click handler, and dropping it
+silently reads as the feature itself being gone.
+
 ### 6.13 Training mode: manual advance, same roster/order as qualification, controllable from a second device
 
 **Problem this solves:** Speed training sessions have no live results.info
@@ -1271,6 +1332,21 @@ live inference in `computeLane()`) and renders lanes with
 `renderLaneBody()` (also shared) driven by a manual `index` instead of
 `findCurrentIndex()`. Not composable with Sequence mode — there's no live
 "done" signal to auto-advance on, only a position someone moves by hand.
+
+**The setup screen's "Category / round" picker (`#roundSelect`) only ever
+lists Speed rounds while Training mode is selected** - `populateRoundSelect()`
+rebuilds its options from `loadedEntries` (the currently-loaded event's
+rounds, kept around specifically so this can happen on every mode switch,
+not just once when the event loads), filtered to `isSpeed` in Training
+mode and unfiltered everywhere else. Same "prevent by not offering, not by
+validating after" approach Multimode's discipline filtering uses (6.23) -
+before this, a Lead/Boulder round could be selected and only got turned
+away reactively (`updateTrainingEligibility()` disabling "Start training"
+and showing a hint), which stays as the fallback for the rare case an
+event has zero Speed rounds at all (the list is then simply empty, and the
+hint explains why). The previous selection is preserved across a mode
+switch when it's still in the new list, so toggling between Training and
+another mode doesn't reset an otherwise-still-valid pick.
 
 **Why the position lives on the server, not just `localStorage`:**
 live-tested feedback was that manual advance itself worked well, but only
@@ -1847,9 +1923,461 @@ elimination rounds not going through this code path.
 Weiblich" side by side on one tablet) is explicitly out of scope for this
 mechanism** - `currentSelection.route` only ever filters routes *within* the
 one round this tablet is already watching. Combining routes from two
-different rounds/categories at once would need a genuinely new display mode
+different rounds/categories at once needs a genuinely new display mode
 (parallel polling of multiple round IDs, not just filtering one already-
-fetched round) - proposed separately, not yet built as of this section.
+fetched round) - see 6.23, "Multimode".
+
+### 6.23 Multimode: up to 5 categories side by side, each with its own independent sequence
+
+**Decision:** a fourth setup-screen mode (`data-mode="multi"`, alongside
+Single round / Sequence / Training) lets one tablet show up to 5 categories
+side by side, each in its own `.multi-block` with its own heading, group
+tabs, Boulder-format toggle, and route tabs (6.22) - fully independent of
+the other columns. Crucially, **each column can itself be a sequence of
+several rounds** ("Quali → Finale"), auto-advancing on its own schedule
+whenever *that column's* currently-shown round finishes, regardless of what
+the other columns are doing. Restricted to **Lead and Boulder only** - Speed
+is entirely out of scope, because Speed elimination rounds render via a
+completely different, heats-based code path that Multimode's per-column
+lane rendering doesn't attempt to support. Lead and Boulder columns can be
+freely mixed with each other, though (6.24) - a column's own sequence has
+to stay one discipline, but different columns don't have to match.
+
+**Why:** requested as the natural next step after per-round route filtering
+(6.22) - once a tablet can be dedicated to one route within one category,
+the next ask was dedicating a tablet to *several* categories at once (e.g.
+"Boulder 2 Männlich" next to "Boulder 2 Weiblich"). The independent-sequence
+requirement came from wanting each column to progress through its own
+Quali→Finale arc on its own timeline, not just show one fixed round per
+category forever.
+
+**Data model:** `currentSelection = { kind: "multi", host, eventId, entries
+}`, where each entry is `{ sequence, sequenceIndex, group, route }` - the
+same shape a normal watch selection's sequence/group/route already have,
+just one full instance per column instead of one shared instance for the
+whole tablet. `sequence` only ever holds `{ type: "round", id }` tokens
+(never `"paired"` - that's a Speed-only concept, 6.12, and Speed is out of
+scope here).
+
+**Reuses the existing per-round Sequence-mode auto-advance loop, once per
+column.** `pollCurrent()`'s catch-up loop (6.10) - fetch the current
+sequence entry, check `isRoundFullyFinished()`, advance `sequenceIndex` and
+immediately fetch the next entry if there is one - is copied almost exactly
+into `pollOneMultiColumn(entry, token)`, just scoped to one column's own
+`entry.sequenceIndex` instead of the single global `sequenceIndex`.
+`pollMulti()` runs one `pollOneMultiColumn()` per column **in parallel**
+(`Promise.all`) and only renders once every column has resolved, so columns
+with different response times don't visibly pop in one at a time on every
+3s tick. Verified live (mocked `isRoundFullyFinished()` to report only one
+specific column's round as finished): that column's `sequenceIndex`
+advanced and its block switched to showing its next round, while the other
+column's `sequenceIndex`/displayed round were completely unaffected - proof
+the two columns' progress is genuinely independent, not just visually
+separated.
+
+**Group-tab/route-tab/Boulder-toggle functions had to become containerized**
+(a real refactor, not additive-only): `renderGroupTabs()`, `renderRouteTabs()`,
+`renderBoulderModeToggle()`, and `filterRoutesBySelection()` used to write
+straight into the singleton `el.groupTabs`/`el.routeTabs`/`el.boulderModeRow`
+and read/write `currentSelection.group`/`.route` directly - fine when there's
+only ever one round on screen, broken once Multimode needs up to 5
+independent copies of the same controls. All four now take an explicit
+`container` (and, for the tab functions, a `sel` object to read/write
+`.group`/`.route` on) - `renderBoard()`/`renderTrainingBoard()` pass
+`el.groupTabs`/`el.routeTabs`/`el.boulderModeRow` and `currentSelection`
+explicitly (previously implicit), `renderMultiBoard()` passes a freshly
+created `<div>` per column and `entries[i]` instead. Behavior for the three
+pre-existing modes is unchanged - purely a signature change, verified by
+re-running the Single round / Sequence / Training flows after the refactor.
+
+**Setup-screen: pick a column count first, then one dedicated config card
+per column, all visible and editable at once** (redesigned three times now
+- see below for each). `#multiCountTabs` (2/3/4/5, same `.mode-tab` pill
+style as the discipline mode tabs) sets `multiColumnCount`;
+`renderMultiColumnsConfig()` rebuilds `#multiColumnsConfig` from
+`multiColumnDrafts` (one `{ items }` per column - see the field-level
+comment above the `let multiColumnDrafts` declaration for the full state
+machine) - one `.multi-column-config` card per column, each with its own
+"+ Add Sequence" button and its own small round list (remove-only, no
+drag-reorder - a column's rounds are added in the order they should play).
+
+**A fresh column always starts empty - "+ Add Sequence" is the only way to
+add a round, including the first one.** This is the third iteration of
+this specific point, reversing the second one: the very first version
+required a click just to *confirm* a column's first round (unwanted
+friction for "one round per column, no sequence"); the second version
+fixed that by auto-picking the first available round with no click at all,
+as soon as a column existed - but that read as the setup screen silently
+deciding for the user, reported live after a screenshot showed every fresh
+column expected to render with nothing pre-filled, just its "+ Add
+Sequence" button. The auto-seed-from-nothing branch was removed entirely
+(not just hidden behind a flag) - a column with zero items is never
+touched by `renderMultiColumnsConfig()` until the user clicks "+ Add
+Sequence" for it. What the second version got right is kept: once a
+column *has* an item, editing it needs no separate confirm step for any
+row - each item in `draft.items` renders as its own `<li>` with its own
+live `<select>`, and changing any row's dropdown updates that row
+immediately via its own `change` handler. "+ Add Sequence" (never "+ Add
+round" - there's no separate first-pick-confirm step to word differently)
+only ever *appends a new row*, pre-filled with the first round not already
+used elsewhere in that same column - never a duplicate by default. (This
+"live dropdown per row, no shared add-target" shape is itself carried over
+from an even earlier fix: a version where only the first step had its own
+dropdown and "+ Add Sequence" blindly appended whatever the one shared
+dropdown currently showed - reported live as silently duplicating the step
+already there if you clicked without changing the dropdown first.) Every
+row's own `<select>` also excludes whichever round every *other* row in
+that column is already using (always including its own current value, so
+the value it's currently showing is never missing from its own option
+list) - a round can't be picked twice in one column's sequence, prevented
+by not offering it, the same "prevent by not offering, not by validating
+after" philosophy the discipline filtering below already uses. "+ Add
+Sequence" disables itself once every round for the locked discipline is
+already used in that column (rare, but a silent no-op there would read as
+a broken button - the same lesson the very first "Show Multimode" bug
+taught).
+
+**Invalid picks are prevented by not offering them, not by validating
+after the fact.** Each column's `<select>` only ever lists entries that are
+(a) not Speed and (b) match whichever discipline is already locked
+Multimode-wide - so there's no error message to show for the common cases
+anymore (no `fetchRoundJson()` round-trip needed either, which matters
+since this now has to react instantly to every dropdown change, not just a
+button click). `entries[]` (from `populateRounds()`) carries an `isBoulder`
+flag alongside `isSpeed`, both derived from `format_identifier`'s prefix -
+confirmed for both Speed and Boulder across every fixture in AGENTS.md's
+table. Lead is inferred by elimination ("not Speed, not Boulder", and this
+app has exactly three disciplines) rather than guessed from its own
+prefix, keeping AGENTS.md rule 2 (never guess unverified API field values)
+intact - Lead's own prefix pattern was never confirmed, only ruled out by
+what it isn't.
+
+**The discipline lock is per column, not Multimode-wide** (6.24 - reverses
+an earlier design; see below). `renderMultiColumnsConfig()`'s
+`availableFor(excludeIndex)` derives a column's lock fresh on every render,
+scoped to *that column's own* `draft.items` only: it looks at any item in
+the column other than the one at `excludeIndex` (`.find((_, i) => i !==
+excludeIndex)`) and, if one exists, filters entries down to that item's
+discipline; otherwise (no other item in this column yet) it returns every
+non-Speed entry, unfiltered. Called per row with that row's own
+`itemIndex` as the exclusion (so a row is filtered to match *the column's
+other* items, never itself) and once more with `-1` for "+ Add Sequence"
+(matches no real index, so it effectively reads "any existing item" -
+equivalent to the column's first item once one exists). The net effect: a
+column's very first pick - whichever row adds it, since a column with zero
+items imposes no lock - is free to be either Lead or Boulder; once it
+exists, every *other* row and every future "+ Add Sequence" in that same
+column locks to that discipline, keeping a "Quali -> Finale" chain from
+silently jumping disciplines mid-column, while a *different* column is
+completely unaffected and can independently commit to the other
+discipline. Two Boulder rows in the row-loop above still exclude each
+other's `roundId` (never their own discipline) via the pre-existing
+`usedElsewhere()` - discipline locking and roundId de-duplication are
+separate, independent filters applied together.
+
+**Each column shows its own "Next: …" line once it has a real sequence
+built** (`entry.sequenceIndex < entry.sequence.length - 1`), mirroring
+`updateNextInSequence()`'s single strip for normal Sequence mode (6.19) -
+same reused `getRoundLabel()`/`roundLabelCache` (a round's category/round
+name never changes within a session, so caching it is safe indefinitely),
+same "one-off lookup after the synchronous render, not part of the 3s poll
+payload" split, same `pollToken`-based staleness guard against a
+slow-resolving lookup landing after a newer tick already moved that column
+on. `updateMultiNextLabels(entries)` is the per-column version, patching
+each column's own `.next-in-sequence[data-column-index]` placeholder
+independently rather than one shared element.
+
+**A column doesn't need a round configured at all** - deliberately relaxed
+after the first version required every column to have at least one round
+before "Show Multimode" would do anything, which turned out to be too
+rigid: a tablet is often set up ahead of time with more columns reserved
+(matching a fixed number of physical stations) than there are
+currently-known categories to fill them with. `pollOneMultiColumn()`
+short-circuits on an empty `entry.sequence` (no fetch attempted - there's
+nothing to fetch) and returns `{ empty: true }`;
+`renderMultiBoard()` renders that column with just its "Column N" heading
+and the same "Round finished" placeholder (`.lane-finished`, same text) an
+actually-finished round already gets elsewhere - deliberately reusing that
+exact visual rather than inventing a separate "not configured" state, so
+an empty column reads as "nothing more to show here right now," not as
+broken. "Show Multimode" only blocks (`showError()`) if literally *every*
+column is empty, which would just be an empty board. The `multi` URL
+param's empty-sequence entries (`roundId1+roundId2` field left blank) are
+no longer filtered out during parsing either - an empty column is a
+legitimate, sharable configuration, not noise to discard.
+
+**Columns are laid out side by side in a responsive grid, not stacked.**
+`renderMultiBoard()` wraps every `.multi-block` in a `.multi-columns`
+container (`display: grid; grid-template-columns: repeat(auto-fit,
+minmax(320px, 1fr))`) - the same `auto-fit`/`minmax` pattern
+`.lanes-grid` already uses for lane cards within one round (5.6/6.6), one
+level up. On a wide enough display every column sits in one row (the
+actual point of Multimode: see every category at once); on a narrower one
+columns wrap onto further rows rather than shrinking below 320px, and
+below 640px it collapses to one column per row entirely (same breakpoint
+`.lanes-grid` uses). Each `.multi-block` is its own bordered card (not
+filled the same color as the `.lane` cards it contains, so those still
+read as distinct against it) - replaced the single-column version's
+plain stacked-with-a-divider look, which only had to separate blocks in
+one dimension. `.multi-columns` deliberately does **not** set
+`align-items: start` (a real bug, fixed after a live report with a
+screenshot circling it) - columns in the same row essentially never have
+identical content length (one with a "Next: …" line, one without; a
+Boulder round with 4 boulders next to one with 3), and `start` sized each
+`.multi-block` to only its own content, so the bottom borders across one
+row landed at different heights - the shared gutter between two
+unevenly-tall columns was only bordered on one side below the shorter
+one's edge, reading as an inconsistent margin. Left at the grid default
+(`stretch`), every card in a row shares the tallest one's height instead,
+with the extra space just trailing empty inside the shorter ones - the
+normal look for any card grid with variable content.
+
+**Card text inside `.multi-block` is deliberately smaller than everywhere
+else in the app**, on fixed `rem` sizes rather than the normal cards'
+`clamp(...vw...)` - a column can be as narrow as the 320px grid floor
+above, and vw units scale off the *whole viewport*, which has no relation
+to how wide one column actually ends up once several sit side by side (a
+vw-based size would render huge on a wide screen carrying 5 narrow
+columns). Sized so at least ~25 characters fit on one line even at that
+320px floor (verified via canvas `measureText()` against the actual
+rendered card width, not eyeballed) - the request behind this was
+explicitly that the smaller size stay scoped to Multimode only, so every
+selector is qualified `.multi-block .lane ...`, one level more specific
+than the equivalent `.lanes-grid--single` "single route" bonus-size rule
+(6.22) so it always wins regardless of source order - a Multimode column
+filtered down to one route doesn't blow back up to that bonus's much
+larger size, which was tuned for a lane owning the *entire* screen, not a
+narrow column among several.
+
+**A column's own inner `.lanes-grid` could overflow past the column's own
+border (a real bug, reported live with a screenshot: "einzelne Anzeigen
+von Routen/Bouldern über die Card gesamt raus").** `.lanes-grid` (5.6/6.6)
+reuses `grid-template-columns: repeat(auto-fit, minmax(320px, 1fr))`
+unchanged wherever it's used, including inside a `.multi-block` - but a
+Multimode column can itself be as narrow as `.multi-columns`'s own 320px
+floor, and after `.multi-block`'s own `1.25rem` padding plus its `1px`
+border on each side, only ~278px of content width is actually left for
+that inner grid, less than the 320px it demands even for a *single*
+track. With no `overflow: hidden` on `.multi-block`, the inner grid simply
+rendered wider than its container and visibly poked out past the border
+instead of wrapping or clipping - confirmed by measuring
+`scrollWidth > clientWidth` on the block (340px vs. 319px in the
+reproducing case) before the fix, and `scrollWidth === clientWidth`
+after. Fixed by giving `.multi-block .lanes-grid` its own, smaller floor
+(`minmax(260px, 1fr)` - comfortably under the ~278px worst case, still
+qualified specific enough to win over the base `.lanes-grid` rule) rather
+than touching the shared, unscoped `.lanes-grid` rule everywhere else in
+the app relies on. Multiple boulders/routes can still sit side by side
+within one column once it's wide enough for that - only the hard minimum
+per track changed, not the auto-fit behavior itself. Verified live at
+several widths (a 3-column selection narrow enough to force every column
+down to its own 320px floor, and the same selection at a much wider
+viewport) - no overflowing element found by scanning every descendant of
+every `.multi-block` for a bounding box wider than its block.
+
+**URL encoding (`multi` param):** comma-separated columns, each
+`roundId1+roundId2~group~route1+route2` - three `~`-separated fields (empty
+stays empty), `+` doubles as both "join a column's own round sequence" and
+"join several selected route names" within their respective fields, which
+is unambiguous only because `~` already splits the three fields apart
+first. `sequenceIndex` is never encoded/persisted, same reasoning as the
+top-level `sequenceIndex` (6.10/6.4) - it always restarts at 0 and the
+catch-up loop in `pollOneMultiColumn()` re-converges on the right round
+within one poll, verified live via a direct deep-link open mid-event.
+
+**A column's fetch failure doesn't blank the whole board:**
+`pollOneMultiColumn()` catches its own errors and returns `{ error }`
+instead of throwing; `renderMultiBoard()` renders a small inline error
+message in just that one `.multi-block` and leaves the other columns
+rendering normally - one broken/deleted round shouldn't take down a tablet
+showing several other, unrelated categories.
+
+**Two regressions found and fixed during review, both the same class of
+bug** (a shared/dynamically-created element left in whatever `hidden` state
+its last render happened to leave it in, instead of getting an explicit
+default every render): `renderTrainingBoard()` and `renderPairedBoard()`
+never reset `#boulderModeRow`, so a Boulder final round's Intervall/World
+Series toggle, once shown, stayed visible (and clickable) after switching
+to a Speed Training session or a paired Speed sequence - neither of which
+can ever be Boulder. And `renderMultiBoard()`'s per-column `groupTabsEl`
+had no explicit default `hidden` state, so a column whose round never
+triggers `renderGroupTabs()` (i.e. anything but a multi-group Boulder round
+- in particular every Lead round) was left with an empty, visible
+container taking up its CSS margin as a blank gap. Both fixed by giving
+the element an explicit default (`hidden = true`) at creation/reset time,
+matching the pattern `renderBoard()` already used for its own singleton
+elements - a reminder that every render function touching a shared or
+freshly-created toggle/tabs container needs its own unconditional default,
+not just the branch that shows it.
+
+**A third regression, from the first version of this setup screen: a
+visibility/guard mismatch.** `#watchMulti` lived inside `#multiRow`, shown
+as soon as one column was saved - but its click handler required at least
+2 and just `return`ed otherwise, with zero feedback. A user who saved
+exactly one column and clicked "Show Multimode" saw nothing happen at all,
+indistinguishable from a genuinely broken button (reported live as "the
+buttons don't work"). The count-picker redesign above eliminates this bug
+*by construction*, not just by patching it - `multiColumnCount` can never
+be below 2 (the picker's lowest option), so "Show Multimode" clicked with
+an incomplete configuration always has a specific, nameable column to
+point at, never a count-based dead end. Worth remembering the general
+lesson even so: a button's *visibility* condition and its *handler's own*
+guard condition must match, or the mismatch reads as a silently broken
+button, not a disabled/nudging one.
+
+**A fourth regression, found only by re-testing every rejection path after
+a fresh page reload rather than trusting the first pass: Multimode's Speed
+rejection never actually fired.** `populateRounds()`'s `entries[].roundId`
+was left as the raw number `round.category_round_id` from the results.info
+API, while every other roundId in this app - URL params, `<select>`
+values, sequence tokens - is a string (browsers stringify `<select>`
+values; `URLSearchParams` always returns strings). The Multimode
+discipline-lock lookup, `entries.find(e => e.roundId === roundId)`, used
+strict equality and so silently never matched anything. Since `meta` was
+therefore always `undefined`, the cheap `meta?.isSpeed` pre-check could
+never trip - worse, if a Speed round was the *first* one added to a
+Multimode column (`multiDiscipline` still `null`), the fetch-based
+discipline check's `if (multiDiscipline && ...)` guard was also false, so
+the round was accepted outright and `multiDiscipline` got locked to
+`"Speed"` - the exact rule Multimode is supposed to enforce, silently
+bypassed. Fixed at the source rather than patching the one comparison
+site: `entries[].roundId` is now `String(round.category_round_id)`,
+consistent with every other roundId in the codebase. The general lesson:
+when a lookup silently returns nothing and the code has a fallback path
+that happens to produce a plausible-looking result anyway (here: the
+discipline-fetch path still rejected Speed via `data.discipline`
+mismatch, just with the wrong error message, in every case *except* Speed
+added first), the bug hides behind that fallback until a fresh look at
+each independent path exposes it.
+
+**A fifth and sixth regression, both found by a structured multi-angle
+code review rather than a live report:** (5) `renderMultiBoard()` created
+`routeTabsEl` without the same default `hidden = true` its sibling
+`groupTabsEl` gets right above it - the exact "give every freshly-created
+element an explicit default `hidden` state" lesson the "Two regressions"
+paragraph above (about `groupTabsEl` itself, from an earlier review pass)
+already called out, missed for this second, near-identical element
+anyway. A round with no route data at all (`collectRouteGroups()`
+returns `[]` - no `routes`, no `starting_groups`) returns from
+`renderMultiBoard()` before `renderRouteTabs()` ever runs to hide it,
+leaving an empty `<div class="group-tabs">` (with its own
+`margin-bottom: 1.25rem`) visibly taking up space above the "No route
+data for this round." message. Fixed by giving `routeTabsEl` the same
+explicit default. (6) `pollMulti()` unconditionally reported the shared
+status line as "Updated ..." every tick, even when every column's fetch
+had just failed - `pollOneMultiColumn()` catches its own fetch errors and
+returns `{ error }` rather than throwing or returning `null`, so
+`pollMulti()`'s only bail-out check (`results.some(r => r === null)`)
+never caught it. Every other poll path in the app (`pollRound`,
+`pollCurrent`, the paired poll) sets "Connection lost: ..." plus the
+`stale` class on the same kind of failure - staff relying on the shared
+status line as the one thing to glance at for "is this tablet still
+updating" would see a healthy timestamp during a real results.info
+outage, with no way to tell short of individually checking every column's
+own small error text. Fixed: `pollMulti()` now checks whether every
+*configured* (non-empty) column's result carries `.error` and, if so,
+reports "Connection lost" the same way the other poll paths do -
+recovering back to "Updated ..." automatically the next time any tick
+succeeds, same as they do.
+
+### 6.24 Multimode: discipline lock is per-column, not shared across the whole selection
+
+**Decision, reversing part of 6.23's original design:** each Multimode
+column now locks its own discipline (Lead or Boulder) independently -
+different columns are free to be different disciplines from each other,
+e.g. one column showing a Boulder category next to another showing a Lead
+category. Only a single column's *own* sequence still has to stay one
+discipline throughout (its rounds are meant to be "the same category,
+later stage" - Quali -> Finale - not an arbitrary discipline switch
+mid-column).
+
+**Why:** the original 6.23 plan explicitly filed "no mixing disciplines
+between columns (only Lead or only Boulder, for the whole Multimode
+selection)" under "deliberately left out, revisit if needed" - a known,
+accepted limitation from day one, not an oversight. Reported live: a user
+loaded an event with both Lead and Boulder categories, built a Multimode
+selection, and only ever saw Boulder - because the *first* column's first
+pick locked every other column to that same discipline for the rest of the
+session, silently hiding Lead as an option everywhere else. Since
+Multimode's whole point is showing several categories side by side, and a
+callzone team often needs to watch one Lead category and one Boulder
+category on the same tablet, the cross-column restriction had no real
+justification once asked about directly - implemented the "if needed"
+revisit.
+
+**Mechanism:** see the `availableFor(excludeIndex)` description in
+6.23 above - the lock moved from a single `lockedDiscipline` variable
+shared across the whole `renderMultiColumnsConfig()` pass to a per-column
+computation that only ever looks at *that column's own* `draft.items`.
+This also **simplified** the function: the old shared lock needed two
+separate re-check passes per column (documented at length in 6.23's
+history) purely to handle a column-by-column accumulation order that no
+longer exists once each column is independent - that whole
+mid-pass-accumulation machinery is gone, along with the "re-seed an
+invalidated single pick" logic it existed to support (nothing *external*
+to a column can invalidate its own pick any more, since no other column's
+choice reaches it).
+
+**Verified live:** built a two-column selection - column 1 left on its
+auto-picked-first-available Boulder round, column 2's own row `<select>`
+switched from its own initial Boulder default to a Lead round, then a
+second row added to column 2 confirmed as Lead-only (Boulder no longer
+offered in that column's own dropdowns once its first pick committed it).
+"Show Multimode" rendered both columns correctly side by side - Boulder in
+column 1, Lead in column 2, each with its own independent "Next: …"
+sequence indicator (6.23). Regression-checked all 4 setup modes
+afterward - no change in Single round / Sequence / Training.
+
+### 6.25 Cleanup pass: a stale setup error banner, and merging Sequence/Multimode's row-builder duplication
+
+**A seventh bug, also found by the same structured review:** `setMode()`
+never cleared `el.setupError`, so an error shown in one setup mode stayed
+on screen after switching to an unrelated one - e.g. click "Show
+sequence" with an empty sequence (`showError("Add at least one round to
+the sequence.")`), then click the Multimode tab, and the Sequence-mode
+error remained visible on top of the now-showing Multimode config UI
+until something else happened to call `showError()` again. Fixed by
+clearing the error in the mode-tab click listener itself
+(`showError(""); setMode(btn.dataset.mode);`), **not** inside `setMode()`
+- `populateRounds()` also calls `setMode()` internally, immediately after
+it may have just set its own "This event has no categories/rounds."
+error, and that call must not wipe its own error back out again. Verified
+live both ways: the stale-error scenario above is fixed, and loading an
+event with zero rounds still shows and keeps its own error message.
+
+**Reuse cleanup, no behavior change:** Sequence mode's row builder
+(`renderSequenceBuilder()`) and Multimode's per-column row builder
+(`renderMultiColumnsConfig()`) had independently grown near-identical
+code for the same two jobs - both were explicitly built "to match" each
+other's interaction pattern (6.10/6.23), and both had already hit the
+exact same "+ Add duplicates what's already showing" bug independently
+before being fixed separately. Extracted three shared primitives: (1)
+`usedIdsExcluding(list, excludeIndex, idsOf)` - the generic "collect ids
+claimed by every item in `list` except the one at `excludeIndex`" used by
+both `usedInSequenceBuilder()` (Sequence mode, where `idsOf` returns both
+`aId`/`bId` for a paired entry) and Multimode's own `usedInThisColumn()`
+(always a single `roundId`); (2) `buildRoundSelect(candidates, excluded,
+currentRoundId, onChange)` - one live `<select>`, options filtered by
+`excluded` minus the row's own current value, wired to call `onChange`
+when the user picks something different; (3) `buildRemoveButton(ariaLabel,
+onClick)` - the shared "×" row-remove button. A paired entry's own extra
+constraint (each side additionally excludes the *other* side's current
+value) is layered on top by `buildSide()` adding one more id to the
+`excluded` set passed into `buildRoundSelect()`, rather than being a
+separate implementation. **If a row-level bug is found in one mode's
+picker, it is already fixed in the other's** - there's exactly one place
+each of these three behaviors lives now, not two near-identical copies to
+keep in sync by hand.
+
+Two small pieces of dead state were also removed while touching this
+code: `renderMultiColumnsConfig()`'s unused `host` parameter (threaded
+through five call sites, never read in the function body), and Multimode
+draft items' write-only `label` field (`{ roundId, label, discipline }` -
+`label` was written on every edit but never read anywhere; row `<option>`
+text is always rebuilt fresh from `entryLabel()` against live `entries`,
+and the "Show Multimode" payload only ever uses `roundId`). Both
+confirmed dead via a full-file grep, not just a local read, before
+removal.
 
 ## 7. Explicitly out of scope (do not "fix" without asking)
 

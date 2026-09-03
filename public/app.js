@@ -9,16 +9,19 @@ const el = {
   categoryRow: document.getElementById("categoryRow"),
   roundSelect: document.getElementById("roundSelect"),
   watchRound: document.getElementById("watchRound"),
-  addToSequence: document.getElementById("addToSequence"),
   trainingHint: document.getElementById("trainingHint"),
   startTraining: document.getElementById("startTraining"),
-  pairedRow: document.getElementById("pairedRow"),
-  pairedA: document.getElementById("pairedA"),
-  pairedB: document.getElementById("pairedB"),
-  addPaired: document.getElementById("addPaired"),
   sequenceRow: document.getElementById("sequenceRow"),
+  sequenceLabel: document.getElementById("sequenceLabel"),
   sequenceList: document.getElementById("sequenceList"),
+  addRoundToSequence: document.getElementById("addRoundToSequence"),
+  pairedEntryHint: document.getElementById("pairedEntryHint"),
+  addPairedToSequence: document.getElementById("addPairedToSequence"),
   watchSequence: document.getElementById("watchSequence"),
+  multiSetup: document.getElementById("multiSetup"),
+  multiCountTabs: document.getElementById("multiCountTabs"),
+  multiColumnsConfig: document.getElementById("multiColumnsConfig"),
+  watchMulti: document.getElementById("watchMulti"),
   setup: document.getElementById("setup"),
   board: document.getElementById("board"),
   controller: document.getElementById("controller"),
@@ -56,6 +59,12 @@ const el = {
 
 let pollTimer = null;
 let lastRoundData = null;
+// Multimode's per-column poll results (6.23), rebuilt every pollMulti()
+// tick - { round } or { error } per entry, parallel to
+// currentSelection.entries. Kept so a group/route tab click inside one
+// column can re-render without waiting for the next 3s tick, same role
+// lastRoundData plays for the normal single-round board.
+let lastMultiResults = null;
 
 // Bumped at the start of every pollCurrent() call (the natural 3s timer AND
 // a manual "Switch category now" click both go through it). Whichever call
@@ -72,6 +81,7 @@ let pollToken = 0;
 // to thread these values through every function call.
 //   - watch:    { kind: "watch", host, eventId, group, route, sequence }
 //   - training: { kind: "training", host, eventId, roundId, control, route }
+//   - multi:    { kind: "multi", host, eventId, entries }
 // `route`, like `group`, dedicates this tablet to one or several
 // routes/boulders instead of the full lanes grid (6.22) - `null`/absent
 // means "show all"; otherwise an array of route names (a single route is
@@ -79,6 +89,13 @@ let pollToken = 0;
 // `sequence` is always an array - a single round is just an array of length
 // one - see "Sequence mode" below. Each entry is either
 // { type: "round", id } or { type: "paired", a, b } (see 6.12).
+// Multimode's `entries` (6.23) are up to 5 side-by-side columns, each its
+// own independent watch-selection-minus-host/event: { sequence,
+// sequenceIndex, group, route } - `sequence` is the SAME token shape as
+// above (but only ever `{type:"round",id}`, no "paired" - Speed is out of
+// scope for Multimode), `sequenceIndex` tracks that column's own position
+// exactly like the top-level `sequenceIndex` below does for normal
+// Sequence mode, just once per column instead of once globally.
 let currentSelection = null;
 
 // Which entry of the sequence is currently showing. Always restarts at 0 on
@@ -104,11 +121,45 @@ let pairedState = null;
 // { type: "paired", aId, aLabel, bId, bLabel }.
 let sequenceBuilder = [];
 
-// Which setup-screen mode is selected: "single" | "sequence" | "training".
+// Multimode setup state (6.23): pick a column count first, then each
+// column gets its own dedicated config card (round picker + its own
+// mini round-sequence), all visible and editable at once - rather than
+// building one column at a time. `multiColumnDrafts[i]` is column i's own
+// state: `{ items }` - that column's round sequence so far ({ roundId,
+// discipline }, in play order, index 0 first). A fresh column starts with
+// `items: []` and stays that way until the user clicks "+ Add Sequence"
+// themselves - no round is ever pre-picked without a click (a deliberate
+// reversal of an earlier auto-seed design: it read as the setup screen
+// silently deciding for you, reported live after a screenshot showed
+// every fresh column expected to start truly empty). An empty column is
+// always valid and renders as "Round finished" on the board (a tablet can
+// be set up ahead of time with more columns than currently-known
+// categories).
+// Always kept in sync with `multiColumnCount` (padded/truncated on count
+// change) so `multiColumnDrafts[i]` is never undefined for `i <
+// multiColumnCount`. The discipline lock is per-column, not shared across
+// columns (6.24) - renderMultiColumnsConfig()'s `availableFor()` derives
+// it fresh each render from that column's own `items` only, so two
+// different columns can independently be Lead and Boulder; only a single
+// column's own sequence has to stay one discipline throughout.
+let multiColumnCount = 2;
+let multiColumnDrafts = [{ items: [] }, { items: [] }];
+
+// Which setup-screen mode is selected: "single" | "sequence" | "training" | "multi".
 let currentMode = "single";
 // How many rounds in the currently-loaded event are Speed elimination
 // format - the "interleave two finals" row only makes sense with 2+.
 let eliminationCount = 0;
+// The currently-loaded event's rounds, kept around (not just a local
+// inside populateRounds()) so populateRoundSelect() can rebuild
+// #roundSelect's options whenever the mode changes, not just once at load
+// time - Training mode filters this down to Speed only.
+let loadedEntries = [];
+// Just the Speed elimination subset of loadedEntries (6.12) - kept around
+// separately so renderSequenceBuilder()'s paired-entry rows can populate
+// their own two <select>s without recomputing this filter on every
+// render.
+let loadedEliminationEntries = [];
 
 // Training mode's shared roster (fetched once per session) and the current
 // manual position (polled from the server so a second device can drive it -
@@ -192,6 +243,33 @@ function readUrlSelection() {
     };
   }
 
+  // `multi` (6.23) is a comma-separated list of columns, each
+  // `roundId1+roundId2~group~route1+route2` (three `~`-separated fields,
+  // empty stays empty). `+` joins both a column's own round sequence and
+  // its selected route names - unambiguous since `~` already separates the
+  // three fields before either gets split on `+`.
+  const multiParam = params.get("multi");
+  if (multiParam) {
+    const entries = multiParam
+      .split(",")
+      .filter(Boolean)
+      .map((token) => {
+        const [roundsStr, group, routeStr] = token.split("~");
+        return {
+          // An empty sequence is a legitimate column (6.23) - a tablet set
+          // up ahead of time with more columns than currently-known
+          // categories - not dropped here; it round-trips to the same
+          // "Round finished" placeholder pollOneMultiColumn()/
+          // renderMultiBoard() already show for one built fresh in the UI.
+          sequence: (roundsStr ?? "").split("+").filter(Boolean).map((id) => ({ type: "round", id })),
+          sequenceIndex: 0,
+          group: group || null,
+          route: routeStr ? routeStr.split("+").filter(Boolean) : null,
+        };
+      });
+    if (entries.length) return { kind: "multi", host, eventId, entries };
+  }
+
   const group = params.get("group");
   const roundsParam = params.get("rounds");
   const roundParam = params.get("round");
@@ -212,6 +290,15 @@ function buildShareLink(sel) {
     url.searchParams.set("training", sel.roundId);
     if (sel.control) url.searchParams.set("control", "1");
     if (sel.route?.length) url.searchParams.set("route", sel.route.join(","));
+    return url.toString();
+  }
+
+  if (sel.kind === "multi") {
+    const tokens = sel.entries.map((e) => {
+      const rounds = e.sequence.map((s) => s.id).join("+");
+      return `${rounds}~${e.group ?? ""}~${(e.route ?? []).join("+")}`;
+    });
+    url.searchParams.set("multi", tokens.join(","));
     return url.toString();
   }
 
@@ -308,11 +395,42 @@ function setMode(mode) {
     btn.classList.toggle("active", btn.dataset.mode === mode);
   }
   el.watchRound.hidden = mode !== "single";
-  el.addToSequence.hidden = mode !== "sequence";
   el.startTraining.hidden = mode !== "training";
-  el.pairedRow.hidden = mode !== "sequence" || eliminationCount < 2;
+  // Single source of truth for both - they must always show/hide together
+  // (the hint explains what the button next to it does), so there's no
+  // second copy of this condition to drift out of sync with this one.
+  el.pairedEntryHint.hidden = el.addPairedToSequence.hidden = mode !== "sequence" || eliminationCount < 2;
+  // Multimode and Sequence both pick their round(s) inside their own
+  // per-mode section now (#multiSetup / #sequenceRow's own live rows,
+  // 6.10/6.23) - neither has any use for the shared "Category / round"
+  // picker above, unlike Single round and Training.
+  el.categoryRow.hidden = mode === "multi" || mode === "sequence" || el.modeTabs.hidden;
+  el.multiSetup.hidden = mode !== "multi";
+  populateRoundSelect();
   renderSequenceBuilder();
   updateTrainingEligibility();
+}
+
+// Rebuilds #roundSelect's options from loadedEntries - filtered to Speed
+// only in Training mode (which has no concept of Lead/Boulder, 6.11),
+// everything otherwise. Called on every mode switch, not just once when
+// the event loads, so switching into/out of Training re-filters live
+// instead of just disabling "Start training" after the fact. Preserves
+// the previous selection if it's still in the new (possibly narrower)
+// list, so toggling between modes doesn't reset an otherwise-still-valid
+// pick back to the first option every time.
+function populateRoundSelect() {
+  const previousValue = el.roundSelect.value;
+  const filtered = currentMode === "training" ? loadedEntries.filter((e) => e.isSpeed) : loadedEntries;
+  el.roundSelect.innerHTML = "";
+  for (const entry of filtered) {
+    const opt = document.createElement("option");
+    opt.value = entry.roundId;
+    opt.textContent = `${entry.label} (${STATUS_LABEL[entry.status] ?? entry.status})`;
+    opt.dataset.speed = entry.isSpeed ? "1" : "";
+    el.roundSelect.appendChild(opt);
+  }
+  if (filtered.some((e) => e.roundId === previousValue)) el.roundSelect.value = previousValue;
 }
 
 // Training mode only makes sense for Speed (Lead/Boulder have no concept of
@@ -332,52 +450,64 @@ function updateTrainingEligibility() {
 }
 
 function populateRounds(eventData, host, eventId) {
-  // A freshly-loaded event starts with an empty sequence - carrying over
-  // entries from a previously-loaded event would silently mix events.
+  // A freshly-loaded event starts with an empty sequence/Multimode builder -
+  // carrying over entries from a previously-loaded event would silently mix
+  // events.
   sequenceBuilder = [];
+  multiColumnCount = 2;
+  multiColumnDrafts = [{ items: [] }, { items: [] }];
+  for (const btn of el.multiCountTabs.querySelectorAll(".mode-tab")) {
+    btn.classList.toggle("active", Number(btn.dataset.count) === multiColumnCount);
+  }
 
   const entries = [];
   for (const dcat of eventData.d_cats ?? []) {
     for (const round of dcat.category_rounds ?? []) {
       entries.push({
-        roundId: round.category_round_id,
+        // Stringified - results.info's category_round_id is a number, but
+        // every other roundId in this app (URL params, <select> values,
+        // sequence/entry tokens) is always a string. Comparing this against
+        // one of those with `===` (e.g. Multimode's discipline-lock lookup)
+        // silently never matches otherwise - a real bug found live: an
+        // `entries.find(e => e.roundId === roundId)` lookup always missed,
+        // so the cheap Speed pre-check never fired and Speed rounds could
+        // slip into Multimode undetected.
+        roundId: String(round.category_round_id),
         label: `${dcat.dcat_name} — ${round.name}`,
         status: round.status,
         isElimination: round.format_identifier === "speed_elimination_ifsc_2026",
         isSpeed: round.format_identifier?.startsWith("speed_") ?? false,
+        // Confirmed prefix for every known Boulder format_identifier
+        // variant (qualification, both group shapes, every finals variant
+        // - see AGENTS.md's fixture table), same confidence level as
+        // isSpeed above - used to pre-filter Multimode's per-column round
+        // pickers by discipline without a fetch. Never used to positively
+        // identify Lead (no confirmed Lead prefix pattern, AGENTS.md rule
+        // 2) - only to rule Boulder in/out; Multimode treats "not Speed,
+        // not Boulder" as Lead by elimination, since those are the only
+        // three disciplines this app (or results.info) has.
+        isBoulder: round.format_identifier?.startsWith("boulder_") ?? false,
       });
     }
   }
   const rank = { active: 0, pending: 1, finished: 2 };
   entries.sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || a.label.localeCompare(b.label));
 
-  el.roundSelect.innerHTML = "";
-  for (const entry of entries) {
-    const opt = document.createElement("option");
-    opt.value = entry.roundId;
-    opt.textContent = `${entry.label} (${STATUS_LABEL[entry.status] ?? entry.status})`;
-    opt.dataset.speed = entry.isSpeed ? "1" : "";
-    el.roundSelect.appendChild(opt);
-  }
+  // #roundSelect itself is (re)populated by setMode() below, via
+  // populateRoundSelect() - it needs loadedEntries set first, but doesn't
+  // need populating twice here too.
+  loadedEntries = entries;
+  // #categoryRow's own visibility is finished off by setMode() below (also
+  // mode-dependent - hidden in Multimode, which picks rounds per column
+  // instead), but el.modeTabs.hidden must already be correct before that
+  // call since setMode() reads it.
   el.modeTabs.hidden = entries.length === 0;
-  el.categoryRow.hidden = entries.length === 0;
   if (entries.length === 0) showError("This event has no categories/rounds.");
 
   // Only Speed elimination rounds have stages to interleave on - quali
   // rounds and non-Speed finals have nothing analogous (see 6.12).
-  const eliminationEntries = entries.filter((e) => e.isElimination);
-  eliminationCount = eliminationEntries.length;
-  el.pairedA.innerHTML = "";
-  el.pairedB.innerHTML = "";
-  for (const entry of eliminationEntries) {
-    for (const select of [el.pairedA, el.pairedB]) {
-      const opt = document.createElement("option");
-      opt.value = entry.roundId;
-      opt.textContent = `${entry.label} (${STATUS_LABEL[entry.status] ?? entry.status})`;
-      select.appendChild(opt);
-    }
-  }
-  if (eliminationEntries.length > 1) el.pairedB.selectedIndex = 1;
+  loadedEliminationEntries = entries.filter((e) => e.isElimination);
+  eliminationCount = loadedEliminationEntries.length;
   setMode(currentMode);
 
   el.watchRound.onclick = () => {
@@ -386,33 +516,81 @@ function populateRounds(eventData, host, eventId) {
     startWatching({ kind: "watch", host, eventId, group: null, route: null, sequence: [{ type: "round", id: roundId }] });
   };
 
-  el.addToSequence.onclick = () => {
-    const opt = el.roundSelect.selectedOptions[0];
-    if (!opt) return;
-    sequenceBuilder.push({ type: "round", roundId: opt.value, label: opt.textContent });
+  // Appends a new round, pre-filled with the first one not already used
+  // anywhere in the sequence - never a duplicate by default (6.10,
+  // matching Multimode's "+ Add Sequence", 6.23). Disabled once every
+  // round is already in the sequence (see renderSequenceBuilder()'s
+  // disabled-state check) rather than silently doing nothing on click.
+  el.addRoundToSequence.onclick = () => {
+    const used = usedInSequenceBuilder();
+    const entry = loadedEntries.find((e) => !used.has(e.roundId));
+    if (!entry) return;
+    sequenceBuilder.push({ type: "round", roundId: entry.roundId, label: entryLabel(entry) });
     renderSequenceBuilder();
   };
 
-  el.addPaired.onclick = () => {
-    const optA = el.pairedA.selectedOptions[0];
-    const optB = el.pairedB.selectedOptions[0];
-    if (!optA || !optB || optA.value === optB.value) return;
-    sequenceBuilder.push({
-      type: "paired",
-      aId: optA.value,
-      aLabel: optA.textContent,
-      bId: optB.value,
-      bLabel: optB.textContent,
-    });
+  // Appends a new paired entry (6.12), pre-filled with the first two
+  // not-already-used Speed elimination rounds - same reasoning as above.
+  el.addPairedToSequence.onclick = () => {
+    const used = usedInSequenceBuilder();
+    const available = loadedEliminationEntries.filter((e) => !used.has(e.roundId));
+    if (available.length < 2) return;
+    const [a, b] = available;
+    sequenceBuilder.push({ type: "paired", aId: a.roundId, aLabel: entryLabel(a), bId: b.roundId, bLabel: entryLabel(b) });
     renderSequenceBuilder();
   };
 
   el.watchSequence.onclick = () => {
-    if (!sequenceBuilder.length) return;
+    if (!sequenceBuilder.length) {
+      showError("Add at least one round to the sequence.");
+      return;
+    }
+    showError("");
     const sequence = sequenceBuilder.map((item) =>
       item.type === "paired" ? { type: "paired", a: item.aId, b: item.bId } : { type: "round", id: item.roundId }
     );
     startWatching({ kind: "watch", host, eventId, group: null, route: null, sequence });
+  };
+
+  // `.onclick =` (not addEventListener) - populateRounds() re-runs on
+  // every "Load event" click, and these are static buttons that already
+  // existed in the DOM before this call, so addEventListener would stack
+  // a new listener (with this call's now-stale entries/host closure) on
+  // top of the previous load's every time, firing the handler multiple
+  // times per click. Same reasoning as every other el.X.onclick = ... in
+  // this function.
+  for (const btn of el.multiCountTabs.querySelectorAll(".mode-tab")) {
+    btn.onclick = () => {
+      multiColumnCount = Number(btn.dataset.count);
+      // Pad with fresh empty columns or truncate extras, but keep already-
+      // configured columns intact when just adjusting the count - going
+      // from 3 to 2 and back to 3 shouldn't lose column 1/2's rounds.
+      while (multiColumnDrafts.length < multiColumnCount) multiColumnDrafts.push({ items: [] });
+      multiColumnDrafts.length = multiColumnCount;
+      for (const b of el.multiCountTabs.querySelectorAll(".mode-tab")) b.classList.toggle("active", b === btn);
+      renderMultiColumnsConfig(entries);
+    };
+  }
+  renderMultiColumnsConfig(entries);
+
+  el.watchMulti.onclick = () => {
+    // Columns don't all need a round configured - a tablet can be set up
+    // ahead of time with more columns than currently-known categories, and
+    // an empty column just renders as "Round finished" (pollOneMultiColumn/
+    // renderMultiBoard). Only block if literally nothing was configured
+    // anywhere - that would just be an empty board.
+    if (multiColumnDrafts.every((d) => d.items.length === 0)) {
+      showError("Add at least one round to a column.");
+      return;
+    }
+    showError("");
+    const multiEntries = multiColumnDrafts.map((draft) => ({
+      sequence: draft.items.map((item) => ({ type: "round", id: item.roundId })),
+      sequenceIndex: 0,
+      group: null,
+      route: null,
+    }));
+    startWatching({ kind: "multi", host, eventId, entries: multiEntries });
   };
 
   el.startTraining.onclick = () => {
@@ -424,12 +602,84 @@ function populateRounds(eventData, host, eventId) {
   el.roundSelect.onchange = updateTrainingEligibility;
 }
 
+// Every id claimed by the items in `list`, optionally excluding one item's
+// own index - shared by Sequence mode (whose items can be a plain round OR
+// a paired Speed entry, 6.12, hence `idsOf` returning more than one id) and
+// Multimode's per-column picker (whose items are always a plain round).
+// Used both for per-row option filtering (a round can't be picked twice in
+// the same list) and "+ Add" auto-seed defaults (never default to a round
+// already used elsewhere) - same "prevent by not offering, not by
+// validating after" approach in both places.
+function usedIdsExcluding(list, excludeIndex, idsOf) {
+  const used = new Set();
+  list.forEach((item, idx) => {
+    if (idx === excludeIndex) return;
+    for (const id of idsOf(item)) used.add(id);
+  });
+  return used;
+}
+
+// One live <select> for a single-round pick, shared by Sequence mode's
+// plain-round rows and Multimode's per-column rows (redesigned to match
+// each other, 6.10/6.23 - both used to be a shared dropdown + "Add" button
+// instead, which had the same "+ Add duplicates what's already showing"
+// bug fixed independently in both places before this was unified).
+// `excluded` hides any candidate already claimed elsewhere in the same
+// list, except the row's own current value - it must never disappear out
+// from under itself. `onChange(newRoundId, newOptionText)` fires whenever
+// the user picks something different.
+function buildRoundSelect(candidates, excluded, currentRoundId, onChange) {
+  const select = document.createElement("select");
+  for (const entry of candidates) {
+    if (excluded.has(entry.roundId) && entry.roundId !== currentRoundId) continue;
+    const opt = document.createElement("option");
+    opt.value = entry.roundId;
+    opt.textContent = entryLabel(entry);
+    select.appendChild(opt);
+  }
+  select.value = currentRoundId;
+  select.addEventListener("change", () => {
+    const opt = select.selectedOptions[0];
+    if (!opt) return;
+    onChange(opt.value, opt.textContent);
+  });
+  return select;
+}
+
+// Shared "×" remove button for one row in a live-editable list (Sequence
+// mode and Multimode's column builder, 6.10/6.23).
+function buildRemoveButton(ariaLabel, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "sequence-remove";
+  btn.textContent = "×";
+  btn.setAttribute("aria-label", ariaLabel);
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
 // Drag-and-drop reordering of the in-progress sequence on the setup screen
 // (native HTML5 DnD - no library needed for a same-list reorder). A paired
 // entry ("Verschränkt: A ↔ B") appears as a single row here, not as many
 // near-duplicate entries - see 6.12 for why that redesign happened.
+function usedInSequenceBuilder(excludeIndex = -1) {
+  return usedIdsExcluding(sequenceBuilder, excludeIndex, (item) =>
+    item.type === "paired" ? [item.aId, item.bId] : [item.roundId]
+  );
+}
+
+// Every entry is its own live row now, not a static label added via a
+// separate shared dropdown+button (6.10, redesigned to match Multimode's
+// per-column sequence builder, 6.23, after the original shared-dropdown
+// version turned out to have the exact same "+ Add" duplicates whatever's
+// still showing" usability bug Multimode's first version had). A plain
+// round gets one <select>; a paired entry (6.12) gets two, side by side,
+// each excluding the other side's current value in addition to whatever's
+// used elsewhere in the sequence. Drag-reorder is kept (unlike Multimode's
+// per-column rows, which don't support it) - order matters here and
+// always has.
 function renderSequenceBuilder() {
-  el.sequenceRow.hidden = currentMode !== "sequence" || sequenceBuilder.length === 0;
+  el.sequenceRow.hidden = currentMode !== "sequence";
   el.sequenceList.innerHTML = "";
 
   sequenceBuilder.forEach((item, index) => {
@@ -437,20 +687,47 @@ function renderSequenceBuilder() {
     li.className = "sequence-item";
     li.draggable = true;
 
-    const text = document.createElement("span");
-    text.textContent = item.type === "paired" ? `${item.aLabel} ↔ ${item.bLabel}` : item.label;
-    li.appendChild(text);
+    if (item.type === "paired") {
+      const pair = document.createElement("div");
+      pair.className = "sequence-pair";
+      const excluded = usedInSequenceBuilder(index);
 
-    const removeBtn = document.createElement("button");
-    removeBtn.type = "button";
-    removeBtn.className = "sequence-remove";
-    removeBtn.textContent = "×";
-    removeBtn.setAttribute("aria-label", "Remove from sequence");
-    removeBtn.addEventListener("click", () => {
-      sequenceBuilder.splice(index, 1);
-      renderSequenceBuilder();
-    });
-    li.appendChild(removeBtn);
+      // Each side also excludes the OTHER side's current value, on top of
+      // whatever `excluded` already rules out - the two sides of one paired
+      // entry can never match each other.
+      const buildSide = (idField, labelField, otherIdField) => {
+        const sideExcluded = new Set(excluded);
+        sideExcluded.add(item[otherIdField]);
+        return buildRoundSelect(loadedEliminationEntries, sideExcluded, item[idField], (newId, newLabel) => {
+          item[idField] = newId;
+          item[labelField] = newLabel;
+          renderSequenceBuilder();
+        });
+      };
+
+      pair.appendChild(buildSide("aId", "aLabel", "bId"));
+      const sep = document.createElement("span");
+      sep.className = "sequence-pair-sep";
+      sep.textContent = "↔";
+      pair.appendChild(sep);
+      pair.appendChild(buildSide("bId", "bLabel", "aId"));
+      li.appendChild(pair);
+    } else {
+      const excluded = usedInSequenceBuilder(index);
+      const select = buildRoundSelect(loadedEntries, excluded, item.roundId, (newId, newLabel) => {
+        item.roundId = newId;
+        item.label = newLabel;
+        renderSequenceBuilder();
+      });
+      li.appendChild(select);
+    }
+
+    li.appendChild(
+      buildRemoveButton("Remove from sequence", () => {
+        sequenceBuilder.splice(index, 1);
+        renderSequenceBuilder();
+      })
+    );
 
     li.addEventListener("dragstart", (e) => {
       e.dataTransfer.setData("text/plain", String(index));
@@ -470,6 +747,132 @@ function renderSequenceBuilder() {
 
     el.sequenceList.appendChild(li);
   });
+
+  const used = usedInSequenceBuilder();
+  el.addRoundToSequence.disabled = !loadedEntries.some((e) => !used.has(e.roundId));
+  el.addPairedToSequence.disabled = loadedEliminationEntries.filter((e) => !used.has(e.roundId)).length < 2;
+}
+
+// Rebuilds every Multimode config card from scratch (6.23) - one per
+// `multiColumnDrafts` entry, each with its own round picker + "Add round"
+// button + its own mini round-sequence list (no drag-reorder here, unlike
+// the Sequence-mode builder - a column's rounds are added in the order
+// they should play, and reordering wasn't asked for). A full rebuild on
+// every change (count change, round added/removed) rather than a partial
+// DOM patch - simpler, and this is a handful of small setup-screen
+// elements, not the 3s-polled board.
+// "Lead"/"Boulder"/"Speed" for one `entries[]` item - see the `isBoulder`
+// comment in populateRounds() for why Lead is inferred by elimination
+// rather than its own confirmed prefix.
+function multiEntryDiscipline(entry) {
+  return entry.isSpeed ? "Speed" : entry.isBoulder ? "Boulder" : "Lead";
+}
+
+// "Category — Round (status)" text for one loadedEntries/loadedEliminationEntries
+// item - shared by every live <select> option list in this app (Multimode's
+// per-column rows, 6.23, and Sequence mode's own rows below) so an
+// auto-seeded pick (no <option> element involved yet) reads identically to
+// one picked by hand via a dropdown.
+function entryLabel(entry) {
+  return `${entry.label} (${STATUS_LABEL[entry.status] ?? entry.status})`;
+}
+
+function renderMultiColumnsConfig(entries) {
+  el.multiColumnsConfig.innerHTML = "";
+
+  multiColumnDrafts.forEach((draft, columnIndex) => {
+    // A column's own sequence has to stay one discipline throughout (its
+    // rounds are meant to be "the same category, later stage" - Quali ->
+    // Finale - not an arbitrary discipline switch mid-column), but
+    // different COLUMNS are free to be different disciplines from each
+    // other (6.24) - Multimode's whole point is showing several
+    // categories side by side, and those don't have to match; one column
+    // can be Boulder while another is Lead. `availableFor(excludeIndex)`
+    // computes what a given row (or a brand-new row, for "+ Add Sequence" -
+    // pass -1, which never matches a real index) may become: filtered to
+    // whichever discipline every *other* item already in this column has
+    // committed to (all of them share one, by construction - checking any
+    // one of them is enough), or unfiltered if this would be the column's
+    // only item, so a column's very first pick is free to be either
+    // discipline.
+    const availableFor = (excludeIndex) => {
+      const other = draft.items.find((_, i) => i !== excludeIndex);
+      const discipline = other ? other.discipline : null;
+      return entries.filter((e) => !e.isSpeed && (!discipline || multiEntryDiscipline(e) === discipline));
+    };
+
+    const card = document.createElement("div");
+    card.className = "multi-column-config";
+
+    const heading = document.createElement("div");
+    heading.className = "sequence-label";
+    heading.textContent = `Column ${columnIndex + 1}`;
+    card.appendChild(heading);
+
+    // Every step of this column's sequence gets its own live dropdown, not
+    // just the first one - each `<select>` IS that step's round, editable
+    // with no confirm click, same "no click needed" idea the first step
+    // already had, now applied to every step instead of just it. Fixes a
+    // real usability bug in the one-shared-dropdown version: clicking
+    // "+ Add Sequence" without first changing the dropdown just appended a
+    // duplicate of the step already there, since the button had no way to
+    // know the user meant to pick something different. Each row's options
+    // exclude whatever round every *other* row in this same column is
+    // already using (but always include its own current value) - a round
+    // can't be picked twice in one column's sequence, prevented by not
+    // offering it rather than validating after the fact, same philosophy
+    // as the Speed/discipline filtering above.
+    const usedInThisColumn = (itemIndex) => usedIdsExcluding(draft.items, itemIndex, (item) => [item.roundId]);
+
+    const list = document.createElement("ol");
+    list.className = "sequence-list";
+
+    draft.items.forEach((item, itemIndex) => {
+      const li = document.createElement("li");
+      li.className = "sequence-item sequence-item--static";
+
+      const excluded = usedInThisColumn(itemIndex);
+      const rowSelect = buildRoundSelect(availableFor(itemIndex), excluded, item.roundId, (newId) => {
+        const entry = entries.find((e) => e.roundId === newId);
+        draft.items[itemIndex] = { roundId: newId, discipline: multiEntryDiscipline(entry) };
+        renderMultiColumnsConfig(entries);
+      });
+      li.appendChild(rowSelect);
+
+      li.appendChild(
+        buildRemoveButton("Remove from column", () => {
+          draft.items.splice(itemIndex, 1);
+          renderMultiColumnsConfig(entries);
+        })
+      );
+
+      list.appendChild(li);
+    });
+    card.appendChild(list);
+
+    // Appends a new step, pre-filled with the first round *not already
+    // used in this column* - never defaults to a duplicate, unlike the
+    // single-shared-dropdown version this replaced. Disabled once every
+    // available round for this column's locked discipline is already
+    // in its sequence (rare, but silently doing nothing on click would
+    // read as a broken button - the same lesson learned from Multimode's
+    // very first "Show Multimode" bug).
+    const unusedForThisColumn = availableFor(-1).filter((e) => !draft.items.some((item) => item.roundId === e.roundId));
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "ghost";
+    addBtn.textContent = "+ Add Sequence";
+    addBtn.disabled = unusedForThisColumn.length === 0;
+    addBtn.addEventListener("click", () => {
+      if (!unusedForThisColumn.length) return;
+      const entry = unusedForThisColumn[0];
+      draft.items.push({ roundId: entry.roundId, discipline: multiEntryDiscipline(entry) });
+      renderMultiColumnsConfig(entries);
+    });
+    card.appendChild(addBtn);
+
+    el.multiColumnsConfig.appendChild(card);
+  });
 }
 
 function startWatching(selection) {
@@ -488,6 +891,16 @@ function startWatching(selection) {
     el.board.hidden = !!selection.control;
     el.controller.hidden = !selection.control;
     startTrainingSession(selection);
+    return;
+  }
+
+  if (selection.kind === "multi") {
+    el.board.hidden = false;
+    el.controller.hidden = true;
+    lastMultiResults = null;
+    setShareLink(buildShareLink(selection));
+    pollMulti();
+    pollTimer = setInterval(pollMulti, 3000);
     return;
   }
 
@@ -739,6 +1152,66 @@ async function pollCurrent() {
     }
     updateNextInSequence();
     return;
+  }
+}
+
+// Multimode (6.23): the same catch-up-through-already-finished-entries loop
+// as pollCurrent() above, but scoped to one column's own sequence/index -
+// run in parallel across all columns by pollMulti() below, so one column
+// advancing has no effect on the others' timing. No paired-entry handling
+// needed (Multimode is Lead/Boulder only, "paired" is Speed-only, 6.12).
+// Catches its own fetch errors and returns an error marker instead of
+// throwing, so one broken/deleted round doesn't blank the whole board.
+async function pollOneMultiColumn(entry, token) {
+  // A column left without any round configured (6.23 - a tablet can be set
+  // up ahead of time with more columns than currently-known categories) has
+  // nothing to fetch - render it the same "Round finished" placeholder an
+  // actually-finished round gets, rather than blocking Multimode setup on
+  // every column being filled in.
+  if (!entry.sequence.length) return { empty: true };
+  for (;;) {
+    if (token !== pollToken) return null;
+    const current = entry.sequence[entry.sequenceIndex];
+    let round;
+    try {
+      round = await fetchRoundJson(currentSelection.host, current.id);
+    } catch (err) {
+      return { error: err.message };
+    }
+    if (token !== pollToken) return null;
+    const hasNext = entry.sequenceIndex < entry.sequence.length - 1;
+    if (hasNext && isRoundFullyFinished(round)) {
+      entry.sequenceIndex++;
+      continue;
+    }
+    return { round };
+  }
+}
+
+// Polls every Multimode column in parallel and renders them together in one
+// pass (not as each column's fetch resolves) so columns with different
+// response times don't visibly pop in one at a time on every tick.
+async function pollMulti() {
+  const myToken = ++pollToken;
+  const results = await Promise.all(currentSelection.entries.map((entry) => pollOneMultiColumn(entry, myToken)));
+  if (myToken !== pollToken) return; // superseded mid-flight
+  if (results.some((r) => r === null)) return; // a column bailed for the same reason
+  lastMultiResults = results;
+  renderMultiBoard(currentSelection.entries, results);
+  // Only configured (non-empty) columns actually fetch anything - if every
+  // one of them came back with an error this tick, results.info itself is
+  // unreachable, not just one bad round, so the shared status line should
+  // say so the same way every other poll path does (pollRound/pollCurrent/
+  // the paired poll). Previously this always showed "Updated ...", so a
+  // real outage read as healthy unless you separately noticed each
+  // column's own "Couldn't load: ..." text.
+  const configured = results.filter((r) => !r.empty);
+  if (configured.length && configured.every((r) => r.error)) {
+    el.statusLine.textContent = `Connection lost: ${configured[0].error}`;
+    el.statusLine.classList.add("stale");
+  } else {
+    el.statusLine.textContent = `Updated ${new Date().toLocaleTimeString("en-GB")}`;
+    el.statusLine.classList.remove("stale");
   }
 }
 
@@ -1556,62 +2029,70 @@ function renderSpeedStage(round, result) {
 
 // --- Board rendering ---------------------------------------------------
 
-function renderGroupTabs(groupNames) {
-  el.groupTabs.innerHTML = "";
+// `container`/`sel` are parameterized (6.23) so this can render into either
+// the single singleton `el.groupTabs`/`currentSelection` (watch mode) or a
+// dynamically-created per-column container/entry (Multimode) - behavior is
+// otherwise identical.
+function renderGroupTabs(groupNames, container, sel, onSelect) {
+  container.innerHTML = "";
   if (groupNames.length < 2) {
-    el.groupTabs.hidden = true;
+    container.hidden = true;
     return;
   }
-  el.groupTabs.hidden = false;
+  container.hidden = false;
   for (const name of groupNames) {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = `group-tab${name === currentSelection.group ? " active" : ""}`;
+    btn.className = `group-tab${name === sel.group ? " active" : ""}`;
     btn.textContent = name;
     btn.addEventListener("click", () => {
-      if (currentSelection.group === name) return;
-      currentSelection.group = name;
+      if (sel.group === name) return;
+      sel.group = name;
       // A route selected in the old group may not exist (or may mean
       // something different) in the new one - back out to "all routes".
-      currentSelection.route = null;
+      sel.route = null;
       saveSelection(currentSelection);
       setShareLink(buildShareLink(currentSelection));
-      if (lastRoundData) renderBoard(lastRoundData);
+      onSelect();
     });
-    el.groupTabs.appendChild(btn);
+    container.appendChild(btn);
   }
 }
 
 // Returns just the routes selected via the route tabs, or all of `routes`
-// if nothing (valid) is selected - shared by renderBoard() and
-// renderTrainingBoard() (6.22). `routeNames` scopes the check to the
-// round/group currently being rendered, so a selection left over from a
-// different round/group (different route names) safely falls back to "all"
-// instead of silently filtering everything out.
-function filterRoutesBySelection(routes, routeNames) {
-  const selected = (currentSelection.route ?? []).filter((name) => routeNames.includes(name));
+// if nothing (valid) is selected - shared by renderBoard(),
+// renderTrainingBoard() and renderMultiBoard() (6.22/6.23). `routeNames`
+// scopes the check to the round/group currently being rendered, so a
+// selection left over from a different round/group (different route names)
+// safely falls back to "all" instead of silently filtering everything out.
+// `sel` holds `.route` - `currentSelection` for watch/training, or one
+// Multimode column entry.
+function filterRoutesBySelection(routes, routeNames, sel) {
+  const selected = (sel.route ?? []).filter((name) => routeNames.includes(name));
   return selected.length ? routes.filter((r) => selected.includes(r.name)) : routes;
 }
 
 // Dedicates this tablet to one or several routes/boulders instead of the
 // full lanes grid (6.22) - e.g. one tablet per boulder, or one tablet
 // covering two boulders when there aren't enough tablets for one each.
-// `currentSelection.route` is `null` ("all") or an array of route names,
-// each toggled independently by tapping its tab - tapping "All routes"
-// clears the selection outright. `routeNames` is whatever the currently
-// visible group/round actually has, so switching group or round can't
-// leave a stale selection on screen; `onSelect` re-renders whichever board
-// is currently active (watch vs. training use different render
-// functions/state); `prefix` is "Route"/"Lane"/"Boulder" (laneLabelPrefixFor())
-// so the tabs read the same as the lane headings they filter.
-function renderRouteTabs(routeNames, prefix, onSelect) {
-  el.routeTabs.innerHTML = "";
+// `sel.route` is `null` ("all") or an array of route names, each toggled
+// independently by tapping its tab - tapping "All routes" clears the
+// selection outright. `routeNames` is whatever the currently visible
+// group/round actually has, so switching group or round can't leave a
+// stale selection on screen; `onSelect` re-renders whichever board is
+// currently active (watch/training/Multimode all use different render
+// functions/state); `prefix` is "Route"/"Lane"/"Boulder"
+// (laneLabelPrefixFor()) so the tabs read the same as the lane headings
+// they filter. `container`/`sel` parameterized for the same reason as
+// renderGroupTabs() above (6.23).
+function renderRouteTabs(routeNames, prefix, container, sel, onSelect) {
+  container.innerHTML = "";
   if (routeNames.length < 2) {
-    el.routeTabs.hidden = true;
+    container.hidden = true;
     return;
   }
-  el.routeTabs.hidden = false;
-  const selected = (currentSelection.route ?? []).filter((name) => routeNames.includes(name));
+  container.hidden = false;
+  const selected = (sel.route ?? []).filter((name) => routeNames.includes(name));
 
   const allBtn = document.createElement("button");
   allBtn.type = "button";
@@ -1619,12 +2100,12 @@ function renderRouteTabs(routeNames, prefix, onSelect) {
   allBtn.textContent = `All ${prefix.toLowerCase()}s`;
   allBtn.addEventListener("click", () => {
     if (!selected.length) return;
-    currentSelection.route = null;
+    sel.route = null;
     saveSelection(currentSelection);
     setShareLink(buildShareLink(currentSelection));
     onSelect();
   });
-  el.routeTabs.appendChild(allBtn);
+  container.appendChild(allBtn);
 
   for (const name of routeNames) {
     const btn = document.createElement("button");
@@ -1633,12 +2114,12 @@ function renderRouteTabs(routeNames, prefix, onSelect) {
     btn.textContent = `${prefix} ${name}`;
     btn.addEventListener("click", () => {
       const next = selected.includes(name) ? selected.filter((n) => n !== name) : [...selected, name];
-      currentSelection.route = next.length ? next : null;
+      sel.route = next.length ? next : null;
       saveSelection(currentSelection);
       setShareLink(buildShareLink(currentSelection));
       onSelect();
     });
-    el.routeTabs.appendChild(btn);
+    container.appendChild(btn);
   }
 }
 
@@ -1650,13 +2131,16 @@ function isBoulderFinalRound(round) {
   return round.discipline === "Boulder" && (round.format_identifier ?? "").startsWith("boulder_finals");
 }
 
-function renderBoulderModeToggle(roundId, activeMode) {
-  el.boulderModeRow.innerHTML = "";
-  el.boulderModeRow.hidden = false;
+// `container` parameterized (6.23) same as renderGroupTabs()/renderRouteTabs()
+// above - no `sel` needed here, the toggle is purely `localStorage`-based by
+// `round.id` (6.17), already scoped to the right round regardless of mode.
+function renderBoulderModeToggle(roundId, activeMode, container, onSelect) {
+  container.innerHTML = "";
+  container.hidden = false;
   const label = document.createElement("span");
   label.className = "share-label";
   label.textContent = "Boulder final format:";
-  el.boulderModeRow.appendChild(label);
+  container.appendChild(label);
   const options = [
     { value: "interval", text: "Intervall" },
     { value: "world_series", text: "World Series" },
@@ -1669,9 +2153,9 @@ function renderBoulderModeToggle(roundId, activeMode) {
     btn.addEventListener("click", () => {
       if (opt.value === activeMode) return;
       saveBoulderFinalMode(roundId, opt.value);
-      if (lastRoundData) renderBoard(lastRoundData);
+      onSelect();
     });
-    el.boulderModeRow.appendChild(btn);
+    container.appendChild(btn);
   }
 }
 
@@ -1706,23 +2190,27 @@ function renderBoard(round) {
     if (!currentSelection.group || !groupNames.includes(currentSelection.group)) {
       currentSelection.group = groupNames[0];
     }
-    renderGroupTabs(groupNames);
+    renderGroupTabs(groupNames, el.groupTabs, currentSelection, () => {
+      if (lastRoundData) renderBoard(lastRoundData);
+    });
   }
 
   let boulderFinalMode = "interval";
   if (isBoulderFinalRound(round)) {
     boulderFinalMode = loadBoulderFinalMode(round.id);
-    renderBoulderModeToggle(round.id, boulderFinalMode);
+    renderBoulderModeToggle(round.id, boulderFinalMode, el.boulderModeRow, () => {
+      if (lastRoundData) renderBoard(lastRoundData);
+    });
   }
 
   for (const group of routeGroups) {
     if (groupNames.length >= 2 && group.groupName !== currentSelection.group) continue;
 
     const routeNames = group.routes.map((r) => r.name);
-    renderRouteTabs(routeNames, laneLabelPrefix, () => {
+    renderRouteTabs(routeNames, laneLabelPrefix, el.routeTabs, currentSelection, () => {
       if (lastRoundData) renderBoard(lastRoundData);
     });
-    const routesToShow = filterRoutesBySelection(group.routes, routeNames);
+    const routesToShow = filterRoutesBySelection(group.routes, routeNames, currentSelection);
 
     const grid = document.createElement("div");
     grid.className = routesToShow.length === 1 ? "lanes-grid lanes-grid--single" : "lanes-grid";
@@ -1731,6 +2219,176 @@ function renderBoard(round) {
     }
     el.lanes.appendChild(grid);
   }
+}
+
+// Multimode (6.23): one `.multi-block` per column, each independently
+// group-/route-filterable via its own dynamically-created tabs/toggle
+// (using the same containerized renderGroupTabs()/renderRouteTabs()/
+// renderBoulderModeToggle()/filterRoutesBySelection() renderBoard() uses,
+// just with `entries[i]` instead of `currentSelection` as the `sel` and a
+// per-block container instead of the singleton `el.groupTabs`/`el.routeTabs`/
+// `el.boulderModeRow`). `results[i]` is either `{ round }` or `{ error }` -
+// see pollOneMultiColumn() - a column that failed to load gets its own
+// small error message instead of blanking the whole board.
+function renderMultiBoard(entries, results) {
+  el.roundTitle.textContent = "Multimode";
+  el.lanes.innerHTML = "";
+  el.groupTabs.hidden = true;
+  el.routeTabs.hidden = true;
+  el.boulderModeRow.hidden = true;
+
+  // All columns side by side, wrapping onto further rows only once the
+  // screen is too narrow to fit them - the whole point of Multimode is
+  // seeing every category at once on a big enough display (6.23). Each
+  // column keeps its own internal .lanes-grid for its lane cards, so a
+  // narrow column still wraps its own boulders/routes sanely.
+  const columnsGrid = document.createElement("div");
+  columnsGrid.className = "multi-columns";
+  el.lanes.appendChild(columnsGrid);
+
+  entries.forEach((entry, i) => {
+    const result = results[i];
+    const block = document.createElement("section");
+    block.className = "multi-block";
+    columnsGrid.appendChild(block);
+
+    if (result.error) {
+      const heading = document.createElement("div");
+      heading.className = "group-heading";
+      heading.textContent = "Column " + (i + 1);
+      block.appendChild(heading);
+      const err = document.createElement("div");
+      err.className = "lane-finished";
+      err.textContent = `Couldn't load: ${result.error}`;
+      block.appendChild(err);
+      return;
+    }
+
+    if (result.empty) {
+      const heading = document.createElement("div");
+      heading.className = "group-heading";
+      heading.textContent = "Column " + (i + 1);
+      block.appendChild(heading);
+      const placeholder = document.createElement("div");
+      placeholder.className = "lane-finished";
+      placeholder.textContent = "Round finished";
+      block.appendChild(placeholder);
+      return;
+    }
+
+    const round = result.round;
+    const heading = document.createElement("div");
+    heading.className = "group-heading";
+    heading.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
+    block.appendChild(heading);
+
+    // Starts hidden, same as the singleton el.groupTabs does in renderBoard()
+    // - renderGroupTabs() only re-shows it for rounds with 2+ starting
+    // groups, so a round without groups needs this default or the empty
+    // container is left visible (and still takes up its CSS margin) with
+    // no content and no way to hide itself.
+    const groupTabsEl = document.createElement("div");
+    groupTabsEl.className = "group-tabs";
+    groupTabsEl.hidden = true;
+    block.appendChild(groupTabsEl);
+
+    // Starts hidden too, same reasoning as groupTabsEl above - a round with
+    // no route data (routeGroups.length === 0 below) returns before ever
+    // calling renderRouteTabs(), which is what would otherwise clear this.
+    const routeTabsEl = document.createElement("div");
+    routeTabsEl.className = "group-tabs";
+    routeTabsEl.hidden = true;
+    block.appendChild(routeTabsEl);
+
+    const modeRowEl = document.createElement("div");
+    modeRowEl.className = "share-row";
+    modeRowEl.hidden = true;
+    block.appendChild(modeRowEl);
+
+    const rerender = () => {
+      if (lastMultiResults) renderMultiBoard(entries, lastMultiResults);
+    };
+
+    const laneLabelPrefix = laneLabelPrefixFor(round);
+    const routeGroups = collectRouteGroups(round);
+
+    if (!routeGroups.length) {
+      const empty = document.createElement("div");
+      empty.className = "lane-finished";
+      empty.textContent = "No route data for this round.";
+      block.appendChild(empty);
+      return;
+    }
+
+    const groupNames = routeGroups.map((g) => g.groupName).filter(Boolean);
+    if (groupNames.length >= 2) {
+      if (!entry.group || !groupNames.includes(entry.group)) entry.group = groupNames[0];
+      renderGroupTabs(groupNames, groupTabsEl, entry, rerender);
+    }
+
+    let boulderFinalMode = "interval";
+    if (isBoulderFinalRound(round)) {
+      boulderFinalMode = loadBoulderFinalMode(round.id);
+      renderBoulderModeToggle(round.id, boulderFinalMode, modeRowEl, rerender);
+    }
+
+    for (const group of routeGroups) {
+      if (groupNames.length >= 2 && group.groupName !== entry.group) continue;
+
+      const routeNames = group.routes.map((r) => r.name);
+      renderRouteTabs(routeNames, laneLabelPrefix, routeTabsEl, entry, rerender);
+      const routesToShow = filterRoutesBySelection(group.routes, routeNames, entry);
+
+      const grid = document.createElement("div");
+      grid.className = routesToShow.length === 1 ? "lanes-grid lanes-grid--single" : "lanes-grid";
+      for (const route of routesToShow) {
+        grid.appendChild(buildLane(round, route, laneLabelPrefix, boulderFinalMode));
+      }
+      block.appendChild(grid);
+    }
+
+    // Filled in asynchronously by updateMultiNextLabels() below, same
+    // "don't block the render on a network round-trip" split as the
+    // single-round "Next up" strip (updateNextInSequence(), 6.19) - a
+    // column's next round doesn't change tick to tick, so this is a
+    // one-off lookup, not part of the 3s poll payload.
+    if (entry.sequenceIndex < entry.sequence.length - 1) {
+      const next = document.createElement("div");
+      next.className = "next-in-sequence";
+      next.dataset.columnIndex = i;
+      next.hidden = true;
+      block.appendChild(next);
+    }
+  });
+
+  updateMultiNextLabels(entries);
+}
+
+// Per-column "Next: …" line (6.23), mirroring updateNextInSequence()'s
+// single-strip version for normal Sequence mode - each column's own next
+// queued round, fetched and cached the same way (getRoundLabel(), keyed by
+// host+roundId - a round's category/round name never changes within a
+// session). `myToken` reuses the shared pollToken staleness guard so a
+// slower-resolving lookup from an earlier tick can't land after a newer
+// tick already moved that column on to a different round.
+async function updateMultiNextLabels(entries) {
+  const myToken = pollToken;
+  await Promise.all(
+    entries.map(async (entry, i) => {
+      if (entry.sequenceIndex >= entry.sequence.length - 1) return;
+      const next = entry.sequence[entry.sequenceIndex + 1];
+      const label = (await getRoundLabel(currentSelection.host, next.id)) ?? "…";
+      if (myToken !== pollToken) return; // superseded while fetching labels
+      const el2 = document.querySelector(`.next-in-sequence[data-column-index="${i}"]`);
+      if (!el2) return; // column re-rendered (e.g. a tab click) before this resolved
+      el2.hidden = false;
+      el2.innerHTML = "";
+      el2.appendChild(document.createTextNode("Next: "));
+      const strong = document.createElement("strong");
+      strong.textContent = label;
+      el2.appendChild(strong);
+    })
+  );
 }
 
 // A paired sequence entry's lockstep view (6.12): like renderBoard(), but
@@ -1743,6 +2401,7 @@ function renderPairedBoard(round, stageResult) {
   el.lanes.innerHTML = "";
   el.groupTabs.hidden = true;
   el.routeTabs.hidden = true;
+  el.boulderModeRow.hidden = true; // not reachable for Boulder (Speed-only view), but a stale toggle from a previous Boulder-final board must not linger here either
 
   if (!stageResult.heats.length) {
     const empty = document.createElement("div");
@@ -1840,6 +2499,7 @@ function renderTrainingBoard(round, index) {
   el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""}) — Training`.trim();
   el.lanes.innerHTML = "";
   el.groupTabs.hidden = true;
+  el.boulderModeRow.hidden = true; // Training is Speed-only, but a stale Boulder-final toggle from a previously-viewed Boulder round must not linger here
 
   const routes = collectRouteGroups(round).flatMap((g) => g.routes);
   if (!routes.length) {
@@ -1853,8 +2513,10 @@ function renderTrainingBoard(round, index) {
 
   const routeNames = routes.map((r) => r.name);
   const laneLabelPrefix = laneLabelPrefixFor(round);
-  renderRouteTabs(routeNames, laneLabelPrefix, () => renderTrainingBoard(trainingRoundData, trainingIndex));
-  const routesToShow = filterRoutesBySelection(routes, routeNames);
+  renderRouteTabs(routeNames, laneLabelPrefix, el.routeTabs, currentSelection, () =>
+    renderTrainingBoard(trainingRoundData, trainingIndex)
+  );
+  const routesToShow = filterRoutesBySelection(routes, routeNames, currentSelection);
 
   const grid = document.createElement("div");
   grid.className = routesToShow.length === 1 ? "lanes-grid lanes-grid--single" : "lanes-grid";
@@ -1903,7 +2565,15 @@ el.eventId.addEventListener("keydown", (e) => {
 });
 
 for (const btn of el.modeTabs.querySelectorAll(".mode-tab")) {
-  btn.addEventListener("click", () => setMode(btn.dataset.mode));
+  // Clears any error left over from the mode being switched away from (e.g.
+  // "Add at least one round to the sequence.") - setMode() itself can't do
+  // this unconditionally, since populateRounds() also calls it internally
+  // right after setting its own "This event has no categories/rounds."
+  // error, which that call must NOT wipe out again.
+  btn.addEventListener("click", () => {
+    showError("");
+    setMode(btn.dataset.mode);
+  });
 }
 setMode("single");
 
@@ -1924,7 +2594,7 @@ const initial = readUrlSelection() ?? loadSelection();
 if (initial?.host && initial?.eventId) {
   el.eventId.value = initial.eventId;
   el.host.value = initial.host;
-  if (initial.kind === "training" || initial.sequence?.length) {
+  if (initial.kind === "training" || initial.kind === "multi" || initial.sequence?.length) {
     // Jump straight to the board (or controller) so a bookmarked device
     // never has to see the setup screen; loadEvent() below fills the
     // dropdown in the background for when "switch round" is used later.
@@ -1932,7 +2602,11 @@ if (initial?.host && initial?.eventId) {
   }
   loadEvent().then(() => {
     const restoredRoundId =
-      initial.kind === "training" ? initial.roundId : initial.sequence?.[0]?.id ?? initial.sequence?.[0]?.a;
+      initial.kind === "training"
+        ? initial.roundId
+        : initial.kind === "multi"
+        ? initial.entries?.[0]?.sequence?.[0]?.id
+        : initial.sequence?.[0]?.id ?? initial.sequence?.[0]?.a;
     if (restoredRoundId && [...el.roundSelect.options].some((o) => o.value === restoredRoundId)) {
       el.roundSelect.value = restoredRoundId;
     }

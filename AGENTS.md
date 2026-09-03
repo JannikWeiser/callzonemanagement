@@ -278,9 +278,15 @@ previously-reported problems:
   side either - that's the exact mechanism that reintroduces the
   skip-ahead bug. See
   [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
-- **Training mode's Speed-only gating** (`updateTrainingEligibility()`,
-  `opt.dataset.speed`, `#trainingHint`) - don't remove this to "simplify" the
-  round dropdown. Boulder/Lead rounds don't fit Training mode's
+- **Training mode's Speed-only gating** - two layers, both needed.
+  `populateRoundSelect()` (using `loadedEntries`, kept around specifically
+  for this) filters `#roundSelect` itself to Speed-only rounds while
+  Training mode is active, called from `setMode()` on every mode switch,
+  not just once when the event loads. `updateTrainingEligibility()`/
+  `opt.dataset.speed`/`#trainingHint` are the older reactive fallback,
+  still needed for the case the filtered list is empty (an event with zero
+  Speed rounds) - don't remove either layer to "simplify" the round
+  dropdown. Boulder/Lead rounds don't fit Training mode's
   manual-roster-advance concept (no linear start order once Boulder
   starting groups split the field; Lead already has real live inference via
   Single round/Sequence mode). See
@@ -446,28 +452,286 @@ previously-reported problems:
   informational/troubleshooting text with no access-control concern, and
   deliberately stays visible in kiosk mode. See
   [ARCHITECTURE.md §6.21](ARCHITECTURE.md#621-host-label-next-to-the-status-line).
-- `#routeTabs`/`renderRouteTabs()`/`filterRoutesBySelection()`/
-  `currentSelection.route` (6.22) - route tabs dedicate a tablet to one or
-  several routes/boulders within whatever group is currently showing,
-  reusing the exact `group` mechanism (6.6/6.4) one level deeper.
-  `currentSelection.route` is `null` ("all") or an **array** of route names
-  (not a single string) - the URL param is a comma-separated list
-  (`route=1,3`). Always derive `routeNames` from the round/group actually
-  about to render and filter through `filterRoutesBySelection()`, which
-  intersects the selection against `routeNames` and falls back to "all
-  routes" only if NONE of the selection matches - never let a fully stale
-  selection (different round, different Boulder group) leave the board
-  silently empty. Switching groups must reset `currentSelection.route` to
-  null. Tab labels are prefixed with `laneLabelPrefixFor(round)` ("Route
+- `#routeTabs`/`renderGroupTabs()`/`renderRouteTabs()`/
+  `renderBoulderModeToggle()`/`filterRoutesBySelection()` (6.22/6.23) - route
+  tabs dedicate a tablet to one or several routes/boulders within whatever
+  group is currently showing, reusing the exact `group` mechanism (6.6/6.4)
+  one level deeper. **All four functions take an explicit `container`
+  (and, except `renderBoulderModeToggle()`, a `sel` object to read/write
+  `.group`/`.route` on) - they do NOT hardcode `el.groupTabs`/`el.routeTabs`/
+  `el.boulderModeRow`/`currentSelection` internally.** This is what lets
+  Multimode (6.23) give each column its own independent set of these
+  controls; `renderBoard()`/`renderTrainingBoard()` pass the singleton
+  `el.*` elements and `currentSelection` explicitly, `renderMultiBoard()`
+  passes a per-column `<div>` and that column's own entry object. Don't
+  revert to the old implicit-global-`currentSelection`/hardcoded-`el.*`
+  form when touching these - it would silently break Multimode's
+  per-column independence. `sel.route` is `null` ("all") or an **array** of
+  route names (not a single string) - the URL param is a comma-separated
+  list (`route=1,3`). Always derive `routeNames` from the round/group
+  actually about to render and filter through `filterRoutesBySelection()`,
+  which intersects the selection against `routeNames` and falls back to
+  "all routes" only if NONE of the selection matches - never let a fully
+  stale selection (different round, different Boulder group) leave the
+  board silently empty. Switching groups must reset `sel.route` to null.
+  Tab labels are prefixed with `laneLabelPrefixFor(round)` ("Route
   1"/"Lane A"/"Boulder 2", not the bare route name) - keep that in sync if
   a discipline's prefix ever changes. `.lanes-grid--single`'s bigger font
   sizes only apply when exactly one route ends up selected - don't reuse
-  those selectors for the normal multi-lane grid. Combining routes from
-  *different* rounds/categories on one tablet (e.g. Boulder 2 Männlich +
-  Weiblich side by side) is a distinct, larger feature (parallel polling of
-  multiple rounds) - do not attempt to bolt that onto `currentSelection.route`,
-  which only ever filters within the one round already being watched. See
+  those selectors for the normal multi-lane grid. See
   [ARCHITECTURE.md §6.22](ARCHITECTURE.md#622-route-tabs-dedicating-one-tablet-to-one-or-more-routesboulders).
+- **Sequence mode's builder** (6.10/6.12) - `renderSequenceBuilder()`,
+  `usedInSequenceBuilder()`, `el.addRoundToSequence`/`el.addPairedToSequence`,
+  `loadedEliminationEntries`. Redesigned to match Multimode's per-column
+  builder (6.23): every `sequenceBuilder` entry renders as its own live
+  `<select>` (a plain round) or two side-by-side `<select>`s (a paired
+  entry, 6.12) - **not** a static label plus a separate shared
+  `#roundSelect`/"Add" button pair. Don't reintroduce that shared-dropdown
+  pattern - it's exactly what caused a real bug (reported live, same as
+  Multimode's first version): "+ Add" appended whatever the one dropdown
+  currently showed, silently duplicating the entry already there if you
+  forgot to change it first.
+  **The actual `<select>`/remove-button DOM and the "what's already used"
+  set computation are shared with Multimode's column builder, not two
+  separate implementations** (6.24 cleanup, after both had independently
+  hit the exact same duplicate-seed bug once): `usedIdsExcluding(list,
+  excludeIndex, idsOf)` is the generic "collect ids claimed by every item
+  in `list` except the one at `excludeIndex`" primitive - Sequence mode's
+  `usedInSequenceBuilder(excludeIndex?)` calls it with `idsOf` returning
+  `[item.roundId]` for a plain entry or `[item.aId, item.bId]` for a
+  paired one; Multimode's per-column `usedInThisColumn(itemIndex)` (inside
+  `renderMultiColumnsConfig()`) calls it with `[item.roundId]` only, since
+  a column's items are never paired. `buildRoundSelect(candidates,
+  excluded, currentRoundId, onChange)` builds one live `<select>` (options
+  filtered by `excluded`, minus the row's own current value; wires the
+  `change` listener) and `buildRemoveButton(ariaLabel, onClick)` builds the
+  "×" button - both used by Sequence mode's rows (including each side of a
+  paired entry, via `buildSide()`'s own extra per-side exclusion) and
+  Multimode's rows. **If you fix a bug in one row's behavior, it's already
+  fixed in the other's too** - don't go looking for a second, separate copy
+  to patch. Every round already used anywhere in the list (both plain
+  `roundId` and both sides of `type: "paired"` entries) is excluded from
+  its own row's options (except the row's own current value), and the
+  "+ Add" handlers use the same set to auto-seed a new entry with something
+  not already used, never a duplicate by default. `#roundSelect`/`#categoryRow` are **not** used by
+  Sequence mode at all anymore (hidden via `setMode()`, same as Multimode) -
+  don't route a "quick add" through them again. `#sequenceRow`'s own
+  visibility is `currentMode !== "sequence"` only, **not** also gated on
+  `sequenceBuilder.length === 0` - the "+ Add round"/"+ Add paired entry"
+  buttons live inside it now, so gating the whole row on a non-empty list
+  would make it impossible to ever add the first entry (the exact
+  chicken-and-egg bug already fixed once for Multimode's column builder).
+  Drag-reorder (`dragstart`/`dragend`/`dragover`/`drop` on each `<li>`) is
+  unchanged and still works - don't remove it "for consistency" with
+  Multimode's per-column rows, which deliberately don't support it; order
+  matters here in a way it doesn't there.
+- **`#pairedEntryHint`** - a permanent visible label ("or interleave two
+  Speed finals:") between "+ Add round" and "+ Add paired entry", **must**
+  keep `el.pairedEntryHint.hidden` set to the exact same expression as
+  `el.addPairedToSequence.hidden` in `setMode()`
+  (`mode !== "sequence" || eliminationCount < 2`) - the two are meant to
+  always show/hide together. Added after the old `#pairedRow` block's own
+  inline explanation got silently dropped during the builder redesign
+  above and a user reported the whole feature as "missing" even though it
+  still worked - see
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+  **General lesson:** when replacing a control that carried its own inline
+  explanation, carry the explanation forward too - a control's stated
+  *purpose* is as much a feature as its click handler, not decoration to
+  drop during a redesign.
+- **Multimode** (6.23) - `currentSelection.kind === "multi"`,
+  `currentSelection.entries` (up to 5, each `{ sequence, sequenceIndex,
+  group, route }`), `pollMulti()`/`pollOneMultiColumn()`/`renderMultiBoard()`/
+  `updateMultiNextLabels()` on the board side; `multiColumnCount`/
+  `multiColumnDrafts`/`renderMultiColumnsConfig()`/`#multiSetup`/
+  `#multiCountTabs`/`#multiColumnsConfig` on the setup screen.
+  **`multiColumnDrafts[i]` is `{ items }`, not a bare array** - see the
+  comment above its `let` declaration for the full state machine.
+  **A fresh column stays at `items: []` until the user clicks "+ Add
+  Sequence" themselves - there is no auto-seed-from-nothing any more.**
+  This was removed after a live report (screenshot of a fresh Multimode
+  setup screen, both columns expected empty): an earlier version
+  auto-picked the first available round into a brand-new column with no
+  click at all, which read as the setup screen silently deciding for the
+  user. **Do not reintroduce an unconditional auto-seed of `items[0]` for
+  a column that has zero items** - `renderMultiColumnsConfig()` must leave
+  a zero-item column untouched. What's still true: **once a column has an
+  item, every row (including its first) renders as its own `<li>` with its
+  own live `<select>` - not a static label**, and changing any row's
+  dropdown updates that row's own `items[idx]` immediately via its own
+  `change` handler, no confirm click. "+ Add Sequence" (never "+ Add
+  round" - there's no separate confirm-the-first-pick step to word
+  differently) only ever *appends a new row*, pre-filled with the first
+  round not already used elsewhere in that same column. **Do not go back
+  to one shared dropdown + a button that appends "whatever it currently
+  shows"** - that was an even earlier design and a real bug, reported
+  live: clicking "+ Add Sequence" without first changing the dropdown just
+  duplicated the round already there. Every row's own `<select>` excludes
+  whichever round every *other* row in that column is already using (but
+  always includes its own current value) - prevented by not offering it,
+  not validated after the fact (see `usedInThisColumn()`/`buildRoundSelect()`
+  above, shared with Sequence mode). **There is no re-seed-on-invalidation
+  logic anywhere any more** - an earlier version swapped a column's lone
+  item for a new valid pick if a *different* column's choice locked a
+  discipline that invalidated it; that was removed along with the
+  cross-column lock itself (6.24) - nothing external to a column can
+  invalidate its own pick now, so there's nothing left to re-seed. Don't
+  reintroduce cross-column reseed logic without also reintroducing the
+  cross-column lock it existed to support. There is no `cleared` flag any more -
+  removed as dead code once the auto-seed-from-nothing case it used to
+  guard against was deleted; a zero-item column simply has no `items[0]`
+  and is never auto-filled regardless of *why* it's at zero (untouched, or
+  emptied via the list's "×" button - both look identical now).
+  **Each row's `<select>` only ever offers valid, unused options - there
+  is no separate validate-after-the-fact step anywhere.** `entries[]`
+  (from `populateRounds()`) carries `isSpeed` and `isBoulder` (both
+  derived from `format_identifier`'s prefix, confirmed for both - see the
+  fixture table). Lead is inferred by elimination ("not Speed, not
+  Boulder"), not guessed from its own prefix (rule 2 below still holds -
+  Lead's prefix itself was never confirmed). **The discipline lock is
+  per-column, not shared Multimode-wide (6.24) - do not reintroduce a
+  single cross-column `lockedDiscipline` variable.** Two different
+  columns are allowed to be different disciplines (one Boulder, one
+  Lead) - only a *single column's own* sequence has to stay one
+  discipline. `renderMultiColumnsConfig()`'s `availableFor(excludeIndex)`
+  computes this per column: it looks at any item in *that column's own*
+  `draft.items` other than the one at `excludeIndex`
+  (`.find((_, i) => i !== excludeIndex)`) and filters to that item's
+  discipline if one exists, or returns everything (both disciplines,
+  minus Speed) if this would be the column's only item. Called with each
+  row's own `itemIndex` when building that row's own `<select>` options,
+  and with `-1` (matches no real index) when computing what "+ Add
+  Sequence" may append next. This replaced an earlier version with a
+  single Multimode-wide `lockedDiscipline`, removed after a live report:
+  a user with both Lead and Boulder categories in one event found every
+  column silently locked to whichever discipline the *first* column
+  happened to pick first, hiding the other discipline everywhere -
+  reported as "I only ever see Boulder, I want to see both disciplines."
+  The old version needed the lock checked twice per column purely to
+  handle cross-column accumulation order (documented at length in
+  ARCHITECTURE.md §6.23's history) - none of that machinery exists any
+  more now that each column's lock only ever depends on itself.
+  **A column with zero rounds is valid, not an error** - `entry.sequence`
+  can be empty (a tablet reserving more columns than there are
+  currently-known categories); `pollOneMultiColumn()` short-circuits to
+  `{ empty: true }` without fetching anything, `renderMultiBoard()` renders
+  it with the same "Round finished" `.lane-finished` placeholder an
+  actually-finished round gets. `readUrlSelection()`'s `multi` parsing does
+  **not** filter out empty-sequence entries - don't reintroduce that
+  filter, it would silently drop reserved-but-unfilled columns from a
+  shared/deep-linked URL. "Show Multimode" only refuses
+  (`multiColumnDrafts.every(d => d.items.length === 0)`) if literally every
+  column is empty.
+  Columns render inside `.multi-columns` (`renderMultiBoard()` creates it
+  once and appends every `.multi-block` into it, not straight into
+  `el.lanes`) - a responsive `auto-fit`/`minmax(320px, 1fr)` grid, same
+  pattern `.lanes-grid` uses one level down for lane cards - so columns sit
+  side by side up to however many fit the screen, wrapping rather than
+  shrinking below 320px. Don't append `.multi-block`s directly to
+  `el.lanes` again - that was the original, stacked-not-side-by-side
+  layout, replaced because seeing every category at once (not one at a
+  time scrolling down) is the actual point of Multimode. **Don't add
+  `align-items: start` to `.multi-columns`** - a real bug, fixed after a
+  live report with a screenshot circling the result: columns rarely have
+  identical content length, so `start` let each `.multi-block` size to
+  only its own content, leaving bottom borders across one row at
+  different heights (an uneven-looking margin in the shared gutter below
+  the shorter column). Left at the grid default (`stretch`) so every card
+  in a row shares the tallest one's height. Card text inside
+  `.multi-block` is deliberately smaller than everywhere else (fixed `rem`
+  sizes, not the normal `clamp(...vw...)` - vw is relative to the whole
+  viewport, unrelated to one column's actual rendered width) - keep any
+  new Multimode-scoped size rule qualified `.multi-block .lane ...` (one
+  level more specific than `.lanes-grid--single`'s bonus-size rule, 6.22)
+  so a single-route-filtered column doesn't blow back up to that much
+  larger size. **`.multi-block .lanes-grid` has its own, smaller
+  `minmax(260px, 1fr)` grid floor - do not delete this override and fall
+  back to the shared, unscoped `.lanes-grid` rule's `minmax(320px, 1fr)`.**
+  A real bug, reported live with a screenshot: `.multi-columns` and
+  `.lanes-grid` both independently floor at 320px, but a Multimode column
+  at its own 320px floor only has ~278px of content width left after
+  `.multi-block`'s own padding/border - less than the 320px the *unscoped*
+  inner grid would demand for even one track, so it visibly overflowed
+  past the column's border (no `overflow: hidden` on `.multi-block`, so
+  this wasn't clipped, just visibly wrong). Verify with
+  `block.scrollWidth > block.clientWidth` on a `.multi-block` at a narrow
+  width if you suspect this regressed - that's how it was confirmed both
+  broken and fixed.
+  The count-tabs click handlers are wired with `.onclick =` (not
+  `addEventListener`) inside `populateRounds()`, same as every other
+  `el.X.onclick` there - `populateRounds()` re-runs on every "Load event"
+  click against the same static buttons, so `addEventListener` would stack
+  a new listener (with that call's now-stale `entries`/`host` closure) on
+  top of the previous load's every time. Each column's
+  `pollOneMultiColumn()` runs the exact same catch-up-through-finished-
+  rounds loop as `pollCurrent()` (6.10), just scoped to that column's own
+  `sequenceIndex` - columns advance independently, verified live by
+  mocking `isRoundFullyFinished()` to report only one column's round as
+  done and confirming only that column's `sequenceIndex` moved.
+  `sequenceIndex` is never persisted/encoded in the URL, same as the
+  top-level one - it always restarts at 0 and self-corrects via the
+  catch-up loop. A column's own fetch failure returns `{ error }` from
+  `pollOneMultiColumn()` and renders as a small message in just that
+  `.multi-block`, not a whole-board failure. A column with a real 2+-round
+  sequence gets its own "Next: …" line (`updateMultiNextLabels()`,
+  patching `.next-in-sequence[data-column-index]` per column) once it's
+  playing - same `getRoundLabel()`/`roundLabelCache`/`pollToken`-staleness-
+  guard pattern as `updateNextInSequence()`'s single strip for normal
+  Sequence mode (6.19), just addressed per column instead of one shared
+  element.
+  **Other real bugs already found here, each worth remembering the shape
+  of:** (1) any freshly-created per-column element (`groupTabsEl` etc. in
+  `renderMultiBoard()`) needs an explicit default `hidden` state at
+  creation, same as the singleton `el.groupTabs`/`el.boulderModeRow` get at
+  the top of `renderBoard()`/`renderTrainingBoard()`/`renderPairedBoard()`
+  - otherwise it defaults to visible-and-empty whenever the branch that
+  would populate/hide it doesn't run. (2) `entries[].roundId` (from
+  `populateRounds()`) **must be a string** - `round.category_round_id`
+  comes back as a number from results.info, but every other roundId in
+  this app (URL params, `<select>` values, sequence tokens) is a string; a
+  `===` lookup against one of those silently never matches otherwise -
+  this one meant the cheap Speed pre-check never fired, and a Speed round
+  added *first* to a Multimode column was accepted outright instead of
+  rejected, only found by re-testing every rejection path after a fresh
+  page reload. (3, historical - the very first version of this setup
+  screen, structurally impossible now) a button's visibility condition and
+  its own click handler's guard condition must match exactly, or a silent
+  no-op reads as a broken button, not a disabled/nudging one - the
+  count-picker redesign sidesteps this class of bug entirely rather than
+  just patching it, since "Show Multimode" is never reachable with fewer
+  than 2 columns to begin with. (4) Lesson (1) above got missed for one of
+  its own siblings: `renderMultiBoard()`'s `routeTabsEl` was created
+  *without* a default `hidden = true` (unlike `groupTabsEl` right next to
+  it, which does have one) - a round with no route/`starting_groups` data
+  at all returns early (the "No route data for this round." branch) before
+  `renderRouteTabs()` ever runs to hide it, leaving a visible empty gap.
+  Fixed by giving it the same default. **If you add another per-column
+  element here, give it an explicit default `hidden` state even if "the
+  code that would show it always runs anyway" seems obviously true** - it
+  wasn't, twice now. (5) `pollMulti()` used to always report
+  `el.statusLine` as "Updated ..." even when every column's fetch failed
+  this tick, because `pollOneMultiColumn()` catches its own fetch errors
+  and returns `{ error }` rather than throwing or returning `null` (so
+  `pollMulti()`'s only bail-out check never caught it) - unlike every other
+  poll path (`pollRound`/`pollCurrent`/the paired poll), which all set
+  "Connection lost: ..." + the `stale` class on the same kind of failure.
+  Fixed: `pollMulti()` now checks whether every *configured* (non-empty)
+  column's result carries `.error` and, if so, reports "Connection lost"
+  the same way. Keep this check if `pollOneMultiColumn()`'s error shape
+  ever changes - the status line is the one thing staff glance at to judge
+  whether the whole tablet, not just one round, is still updating. See
+  [ARCHITECTURE.md §6.23](ARCHITECTURE.md#623-multimode-up-to-5-categories-side-by-side-each-with-its-own-independent-sequence).
+- **`el.setupError` is not cleared by `setMode()` itself** - clicking a
+  mode tab clears it (in the tab's own `click` listener, wrapping
+  `setMode()`), but `populateRounds()`'s *internal* call to `setMode()`
+  deliberately does not, since `populateRounds()` may have just set its
+  own "This event has no categories/rounds." error immediately before that
+  call and must not wipe it out again. **Do not move `showError("")` into
+  `setMode()` itself** - that would silently swallow the "no
+  categories/rounds" error the moment the event loads. If a future
+  `setMode()` call site needs the error cleared, clear it explicitly at
+  that call site, the way the mode-tab click listener does, rather than
+  inside `setMode()`.
 
 If a change requires touching one of these, update the corresponding
 ARCHITECTURE.md section in the same change — don't let the doc drift from
@@ -502,6 +766,7 @@ athlete data — no need to hunt for a live competition to test against.
 | `stage` | 1593 | `13678` (LEAD U15+ w Quali) | `status: "finished"` — completed-round rendering |
 | `stage` | 1593 | e.g. `13679`, `13685` | `status: "pending"`, empty startlist — baseline not-started-round case |
 | `stage` | 1593 | `13833` (BOULDER Herren+ Finale) | `format_identifier: "boulder_finals_ifsc_2026"`, real live-judged data (not the hand-edited `dav-stage` test event) — 8 finalists, 4 boulders, gap 4. The fixture that exposed the "candidate shown too close" bug in the not-yet-reached readiness check and verified its fix (6.17, "World Series" mode): at the point observed, Boulder 4's own candidate was still 3 heats out (Boulder 3 - the boulder immediately before it - had 3 more heats of its own queue to clear), reported live off this exact round. Also the round used to verify the toggle itself only appears for Boulder final rounds (not Qualification) and that already-reached boulders (Route 1 finished, Routes 2/3 with real climbers) render byte-identical regardless of which mode is selected. |
+| `stage` | 1593 | mixed BOULDER + LEAD rounds (e.g. `13814` BOULDER Damen+ Quali + `13680` LEAD U11 m Quali) | Has both disciplines in the same event, unlike 1595's Boulder-only rounds — the fixture used to verify Multimode's per-column discipline lock (6.24): column 1 left on Boulder, column 2's own row `<select>` switched to a Lead round and stayed correctly offered both disciplines until its own first pick committed it, with column 1 completely unaffected. |
 | `stage` | 1594 "Lead TTT Alex & Corinna" | `13709` (BOULDER Herren+ Quali) | `starting_groups` (Group A/B, 5 routes each), format `boulder_two_groups_ifsc_2026` — the Boulder-groups AND the rotation-format case. Real `route_start_positions` here confirmed the staggered per-boulder queue order (§5.6). **Caveat:** by now hand-edited across many separate test sessions/days (see each ascent's `modified` timestamp) — no longer represents a realistic single live rotation, don't trust it for "is the current climber plausible" checks; use a controlled mock (reset every route's ascents, then fill in only what a real fresh rotation would have) for that instead, the way §5.6's fix was actually verified. |
 | `stage` | 1594 | `13719` (SPEED Herren+ Quali) | Speed qualification, routes `"A"`/`"B"` |
 | `stage` | 1594 | `13689` (LEAD Herren+ Quali) | `status: "pending"` with 6 routes defined (no startlist published yet as of investigation) |
@@ -523,7 +788,7 @@ athlete data — no need to hunt for a live competition to test against.
 | `saccas` | `995` "Bächli Bergsport Kids Climbing Cup 2026" | — | Confirmed `sac-cas.results.info` (Swiss Alpine Club) identical shape when this host was added. |
 | `stage` | 1595 "Anleitung CallzoneManagement" | `13750` (LEAD Damen+ Quali) | **Two bugs reproduced here, at different times.** (1) Route with `"active"`/gap results at positions 4,5,6,7,9 but permanently-pending gaps at 1,2,3,8 (simulated no-shows) — correct "at the wall" is the position after the last confirmed one, not the first pending one. (2) Live-judging: Route 1 stayed `"active"` (never `"confirmed"`) for several athletes while Route 2's entries progressed to `"confirmed"` - proved `"active"` ≠ done, see Quirk C. This is the user's ongoing edge-case test round for this exact algorithm; keep checking it (or a fresh equivalent) whenever touching `findCurrentIndex()`/`computeLane()`. |
 | `stage` | 1595 | `13782` (SPEED Damen+ Finale) | **The stage-advancement bug, reproduced.** `status: "under_appeal"`; stage "1/8" fully confirmed, stage "1/4" heat 9 already confirmed but heats 10-12 still pending — correct behavior is to show heat 10 as current, not get stuck on heat 9 or on stage "1/8". Also the source of the `"active"` ascent-status and `"under_appeal"` round-status values documented in Quirks C/D. |
-| `stage` | 1595 | `13769`/`13770` (BOULDER Herren+/Damen+ Quali) | Active status, `starting_groups`, but zero results yet as of investigation — baseline "round started, nobody's climbed a given route yet" case. |
+| `stage` | 1595 | `13769`/`13770` (BOULDER Herren+/Damen+ Quali) | Active status, `starting_groups`, but zero results yet as of investigation — baseline "round started, nobody's climbed a given route yet" case. Also the fixture for Multimode's (6.23) initial live verification: a two-column Multimode selection with column 1 = `13769` → `13785` (Herren+ Quali → Finale) and column 2 = `13770` (Damen+ Quali) confirmed independent per-column group/route filtering and, via a mocked `isRoundFullyFinished()`, independent per-column auto-advance (only column 1's `sequenceIndex` moved when only its round was reported finished). |
 | `stage` | 1595 | `13785`/`13786` (BOULDER Herren+/Damen+ Finale) | `format_identifier: "boulder_finals_one_by_one"` — a Boulder finals format not seen elsewhere, but same `routes[]` shape as qualification, so no special-casing needed. `status: "pending"`, no startlist yet as of investigation. |
 
 Event 1595 in particular is worth checking for fresh data on any future

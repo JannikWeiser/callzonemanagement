@@ -7,7 +7,171 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Fixed
+- **Boulder/route cards could visibly overflow past a Multimode column's own
+  border** — `.lanes-grid`'s shared `minmax(320px, 1fr)` grid-column floor
+  (used everywhere in the app) doesn't account for `.multi-block`'s own
+  padding/border, so a Multimode column at or near its own 320px minimum
+  had less than 320px of content width left, but its inner boulder/route
+  grid still demanded 320px per track — visibly poking out past the
+  column's border instead of wrapping. Reported live with a screenshot.
+  Fixed with a Multimode-scoped, smaller floor (`minmax(260px, 1fr)`) on
+  `.multi-block .lanes-grid`, verified overflow-free at multiple widths
+  down to the narrowest column size. See
+  [ARCHITECTURE.md §6.23](ARCHITECTURE.md#623-multimode-up-to-5-categories-side-by-side-each-with-its-own-independent-sequence).
+- **Multimode's shared status line kept saying "Updated ..." during a real
+  results.info outage** — `pollOneMultiColumn()` catches its own fetch
+  errors and returns `{ error }` instead of throwing, so `pollMulti()`'s
+  only bail-out check (`results.some(r => r === null)`) never caught an
+  all-columns failure, unlike every other poll path in the app
+  (`pollRound`/`pollCurrent`/the paired poll), which all show "Connection
+  lost: ..." on the same kind of failure. `pollMulti()` now checks whether
+  every configured column's result carries an error and reports
+  "Connection lost" the same way, recovering automatically once any tick
+  succeeds again. Found by a structured code review, not a live report.
+  See [ARCHITECTURE.md §6.23](ARCHITECTURE.md#623-multimode-up-to-5-categories-side-by-side-each-with-its-own-independent-sequence).
+- **A stale setup error banner survived switching setup modes** — e.g.
+  clicking "Show sequence" with an empty sequence, then switching to the
+  Multimode tab, left the Sequence-mode error message on screen over the
+  now-showing Multimode UI. `setMode()` itself still can't clear it
+  unconditionally (`populateRounds()` calls it internally right after
+  setting its own "no categories/rounds" error), so the mode-tab click
+  listener now clears it explicitly before calling `setMode()`. See
+  [ARCHITECTURE.md §6.25](ARCHITECTURE.md#625-cleanup-pass-a-stale-setup-error-banner-and-merging-sequencemultimodes-row-builder-duplication).
+- **A Multimode column with no route data left a visible empty gap** —
+  `renderMultiBoard()`'s `routeTabsEl` had no default `hidden = true`
+  (unlike its sibling `groupTabsEl`, which does), so a round with no
+  `routes`/`starting_groups` at all showed a blank margin above "No route
+  data for this round." Now defaults to hidden like every other
+  freshly-created per-column element. See
+  [ARCHITECTURE.md §6.23](ARCHITECTURE.md#623-multimode-up-to-5-categories-side-by-side-each-with-its-own-independent-sequence).
+- **A stale code comment still described the discipline lock as shared
+  across every Multimode column** — left over from before it became
+  per-column (§6.24); rewritten to match what `availableFor()` actually
+  does.
+- **"+ Add paired entry" (interleaved Speed finals) had no explanation left
+  in the UI, reported as the feature being missing** — the Sequence-mode
+  builder redesign (see "Changed" below) dropped the old `#pairedRow`
+  block's inline explanatory sentence along with its static controls,
+  leaving a bare button next to "+ Add round" with no hint what it does.
+  The underlying paired lockstep/switch-button mechanism was never broken
+  (re-verified live end to end). Added `#pairedEntryHint`, a small
+  permanent label ("or interleave two Speed finals:") between the two
+  buttons, visible under the same condition as the button itself. See
+  [ARCHITECTURE.md §6.12](ARCHITECTURE.md#612-paired-sequence-entries-interleaving-speed-finals-between-categories).
+- **Uneven, inconsistent-looking borders between Multimode columns** —
+  `.multi-columns` set `align-items: start`, so each `.multi-block` was
+  only as tall as its own content; columns rarely have identical content
+  length (one with a "Next: …" line, one without; different route counts),
+  so the bottom borders across one row landed at different heights,
+  reported live with a screenshot showing the resulting uneven margins.
+  Now left at the grid default (`stretch`), so every card in a row shares
+  the tallest one's height and the borders line up cleanly.
+- **"+ Add Sequence" could add a duplicate of the round already shown** —
+  the button appended whatever the one shared dropdown currently showed,
+  which (unless the user had changed it first) was the same round the
+  column was already displaying. Redesigned: every step of a column's
+  sequence is now its own live dropdown (not just the first), each
+  excluding whichever round every other step in that column already uses,
+  and "+ Add Sequence" always seeds its new step with an unused round.
+  While fixing this, found and fixed a second bug in the discipline-lock
+  logic: a column with an already-built 2+-round sequence wasn't
+  contributing to the lock in time for its *own* re-render, so its later
+  steps briefly listed every discipline again right after being edited.
+- **Multimode's Speed rejection never actually fired (type mismatch)** —
+  `populateRounds()` stored `roundId` as the raw number
+  `round.category_round_id` from the API, but every other roundId in this
+  app (URL params, `<select>` values, sequence tokens) is a string. The
+  Multimode discipline-lock lookup (`entries.find(e => e.roundId ===
+  roundId)`) used strict equality, so it silently never matched - the
+  cheap Speed pre-check never ran, and if a Speed round was the *first*
+  one added to a Multimode column, it was accepted outright (no
+  rejection, `multiDiscipline` locked to "Speed") instead of being turned
+  away. Fixed at the source: `entries[].roundId` is now always a string.
+  Found and fixed only after re-testing every rejection path with a fresh
+  page load rather than trusting the first pass.
+- **Stale "Boulder final format" toggle leaking into Training mode and the
+  paired Speed sequence view** — `renderTrainingBoard()` and
+  `renderPairedBoard()` never reset `#boulderModeRow`, so if a Boulder
+  final round had been viewed earlier in the session, its Intervall/World
+  Series toggle stayed visible (and clickable) after switching to a Speed
+  Training session or a paired Speed sequence, even though neither can
+  ever be Boulder. Both now hide it unconditionally at the top of their
+  render function, same as `renderBoard()`/`renderMultiBoard()` already
+  did.
+- **Empty, visible "group tabs" gap in Multimode columns without Boulder
+  starting groups** — `renderMultiBoard()`'s per-column `groupTabsEl` was
+  created without an explicit default `hidden` state; for a round that
+  never gets a group-tabs row (anything but a multi-group Boulder round -
+  in particular every Lead round), the empty container was left visible,
+  showing as a blank gap between the column heading and its route tabs.
+  Now defaults to `hidden` like the singleton `#groupTabs` does in
+  `renderBoard()`, only shown once `renderGroupTabs()` actually has
+  something to put in it.
+
 ### Changed
+- **Sequence mode's and Multimode's row builders now share their
+  underlying code instead of two near-identical copies** — both were
+  explicitly built to match each other's interaction pattern and had
+  independently hit the exact same "+ Add duplicates what's already
+  showing" bug before being fixed separately. Extracted three shared
+  primitives: `usedIdsExcluding()` (what round ids are already claimed
+  elsewhere in a list), `buildRoundSelect()` (one live, self-filtering
+  `<select>` row), and `buildRemoveButton()` (the "×" remove control). No
+  behavior change — regression-tested both modes' add/edit/remove/exclude
+  flows before and after. Also removed two pieces of dead state found
+  during the same pass: `renderMultiColumnsConfig()`'s unused `host`
+  parameter, and Multimode draft items' write-only `label` field. See
+  [ARCHITECTURE.md §6.25](ARCHITECTURE.md#625-cleanup-pass-a-stale-setup-error-banner-and-merging-sequencemultimodes-row-builder-duplication).
+- **`#pairedEntryHint` and `#addPairedToSequence` now derive their visibility
+  from one written condition instead of two separately-typed copies of the
+  same expression** — purely internal, no observable change; reduces the
+  risk of the two silently drifting apart on a future edit to either.
+- **A redundant CSS rule removed** (`public/styles.css`) — `.sequence-pair
+  select` duplicated `.sequence-item select`'s identical declaration; since
+  `.sequence-pair` is always a direct child of a `.sequence-item`, the
+  broader selector already covered it.
+- **Multimode columns can now mix disciplines — one column can show Boulder
+  while another shows Lead** — the discipline lock used to be shared
+  across the whole selection, so whichever column picked first (Lead or
+  Boulder) silently locked every other column to that same discipline;
+  reported live as "I only ever see Boulder, I want to see both
+  disciplines." The lock is now computed per column instead: a column's
+  own sequence still has to stay one discipline throughout ("Quali →
+  Finale" for one category), but different columns are fully independent
+  of each other. This also simplified `renderMultiColumnsConfig()` —
+  the old shared lock needed a two-pass, checked-twice-per-column
+  computation purely to handle cross-column accumulation order, which no
+  longer exists now that a column's lock only ever depends on itself. See
+  [ARCHITECTURE.md §6.24](ARCHITECTURE.md#624-multimode-discipline-lock-is-per-column-not-shared-across-the-whole-selection).
+- **Multimode columns no longer auto-pick a first round — "+ Add Sequence"
+  is now required for every entry, including the first** — a fresh column
+  used to silently pre-fill itself with the first available round with no
+  click at all; reported live (screenshot of a fresh setup screen) that
+  every column should start truly empty instead, requiring the same
+  deliberate "+ Add Sequence" click the second and later entries already
+  needed. Removed the auto-seed-from-nothing branch entirely. The
+  now-unused `cleared` flag (it only ever existed to stop that auto-seed
+  from undoing a deliberately emptied column) was removed along with it.
+  See
+  [ARCHITECTURE.md §6.23](ARCHITECTURE.md#623-multimode-up-to-5-categories-side-by-side-each-with-its-own-independent-sequence).
+- **Sequence mode's builder redesigned to match Multimode's** — every
+  entry in the list (a plain round, or one side of a paired Speed entry,
+  6.12) is now its own live `<select>`, not a static label added via a
+  separate shared dropdown+button. "+ Add round"/"+ Add paired entry"
+  always seed a new entry with round(s) not already used elsewhere in the
+  sequence, so nothing is ever added as a duplicate by default — the same
+  bug class just fixed in Multimode's own builder. Drag-reorder is kept.
+  The shared "Category / round" picker is no longer used by Sequence mode
+  at all (it now picks entirely within its own section, like Multimode
+  does). See
+  [ARCHITECTURE.md §6.10](ARCHITECTURE.md#610-sequence-mode-an-ordered-playlist-of-rounds-auto-advancing).
+- **Training mode's round picker only lists Speed rounds** — previously
+  showed every round in the event and only turned away a Lead/Boulder
+  pick after the fact (a disabled "Start training" button plus a hint).
+  Same "don't offer what can't be used" approach Multimode's discipline
+  filtering already uses. See
+  [ARCHITECTURE.md §6.13](ARCHITECTURE.md#613-training-mode-manual-advance-same-rosterorder-as-qualification-controllable-from-a-second-device).
 - **"Switch round" button hidden in fullscreen/kiosk mode**, same as the
   share-link row — clutter on an unattended wall display, rarely needed
   mid-event, always reachable by exiting fullscreen first. Group tabs,
@@ -16,6 +180,40 @@ section number); this file is the *what happened, when* log.
   [ARCHITECTURE.md §6.7](ARCHITECTURE.md#67-kiosk-mode-fullscreen--wake-lock-behind-one-button).
 
 ### Added
+- **Multimode — up to 5 categories side by side, each with its own
+  independent sequence** — a fourth setup mode alongside Single round /
+  Sequence / Training. Each column has its own heading, group tabs,
+  Boulder-format toggle, and route tabs (fully independent of the other
+  columns), and can itself be a multi-round sequence ("Quali → Finale")
+  that auto-advances on its own schedule whenever that column's own current
+  round finishes — unrelated to what the other columns are doing. Lead and
+  Boulder only; Speed is out of scope. Setup screen: pick a column count
+  (2–5) first, then fill in a dedicated card per column — its own round
+  picker and its own small round list, all visible and editable at once.
+  Whatever a column's round picker currently shows is that column's round
+  with no click needed — and this applies to every step of a sequence, not
+  just the first: each step is its own live dropdown, and "+ Add Sequence"
+  only ever appends a new step (pre-filled with a round not already used
+  in that column, never a duplicate by default). Every step's own picker
+  only ever offers rounds that are Lead/Boulder (never Speed), match
+  whichever discipline an earlier column already locked in, and aren't
+  already used elsewhere in that same column — nothing invalid or
+  duplicate can be selected in the first place, so there's no error
+  message for the common case anymore. A column doesn't need a round configured at
+  all (useful for reserving more columns than there are currently-known
+  categories to fill them with) - it just shows the same "Round finished"
+  placeholder an actually-finished round gets; "Show Multimode" only
+  refuses if every column is empty. A column with an actual 2+-round
+  sequence shows its own "Next: …" line on the board once it's playing,
+  same idea as the existing single-strip version in normal Sequence mode.
+  Columns render side by side in a responsive grid (as many as fit the
+  screen width, wrapping onto further rows otherwise, one per row below
+  640px) - the actual point being to see every category at once on a big
+  enough display - and card text inside Multimode is noticeably smaller
+  than everywhere else in the app (fits 25+ characters per line even at
+  the narrowest column width), so a narrow column stays readable. Share
+  link/QR code work the same way as every other mode. See
+  [ARCHITECTURE.md §6.23](ARCHITECTURE.md#623-multimode-up-to-5-categories-side-by-side-each-with-its-own-independent-sequence).
 - **Route tabs — dedicate one tablet to one or more routes/boulders** — a
   new tab row below the group tabs lets a tablet show just "Boulder 2" (or
   several, e.g. "Boulder 1" + "Boulder 3" together) instead of the full

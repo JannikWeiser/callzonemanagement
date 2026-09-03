@@ -34,6 +34,7 @@
     <button type="button" class="mode-tab" data-mode="single">Single round</button>
     <button type="button" class="mode-tab" data-mode="sequence">Sequence</button>
     <button type="button" class="mode-tab" data-mode="training">Training</button>
+    <button type="button" class="mode-tab" data-mode="multi">Multimode</button>
   </div>
 
   <div id="categoryRow" class="setup-row" hidden>
@@ -42,29 +43,37 @@
       <select id="roundSelect"></select>
     </label>
     <button id="watchRound">Show</button>
-    <button id="addToSequence" class="ghost">+ Add to sequence</button>
     <button id="startTraining">Start training</button>
   </div>
   <div id="trainingHint" class="training-hint" hidden>
     Training mode is designed for Speed rounds only. Pick a Speed round, or use Single round / Sequence for Lead and Boulder.
   </div>
 
-  <div id="pairedRow" class="setup-row" hidden>
-    <label class="grow">
-      Interleave two Speed finals
-      <select id="pairedA"></select>
-    </label>
-    <label class="grow">
-      with
-      <select id="pairedB"></select>
-    </label>
-    <button id="addPaired" class="ghost">+ Add paired entry</button>
+  <div id="sequenceRow" class="sequence-row" hidden>
+    <div id="sequenceLabel" class="sequence-label">Sequence (drag to reorder) — plays through in order, auto-advancing once each entry finishes:</div>
+    <ol id="sequenceList" class="sequence-list"></ol>
+    <div class="setup-row">
+      <button id="addRoundToSequence" class="ghost">+ Add round</button>
+      <span id="pairedEntryHint" class="paired-entry-hint" hidden>or interleave two Speed finals:</span>
+      <button id="addPairedToSequence" class="ghost" hidden>+ Add paired entry</button>
+    </div>
+    <button id="watchSequence">Show sequence</button>
   </div>
 
-  <div id="sequenceRow" class="sequence-row" hidden>
-    <div class="sequence-label">Sequence (drag to reorder) — plays through in order, auto-advancing once each entry finishes:</div>
-    <ol id="sequenceList" class="sequence-list"></ol>
-    <button id="watchSequence">Show sequence</button>
+  <div id="multiSetup" hidden>
+    <div class="setup-row">
+      <label>
+        Categories side by side
+        <div id="multiCountTabs" class="mode-tabs">
+          <button type="button" class="mode-tab active" data-count="2">2</button>
+          <button type="button" class="mode-tab" data-count="3">3</button>
+          <button type="button" class="mode-tab" data-count="4">4</button>
+          <button type="button" class="mode-tab" data-count="5">5</button>
+        </div>
+      </label>
+    </div>
+    <div id="multiColumnsConfig" class="multi-columns-config"></div>
+    <button id="watchMulti">Show Multimode</button>
   </div>
 
   <footer class="setup-footer">

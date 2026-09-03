@@ -85,6 +85,17 @@ h1 {
   margin-bottom: 0.6rem;
 }
 
+/* Explains what "+ Add paired entry" actually does (6.12) - without this,
+   the button alone gives no hint that it interleaves two Speed finals
+   rather than adding one more plain round. Deliberately a permanent,
+   visible label rather than a `title` tooltip - this app runs on tablets,
+   where hover tooltips are effectively undiscoverable. */
+.paired-entry-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  align-self: center;
+}
+
 .sequence-list {
   list-style: decimal;
   padding-left: 1.4rem;
@@ -107,6 +118,29 @@ h1 {
 }
 .sequence-item.dragging { opacity: 0.4; }
 .sequence-item span { overflow-wrap: anywhere; }
+/* Every sequence entry (Sequence mode, 6.10, and Multimode's per-column
+   steps, 6.23) is a live <select> now rather than a static label - flex
+   with min-width: 0 so a long round name doesn't force the row wider than
+   its list and push the "×" out, letting the select's own rendering
+   shrink/ellipsis instead. */
+.sequence-item select { flex: 1; min-width: 0; }
+
+/* A paired ("interleave two Speed finals", 6.12) entry's two sides sit in
+   their own inner flex row so the outer .sequence-item still only has two
+   top-level children (this wrapper, the remove button) - same
+   space-between layout a plain entry's single select + button already
+   use, just with two selects grouped inside the first slot. */
+.sequence-pair {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+/* No separate `.sequence-pair select` rule needed - .sequence-pair is
+   always a direct child of a .sequence-item <li>, so the descendant
+   selector above already matches both selects inside it. */
+.sequence-pair-sep { color: var(--muted); flex-shrink: 0; }
 
 .sequence-remove {
   background: transparent;
@@ -118,6 +152,30 @@ h1 {
   cursor: pointer;
 }
 .sequence-remove:hover { color: var(--danger); }
+
+/* Not draggable, unlike the plain sequence-item it otherwise matches -
+   Multimode's per-column round lists (6.23) don't support reordering. */
+.sequence-item--static { cursor: default; }
+
+/* Multimode setup (6.23): one config card per column, side by side on a
+   wide screen (same spirit as the board's own lanes-grid), stacking on
+   narrow ones. */
+.multi-columns-config {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin: 0.5rem 0 1.25rem;
+}
+
+.multi-column-config {
+  background: var(--panel);
+  border: 1px solid #333846;
+  border-radius: 14px;
+  padding: 1rem;
+}
+
+.multi-column-config .sequence-list { margin-bottom: 0.75rem; }
+.multi-column-config > button { width: 100%; }
 
 input, select, button {
   font-size: 1rem;
@@ -452,6 +510,75 @@ button.ghost {
 .lanes-grid--single .card--at-wall .card-athlete { font-size: clamp(2.4rem, 8vw, 5rem); }
 .lanes-grid--single .card--on-deck .card-athlete { font-size: clamp(1.8rem, 5vw, 3rem); }
 .lanes-grid--single .queue-list { font-size: 1.3rem; }
+
+/* Multimode (6.23) - every column side by side, wrapping onto further rows
+   only once the screen is too narrow to fit them all on one - the point is
+   seeing every category at once on a big enough display. minmax's 320px
+   floor matches .lanes-grid's own (5.6/6.6) so a column never gets so
+   narrow its own lane cards would have to squeeze below their normal
+   minimum width. */
+.multi-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.5rem;
+  /* Default (stretch), not "start" - columns rarely have exactly the same
+     amount of content (a Boulder round with 4 boulders next to one with 3,
+     a column with a "Next: …" line next to one without, etc.). "start"
+     let each .multi-block size to only its own content, so the bottom
+     borders across one row landed at different heights - the row's gutter
+     was only bordered on one side below the shortest column, reading as a
+     misaligned/uneven margin. Stretching lets every card in a row share
+     the tallest one's height instead, with the extra space just trailing
+     empty inside the shorter ones - a normal, clean card-grid look. */
+}
+
+/* One block per column, each with its own heading/tabs/lanes - a bordered
+   card (not the same fill as the .lane cards it contains, so those still
+   stand out against it) rather than the plain stacked-with-a-divider look
+   the single-column version used, since separation now has to work in two
+   dimensions once columns wrap. */
+.multi-block {
+  border: 1px solid #333846;
+  border-radius: 16px;
+  padding: 1.25rem;
+}
+
+@media (max-width: 640px) {
+  .multi-columns { grid-template-columns: 1fr; }
+}
+
+/* Smaller text inside Multimode columns only - a column can be as narrow
+   as the 320px grid floor above, and the normal card sizing (tuned for one
+   lane owning the full screen width) wraps far too early there. Sized so
+   at least ~25 characters fit on one line even at that 320px floor.
+   Deliberately fixed rem sizes, not the vw-based clamp() the normal cards
+   use - vw is relative to the whole viewport, which has no relation to
+   how wide one column actually renders at when several sit side by side.
+   Selectors are one level more specific than .lanes-grid--single's own
+   (6.22) so this always wins regardless of source order, and a single
+   filtered route within a Multimode column doesn't blow back up to that
+   bonus size meant for a lane owning the whole screen. */
+/* .lanes-grid's own 320px-per-track floor (above) is sized for a lane
+   owning the whole page width - reused as-is inside a Multimode column,
+   its content (minus the column's own 1.25rem padding + 1px border each
+   side) can be narrower than 320px even for a single track, so the grid
+   demanded more width than the column actually had and visibly overflowed
+   past the column's own border (reported live with a screenshot). Lowered
+   to a floor that always fits within `.multi-block`'s own 320px minimum
+   (320 - 2*20px padding - 2*1px border = 278px available, 260px leaves
+   margin) - still wide enough for the smaller Multimode card sizes below
+   to render cleanly, and still lets several boulders/routes sit side by
+   side within one column once it's wide enough for that. */
+.multi-block .lanes-grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+
+.multi-block .lane { padding: 0.85rem; }
+.multi-block .lane .lane-heading { font-size: 0.7rem; margin-bottom: 0.5rem; }
+.multi-block .lane .card { padding: 0.55rem 0.7rem; margin-bottom: 0.5rem; }
+.multi-block .lane .card-label { font-size: 0.6rem; margin-bottom: 0.15rem; }
+.multi-block .lane .card--at-wall .card-athlete { font-size: 1rem; }
+.multi-block .lane .card--on-deck .card-athlete { font-size: 0.9rem; }
+.multi-block .lane .queue-list { font-size: 0.8rem; margin-top: 0.5rem; gap: 0.25rem; }
+.multi-block .next-in-sequence { font-size: 0.75rem; padding-top: 0.6rem; margin-top: 0.4rem; }
 
 .controller {
   max-width: 480px;
