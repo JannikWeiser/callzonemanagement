@@ -34,7 +34,7 @@
     <button type="button" class="mode-tab" data-mode="single">Single round</button>
     <button type="button" class="mode-tab" data-mode="sequence">Sequence</button>
     <button type="button" class="mode-tab" data-mode="training">Training</button>
-    <button type="button" class="mode-tab" data-mode="multi">Multimode</button>
+    <button type="button" class="mode-tab" data-mode="multi">Split View</button>
   </div>
 
   <div id="categoryRow" class="setup-row" hidden>
@@ -61,6 +61,7 @@
   </div>
 
   <div id="multiSetup" hidden>
+    <div class="training-hint">Split View supports Lead and Boulder only - Speed rounds aren't available here. Use Single round, Sequence, or Training mode for Speed.</div>
     <div class="setup-row">
       <label>
         Categories side by side
@@ -73,7 +74,7 @@
       </label>
     </div>
     <div id="multiColumnsConfig" class="multi-columns-config"></div>
-    <button id="watchMulti">Show Multimode</button>
+    <button id="watchMulti">Show Split View</button>
   </div>
 
   <footer class="setup-footer">

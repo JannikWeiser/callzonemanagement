@@ -539,6 +539,14 @@ previously-reported problems:
   explanation, carry the explanation forward too - a control's stated
   *purpose* is as much a feature as its click handler, not decoration to
   drop during a redesign.
+- **Multimode - displayed as "Split View" in the UI, code/docs still say
+  "Multimode"/"multi" throughout.** The mode tab, "Show Split View"
+  button, and board heading text are the only things that changed; the
+  `multi` URL param, `data-mode="multi"`, and every internal identifier
+  are unchanged on purpose (renaming the URL param would break
+  already-shared links). Don't "finish the rename" into code/doc
+  identifiers without being asked - it's a deliberate, scoped choice, not
+  an oversight.
 - **Multimode** (6.23) - `currentSelection.kind === "multi"`,
   `currentSelection.entries` (up to 5, each `{ sequence, sequenceIndex,
   group, route }`), `pollMulti()`/`pollOneMultiColumn()`/`renderMultiBoard()`/

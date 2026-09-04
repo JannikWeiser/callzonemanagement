@@ -8,6 +8,35 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Fixed
+- **The setup-screen mode tabs (Single round / Sequence / Training / Split
+  View) could run off the right edge on a narrow phone, with nothing to
+  scroll or wrap to** — `.mode-tabs` had no `flex-wrap`, so four pill
+  buttons simply overflowed the viewport instead of dropping to a second
+  row. Found while investigating a phone screenshot reporting the paired-
+  entry button as missing (that specific report didn't reproduce locally
+  at the same viewport width and is more likely a stale phone cache — see
+  ARCHITECTURE.md — but this overflow was real and is fixed regardless).
+  See [ARCHITECTURE.md §6.26](ARCHITECTURE.md#626-mode-tabs-wraps-instead-of-overflowing-on-narrow-phones).
+
+### Added
+- **A static hint on Split View's setup screen explains that Speed isn't
+  supported** ("Split View supports Lead and Boulder only... Use Single
+  round, Sequence, or Training mode for Speed") — previously Speed rounds
+  were just silently absent from every column's round picker with no
+  explanation why, requested explicitly after a user noticed. See
+  [ARCHITECTURE.md §6.23](ARCHITECTURE.md#623-multimode-up-to-5-categories-side-by-side-each-with-its-own-independent-sequence).
+
+### Changed
+- **"Multimode" renamed to "Split View" in the UI** — the mode tab, its
+  "Show ..." button, and the board heading now all read "Split View"
+  (picked from a few naming options). Internal naming (`data-mode="multi"`,
+  the `multi` URL param, every `multiColumnDrafts`/`renderMultiColumnsConfig`/
+  `pollMulti`-style code identifier, and this doc's own section numbers)
+  deliberately stays "Multimode"/"multi" — renaming the URL param would
+  break every already-shared Split View link. See
+  [ARCHITECTURE.md §6.23](ARCHITECTURE.md#623-multimode-up-to-5-categories-side-by-side-each-with-its-own-independent-sequence).
+
+### Fixed
 - **Boulder/route cards could visibly overflow past a Multimode column's own
   border** — `.lanes-grid`'s shared `minmax(320px, 1fr)` grid-column floor
   (used everywhere in the app) doesn't account for `.multi-block`'s own

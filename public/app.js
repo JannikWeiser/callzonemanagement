@@ -2231,7 +2231,7 @@ function renderBoard(round) {
 // see pollOneMultiColumn() - a column that failed to load gets its own
 // small error message instead of blanking the whole board.
 function renderMultiBoard(entries, results) {
-  el.roundTitle.textContent = "Multimode";
+  el.roundTitle.textContent = "Split View"; // display name only - internal "multi" naming (mode id, URL param, code identifiers) stays as-is, see 6.23
   el.lanes.innerHTML = "";
   el.groupTabs.hidden = true;
   el.routeTabs.hidden = true;

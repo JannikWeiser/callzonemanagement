@@ -1929,6 +1929,20 @@ fetched round) - see 6.23, "Multimode".
 
 ### 6.23 Multimode: up to 5 categories side by side, each with its own independent sequence
 
+**Display name is "Split View" - internal naming stays "Multimode"/"multi".**
+The mode tab, its "Show ..." button, and the board heading all read "Split
+View" in the UI (chosen from a few options when asked). Everything else -
+`data-mode="multi"`, the `multi` URL param, `currentSelection.kind ===
+"multi"`, every `multiColumnDrafts`/`renderMultiColumnsConfig`/`pollMulti`-
+style identifier, this section's own number and title - deliberately
+**keeps** the "multi" name: renaming the URL param would break every
+already-shared/deep-linked "Split View" link out there, and renaming
+every internal identifier across the file would be a large, purely
+cosmetic diff for zero functional benefit. If you add a new user-facing
+string for this mode, say "Split View"; if you touch code or docs
+referring to the mode's mechanism, "Multimode"/"multi" is still correct
+and expected.
+
 **Decision:** a fourth setup-screen mode (`data-mode="multi"`, alongside
 Single round / Sequence / Training) lets one tablet show up to 5 categories
 side by side, each in its own `.multi-block` with its own heading, group
@@ -1942,6 +1956,19 @@ completely different, heats-based code path that Multimode's per-column
 lane rendering doesn't attempt to support. Lead and Boulder columns can be
 freely mixed with each other, though (6.24) - a column's own sequence has
 to stay one discipline, but different columns don't have to match.
+**A static hint explains this restriction on the setup screen itself**
+(`#multiSetup`'s always-visible `.training-hint`-styled line, "Split View
+supports Lead and Boulder only... Use Single round, Sequence, or Training
+mode for Speed" - lists all three other modes, since Single round already
+handles a Speed round directly via `computeSpeedElimination()` (5.5) same
+as any other discipline, not just Sequence/Training) - added after a user
+asked for it explicitly, since the
+column-config UI otherwise gives no reason for Speed's silent absence
+from every round dropdown (it's just never in the filtered candidate
+list, per `availableFor()`'s `!e.isSpeed` check, 6.24) - unlike Training
+mode's `#trainingHint`, which is conditionally shown only for a
+non-Speed pick, this one is unconditional: Multimode never supports
+Speed, so there's no case where hiding it would be correct.
 
 **Why:** requested as the natural next step after per-round route filtering
 (6.22) - once a tablet can be dedicated to one route within one category,
@@ -2378,6 +2405,35 @@ text is always rebuilt fresh from `entryLabel()` against live `entries`,
 and the "Show Multimode" payload only ever uses `roundId`). Both
 confirmed dead via a full-file grep, not just a local read, before
 removal.
+
+### 6.26 `.mode-tabs` wraps instead of overflowing on narrow phones
+
+**A real bug, reported live with a phone screenshot: a paired-entry
+button that exists and works looked "missing" on a phone but not a
+laptop.** Root cause turned out to be unrelated to the paired-entry
+feature itself (`#pairedEntryHint`/`#addPairedToSequence` render
+correctly on mobile widths, verified by reproducing the report's exact
+viewport, ~412px, locally) - `.mode-tabs` (`display: flex` with no
+`flex-wrap`) was the real culprit **once traced further**: four pill
+buttons (Single round / Sequence / Training / Split View) don't fit
+`#modeTabs`'s row on a narrow phone, and with no wrap and no
+`overflow-x`, the last tab(s) simply render past the visible viewport
+edge with nothing to indicate more content exists off-screen. Fixed with
+`flex-wrap: wrap` on the shared `.mode-tabs` class (also used by
+`#multiCountTabs`, unaffected since 4 short single-digit pills never
+need to wrap). Verified at the reporting device's approximate viewport
+(412×915) and at the Browser pane's own narrower default width - tabs
+wrap onto a second row cleanly at both, nothing clipped.
+
+**The actual paired-entry report itself was very likely stale phone
+cache, not a bug** - re-tested at the exact same viewport width with the
+current code and the button/hint render correctly, and the two devices
+being on the same server/event rules out a data-availability difference.
+Noted here because the fix that *was* found (`.mode-tabs` wrapping) is a
+real, separate, worthwhile fix - but it may not be the actual explanation
+for what the user saw, and a hard-refresh/private-window check on the
+reporting device is the next step if the button is still reported
+missing after this fix ships.
 
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
