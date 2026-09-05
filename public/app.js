@@ -435,18 +435,20 @@ function populateRoundSelect() {
 
 // Training mode only makes sense for Speed (Lead/Boulder have no concept of
 // a training session with no live results.info round behind it - see
-// 6.11) - disable "Start training" and explain why whenever the currently-
-// selected round isn't Speed, rather than letting staff click through into
-// a mode that doesn't fit their discipline.
+// 6.11) - the hint stays visible for the whole time Training mode is active
+// (the round dropdown is silently pre-filtered to Speed via
+// populateRoundSelect(), so this explains why fewer entries show up there),
+// and "Start training" is disabled whenever the currently-selected round
+// isn't Speed.
 function updateTrainingEligibility() {
   if (currentMode !== "training") {
     el.trainingHint.hidden = true;
     return;
   }
+  el.trainingHint.hidden = false;
   const opt = el.roundSelect.selectedOptions[0];
   const isSpeed = opt?.dataset.speed === "1";
   el.startTraining.disabled = !isSpeed;
-  el.trainingHint.hidden = !opt || isSpeed;
 }
 
 function populateRounds(eventData, host, eventId) {

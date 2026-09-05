@@ -305,6 +305,10 @@ button.ghost {
   font-size: 1.3rem;
   font-weight: 700;
   flex: 1;
+  /* iOS Safari overlays its own fullscreen-exit "X" in the top-left corner
+     while requestFullscreen() is active (see kiosk mode in app.js) - left-
+     aligned text there gets hidden underneath it, so center instead. */
+  text-align: center;
 }
 
 .status-line {

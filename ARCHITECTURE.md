@@ -2435,6 +2435,125 @@ for what the user saw, and a hard-refresh/private-window check on the
 reporting device is the next step if the button is still reported
 missing after this fix ships.
 
+### 6.27 Ko-fi donate widget in the footer, disclosed under Legal Information
+
+A "Support me" floating donate button (Ko-fi's own `overlay-widget.js`,
+type `floating-chat`) is embedded via two `<script>` tags placed inside
+`<footer class="setup-footer">` in
+[index.html](public/index.html), right after the `<details class="legal">`
+block. **Its DOM position doesn't control where it appears** - Ko-fi's
+widget is `position: fixed` and renders as a floating pill in a
+screen corner regardless of where the `<script>` tags sit in the markup;
+they live in the footer only because that's the most sensible place to
+keep donation-related markup next to the other footer links, not because
+it affects layout. The inline `draw()` call is guarded behind
+`if (window.kofiWidgetOverlay)` since ad blockers commonly block
+`storage.ko-fi.com` by name - without the guard, a blocked script would
+throw a `ReferenceError` in that inline script tag (harmless in practice,
+since a thrown error in one `<script>` tag doesn't stop the next one -
+`app.js` still runs fine - but a needless console error for something
+this optional).
+
+**The widget must only show on the setup screen, never on the board or
+controller view** - reported after the button stayed visible while
+watching a round. Root cause: Ko-fi's script appends its floating button
+(`<div id="kofi-widget-overlay-<random-uuid>">`) as a **direct child of
+`<body>`**, not inside the footer it was loaded from - so hiding `#setup`
+(a `<header>` further up the tree) has no effect on it at all, since it
+isn't a descendant. Fixed with a third inline script, `<body>`-scoped,
+independent of `app.js`'s own state: one `MutationObserver` watches
+`document.body`'s children until the randomly-IDed Ko-fi container
+appears (its ID isn't known ahead of time and the widget can finish
+loading asynchronously, well after `#setup` has already been hidden - the
+common case for a shared board/control link, which skips the setup screen
+entirely via `readUrlSelection()`), then a second `MutationObserver`
+mirrors `#setup`'s own `hidden` attribute onto that container's
+`style.display` from then on. Deliberately doesn't touch `app.js` or
+`el.setup.hidden` at all - mirroring the attribute directly means this
+keeps working regardless of how/when `app.js` toggles `#setup`, with no
+extra call site to remember at every current or future place that does
+so.
+
+Loading that script transmits technical data (IP address, browser/device
+info, referring page) to Ko-fi immediately on every page load, not just on
+click - confirmed via Ko-fi's own privacy policy
+(more.ko-fi.com/privacy). This is materially different from the
+"Request a Feature" Google Forms link (6.20's "Externe Links" paragraph),
+which only sends data once a visitor actively clicks through. Because of
+that, the previously blanket "no cookies, no tracking" claim in
+Datenschutzerklärung was narrowed to "no cookies/tracking **we** set
+ourselves", and a new "Spenden-Button (Ko-fi)" paragraph was added
+disclosing the third-party data flow, Ko-fi's registered UK address, the
+legitimate-interest legal basis (Art. 6 Abs. 1 lit. f DSGVO - funding
+server costs), and the fact that Ko-fi itself is *not* the payment
+processor: actual payments run through whichever provider the donor picks
+on Ko-fi's own page (PayPal or Stripe), so this site and its operator
+never see payment data. This is a good-faith disclosure based on Ko-fi's
+published policy, not a lawyer-reviewed legal opinion - see it re-checked
+if the donate feature grows beyond a single floating button (e.g. if a
+consent banner becomes necessary because Ko-fi's cookies turn out to be
+non-essential).
+
+### 6.28 Training mode hint stays visible for the whole time the mode is active
+
+`#trainingHint` ("Training mode is designed for Speed rounds only...")
+used to hide itself the moment a Speed round was selected or eligible,
+via `el.trainingHint.hidden = !opt || isSpeed` in
+`updateTrainingEligibility()` ([app.js](public/app.js)) - meaning it only
+ever appeared as an implicit "no Speed rounds in this event" error, not as
+a general explanation of what Training mode is for. Since
+`populateRoundSelect()` already silently pre-filters `#roundSelect` to
+Speed-only entries the moment Training is the active mode (so Lead/Boulder
+rounds simply never appear in that dropdown, without saying why), staff
+switching into Training mode had no explanation for the shorter list.
+Fixed by unconditionally showing the hint whenever `currentMode ===
+"training"` (mirroring the always-visible Split View hint added in
+6.23), while keeping the *button*-disable logic (`el.startTraining.disabled
+= !isSpeed`) unchanged and still tied to the actual selection.
+
+### 6.29 Round title centered to dodge iOS Safari's fullscreen-exit "X"
+
+Reported with a phone screenshot: on iOS, after entering kiosk mode (6.7 -
+`requestFullscreen()`), Safari overlays its own small fullscreen-exit "X"
+control in the top-left corner of the screen, on top of page content -
+there is no way for a web page to reposition or hide this control. Since
+`.round-title` sat left-aligned right next to `#backBtn` in
+`.board-topbar`, the start of the round name (e.g. "U19 Men") rendered
+directly underneath that system "X" and was unreadable. Fixed with
+`text-align: center` on `.round-title` in
+[styles.css](public/styles.css) - `flex: 1` already gives it the full
+remaining width of the topbar, so centering moves the actual text away
+from both corners without any structural change to `.board-topbar`'s
+flex layout or its other children.
+
+### 6.30 "About" footer entry: why the donate button exists, plus a link to the User Guide
+
+A third footer `<details class="legal">` block (reusing the same
+collapsed-by-default styling as "Legal Information", no new CSS needed),
+titled "About", sits between "Request a Feature or Send a Message" and
+"Legal Information" in [index.html](public/index.html). It exists mainly
+to give the Ko-fi button (6.27) context - without it, the floating
+"Support me" button has no explanation for why it's there. Content is the
+user's own short blurb about the project being free with ongoing hosting/
+development costs, plus a link to `user-guide.pdf`.
+
+That PDF is the existing, already-current English User Guide (a `.docx`
+authored and maintained outside this repo, exported to PDF) - copied
+as-is into `public/user-guide.pdf`, served by the same
+`express.static(public)` middleware ([server.js](server.js)) that already
+serves `index.html`/`app.js`/`styles.css`. Deliberately **not**
+transcribed into the page's own HTML: the guide's content already has to
+be kept in sync with the app in one place (the German
+`.docx` manual maintained separately, most recently revised for the
+Split View rename/paired-entry rewrite), and inlining an English copy
+into `index.html` would make it two places instead of one. Linking to the
+existing, current PDF avoids a third copy to keep in sync. Consequence
+worth knowing: the PDF is a ~5.3 MB binary checked into git, and every
+future re-export (whenever the guide's content changes) adds another
+full copy to git history - fine at this scale, but don't reach for
+`git filter-repo`/history rewrites over this without asking first if it
+ever becomes a real concern.
+
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
 - **A visual bracket tree** for Speed elimination (like the PDF heat sheet

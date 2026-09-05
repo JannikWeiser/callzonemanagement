@@ -80,6 +80,14 @@
   <footer class="setup-footer">
     <a href="https://docs.google.com/forms/d/e/1FAIpQLSett3gbXojzzbqAdXThI41H31U5qUGGnulLy3ysRbdR5NKEng/viewform?usp=dialog" target="_blank" rel="noopener noreferrer">Request a Feature or Send a Message</a>
     <details class="legal">
+      <summary>About</summary>
+      <div class="legal-body">
+        <p>CallZone Management is a free tool designed to make the organization and running of climbing competitions easier.</p>
+        <p>I'm trying to keep the website free to use. However, there are ongoing hosting and development costs. If CallZone Management has helped you at your event and you'd like to support the project, you can leave a small contribution using the "Support me" button. Your support helps cover the ongoing costs and allows me to continue improving and developing CallZone. Thank you for your support!</p>
+        <p><a href="user-guide.pdf" target="_blank" rel="noopener noreferrer">View the User Guide (PDF)</a></p>
+      </div>
+    </details>
+    <details class="legal">
       <summary>Legal Information</summary>
       <div class="legal-body">
         <h4>Impressum</h4>
@@ -89,8 +97,9 @@
 
         <h4>Datenschutzerklärung</h4>
         <p><strong>Verantwortlicher</strong> im Sinne der DSGVO ist die im Impressum oben genannte Person.</p>
-        <p><strong>Keine Cookies, kein Tracking.</strong> Diese Website setzt keine Cookies und keine Analyse- oder Tracking-Werkzeuge ein. Die zuletzt gewählte Runde/Einstellung wird ausschließlich im <code>localStorage</code> deines Geräts gespeichert (technisch notwendig für die Kernfunktion, verlässt dein Gerät nie) - eine Einwilligung ist dafür nach § 25 Abs. 2 Nr. 2 TDDDG nicht erforderlich.</p>
+        <p><strong>Keine eigenen Cookies, kein eigenes Tracking.</strong> Diese Website selbst setzt keine Cookies und keine Analyse- oder Tracking-Werkzeuge ein. Die zuletzt gewählte Runde/Einstellung wird ausschließlich im <code>localStorage</code> deines Geräts gespeichert (technisch notwendig für die Kernfunktion, verlässt dein Gerät nie) - eine Einwilligung ist dafür nach § 25 Abs. 2 Nr. 2 TDDDG nicht erforderlich. Für den eingebundenen Spenden-Button siehe unten.</p>
         <p><strong>Hosting.</strong> Diese Website wird bei Render Services, Inc. (USA) gehostet. Beim Aufruf der Seite verarbeitet Render technische Zugriffsdaten (u. a. IP-Adresse, Zeitpunkt des Zugriffs) im Rahmen des Serverbetriebs; Rechtsgrundlage ist das berechtigte Interesse an einem sicheren und funktionsfähigen Betrieb (Art. 6 Abs. 1 lit. f DSGVO). Da Render seinen Sitz in den USA hat, ist eine Datenübermittlung in ein Drittland verbunden - Grundlage hierfür sind die von Render abgeschlossenen EU-Standardvertragsklauseln sowie die Zertifizierung unter dem EU-US Data Privacy Framework. Details: <a href="https://render.com/privacy" target="_blank" rel="noopener noreferrer">render.com/privacy</a> und <a href="https://render.com/dpa" target="_blank" rel="noopener noreferrer">render.com/dpa</a>.</p>
+        <p><strong>Spenden-Button (Ko-fi).</strong> Zur freiwilligen Unterstützung der Serverkosten bindet diese Seite den Spenden-Button des Anbieters Ko-fi Labs Limited (Suite 501, The Nexus Building, Broadway, Letchworth Garden City, Herts, SG6 9BL, Vereinigtes Königreich) ein. Bereits beim Laden der Seite wird dafür ein Skript von <code>storage.ko-fi.com</code> nachgeladen; dabei werden technische Daten (u. a. IP-Adresse, Browser-/Geräteinformationen, aufrufende Seite) an Ko-fi übermittelt, und Ko-fi kann eigene Cookies setzen. Rechtsgrundlage ist unser berechtigtes Interesse an der Finanzierung des Serverbetriebs (Art. 6 Abs. 1 lit. f DSGVO). Details: <a href="https://more.ko-fi.com/privacy" target="_blank" rel="noopener noreferrer">more.ko-fi.com/privacy</a>. Die eigentliche Zahlungsabwicklung übernimmt nicht Ko-fi selbst, sondern der von dir dort ausgewählte Zahlungsdienstleister (z. B. PayPal oder Stripe) auf dessen eigener Seite; wir erhalten dabei keine Zahlungsdaten.</p>
         <p><strong>Externe Links.</strong> Der Link "Request a Feature or Send a Message" führt zu einem Google-Formular. Es werden keine Daten übertragen, bevor du diesen Link anklickst; danach gilt die Datenschutzerklärung von Google.</p>
         <p><strong>Deine Rechte.</strong> Du hast das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung, Datenübertragbarkeit und Widerspruch (Art. 15-21 DSGVO) sowie ein Beschwerderecht bei einer Datenschutz-Aufsichtsbehörde.</p>
 
@@ -106,6 +115,45 @@
         <p>Wir sind nicht bereit oder verpflichtet, an Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle teilzunehmen.</p>
       </div>
     </details>
+    <script src="https://storage.ko-fi.com/cdn/scripts/overlay-widget.js"></script>
+    <script>
+      if (window.kofiWidgetOverlay) {
+        kofiWidgetOverlay.draw("callzonemanagement", {
+          "type": "floating-chat",
+          "floating-chat.donateButton.text": "Support me",
+          "floating-chat.donateButton.background-color": "#fcbf47",
+          "floating-chat.donateButton.text-color": "#323842"
+        });
+      }
+    </script>
+    <script>
+      // Ko-fi's widget script appends its floating button as a direct
+      // child of <body>, not inside this footer - so it must be shown/
+      // hidden explicitly rather than relying on #setup's own hidden
+      // attribute to hide it for free. Mirrors #setup's "hidden" attribute
+      // onto the widget once it appears, so it only ever shows on the
+      // setup screen, never on the board or controller view.
+      (function () {
+        var setupEl = document.getElementById("setup");
+        var kofiEl = null;
+        function syncVisibility() {
+          if (kofiEl) kofiEl.style.display = setupEl.hidden ? "none" : "";
+        }
+        var bodyObserver = new MutationObserver(function () {
+          if (kofiEl) return;
+          kofiEl = document.body.querySelector(':scope > div[id^="kofi-widget-overlay-"]');
+          if (kofiEl) {
+            syncVisibility();
+            bodyObserver.disconnect();
+          }
+        });
+        bodyObserver.observe(document.body, { childList: true });
+        new MutationObserver(syncVisibility).observe(setupEl, {
+          attributes: true,
+          attributeFilter: ["hidden"],
+        });
+      })();
+    </script>
   </footer>
 </header>
 

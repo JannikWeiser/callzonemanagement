@@ -8,6 +8,41 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Fixed
+- **The Ko-fi "Support me" button stayed visible on the board/controller
+  view, not just the setup screen** — Ko-fi's widget script appends its
+  floating button directly to `<body>`, not inside the footer it's loaded
+  from, so hiding the setup screen didn't hide it. Fixed by mirroring the
+  setup screen's own visibility onto the widget once it appears. See
+  [ARCHITECTURE.md §6.27](ARCHITECTURE.md#627-ko-fi-donate-widget-in-the-footer-disclosed-under-legal-information).
+- **The round title on the fullscreen board could render underneath iOS
+  Safari's own fullscreen-exit "X"**, which iOS overlays in the top-left
+  corner while kiosk mode is active and which a web page cannot reposition
+  or hide — reported with a phone screenshot. Fixed by centering
+  `.round-title` instead of leaving it left-aligned next to the corner.
+  See [ARCHITECTURE.md §6.29](ARCHITECTURE.md#629-round-title-centered-to-dodge-ios-safaris-fullscreen-exit-x).
+- **Training mode's "Speed rounds only" hint only ever showed up as an
+  implicit "no Speed rounds in this event" error**, not as a general
+  explanation — the round picker is silently pre-filtered to Speed-only
+  the moment Training is active, with no visible reason why fewer entries
+  show up. The hint now stays visible for as long as Training mode is
+  active. See [ARCHITECTURE.md §6.28](ARCHITECTURE.md#628-training-mode-hint-stays-visible-for-the-whole-time-the-mode-is-active).
+
+### Added
+- **An "About" entry in the setup screen's footer** — explains why the
+  donate button exists (free tool, ongoing hosting/development costs) and
+  links to the existing English User Guide, now shipped as
+  `public/user-guide.pdf` (served statically, not transcribed into the
+  page — keeps the guide in exactly one place, alongside the separately
+  maintained German manual). See
+  [ARCHITECTURE.md §6.30](ARCHITECTURE.md#630-about-footer-entry-why-the-donate-button-exists-plus-a-link-to-the-user-guide).
+- **A "Support me" Ko-fi donate button** (floating widget) in the setup
+  screen's footer, to fund server costs. Legal Information now discloses
+  the resulting data flow to Ko-fi (technical data sent on every page
+  load, not just on click) and clarifies that Ko-fi itself doesn't process
+  payments — PayPal/Stripe do, on Ko-fi's own page. See
+  [ARCHITECTURE.md §6.27](ARCHITECTURE.md#627-ko-fi-donate-widget-in-the-footer-disclosed-under-legal-information).
+
+### Fixed
 - **The setup-screen mode tabs (Single round / Sequence / Training / Split
   View) could run off the right edge on a narrow phone, with nothing to
   scroll or wrap to** — `.mode-tabs` had no `flex-wrap`, so four pill

@@ -283,14 +283,20 @@ previously-reported problems:
   for this) filters `#roundSelect` itself to Speed-only rounds while
   Training mode is active, called from `setMode()` on every mode switch,
   not just once when the event loads. `updateTrainingEligibility()`/
-  `opt.dataset.speed`/`#trainingHint` are the older reactive fallback,
-  still needed for the case the filtered list is empty (an event with zero
-  Speed rounds) - don't remove either layer to "simplify" the round
-  dropdown. Boulder/Lead rounds don't fit Training mode's
-  manual-roster-advance concept (no linear start order once Boulder
-  starting groups split the field; Lead already has real live inference via
-  Single round/Sequence mode). See
-  [ARCHITECTURE.md §6.13](ARCHITECTURE.md#613-training-mode-manual-advance-same-rosterorder-as-qualification-controllable-from-a-second-device).
+  `opt.dataset.speed`/`#trainingHint` is the reactive fallback that also
+  disables `#startTraining` for the case the filtered list is empty (an
+  event with zero Speed rounds) - don't remove either layer to "simplify"
+  the round dropdown. `#trainingHint` itself now stays **unconditionally
+  visible** for the whole time Training mode is active (6.28), not just
+  when no eligible round exists - don't reintroduce the old
+  `!opt || isSpeed` visibility condition, that's what made the hint read
+  as an error message instead of a standing explanation. Boulder/Lead
+  rounds don't fit Training mode's manual-roster-advance concept (no
+  linear start order once Boulder starting groups split the field; Lead
+  already has real live inference via Single round/Sequence mode). See
+  [ARCHITECTURE.md §6.13](ARCHITECTURE.md#613-training-mode-manual-advance-same-rosterorder-as-qualification-controllable-from-a-second-device)
+  and
+  [ARCHITECTURE.md §6.28](ARCHITECTURE.md#628-training-mode-hint-stays-visible-for-the-whole-time-the-mode-is-active).
 - **`pollToken`/`trainingPollToken`** - every async poll path checks its
   captured token against the current counter before mutating render state,
   and silently discards its result if a newer poll call has since started.
