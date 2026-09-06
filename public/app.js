@@ -49,6 +49,8 @@ const el = {
   boulderModeRow: document.getElementById("boulderModeRow"),
   lanes: document.getElementById("lanes"),
   nextInSequence: document.getElementById("nextInSequence"),
+  nextInSequenceLabel: document.getElementById("nextInSequenceLabel"),
+  skipToNextBtn: document.getElementById("skipToNextBtn"),
   controllerBackBtn: document.getElementById("controllerBackBtn"),
   controllerTitle: document.getElementById("controllerTitle"),
   controllerStatus: document.getElementById("controllerStatus"),
@@ -477,7 +479,18 @@ function populateRounds(eventData, host, eventId) {
         roundId: String(round.category_round_id),
         label: `${dcat.dcat_name} — ${round.name}`,
         status: round.status,
-        isElimination: round.format_identifier === "speed_elimination_ifsc_2026",
+        // Prefix match, not an exact-year match - confirmed live against a
+        // real production event (dav.results.info #2069, 2026-09-05) that
+        // "speed_elimination_ifsc_2023" is also real and currently in use
+        // there, with the exact same speed_elimination_stages[] shape as
+        // the "_2026" variant our dav-stage test fixtures happen to use
+        // exclusively. An exact match against just "_2026" silently made
+        // every "_2023" event's eliminationCount 0, hiding "+ Add paired
+        // entry" (6.12) permanently for that whole event - reported live
+        // as "the button never comes back", which is really "it was never
+        // there in the first place, only stage-test data ever exercised
+        // this correctly."
+        isElimination: round.format_identifier?.startsWith("speed_elimination_ifsc_") ?? false,
         isSpeed: round.format_identifier?.startsWith("speed_") ?? false,
         // Confirmed prefix for every known Boulder format_identifier
         // variant (qualification, both group shapes, every finals variant
@@ -660,6 +673,25 @@ function buildRemoveButton(ariaLabel, onClick) {
   return btn;
 }
 
+// Up/down reorder buttons for the Sequence-mode builder only (6.10) - a
+// touch-friendly alternative to native HTML5 drag-and-drop, which iPad/iOS
+// Safari doesn't fire from touch gestures at all (drag events are a
+// mouse-era API). Additive, not a replacement: the existing
+// dragstart/dragover/drop wiring on each <li> (below) is untouched and
+// still works exactly as before for a mouse. Disabled at whichever end of
+// the list a direction doesn't apply to, rather than doing nothing on
+// click.
+function buildMoveButton(direction, ariaLabel, disabled, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "sequence-move";
+  btn.textContent = direction === "up" ? "▲" : "▼";
+  btn.setAttribute("aria-label", ariaLabel);
+  btn.disabled = disabled;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
 // Drag-and-drop reordering of the in-progress sequence on the setup screen
 // (native HTML5 DnD - no library needed for a same-list reorder). A paired
 // entry ("Verschränkt: A ↔ B") appears as a single row here, not as many
@@ -724,12 +756,27 @@ function renderSequenceBuilder() {
       li.appendChild(select);
     }
 
-    li.appendChild(
+    const controls = document.createElement("div");
+    controls.className = "sequence-controls";
+    controls.appendChild(
+      buildMoveButton("up", "Move earlier in sequence", index === 0, () => {
+        [sequenceBuilder[index - 1], sequenceBuilder[index]] = [sequenceBuilder[index], sequenceBuilder[index - 1]];
+        renderSequenceBuilder();
+      })
+    );
+    controls.appendChild(
+      buildMoveButton("down", "Move later in sequence", index === sequenceBuilder.length - 1, () => {
+        [sequenceBuilder[index], sequenceBuilder[index + 1]] = [sequenceBuilder[index + 1], sequenceBuilder[index]];
+        renderSequenceBuilder();
+      })
+    );
+    controls.appendChild(
       buildRemoveButton("Remove from sequence", () => {
         sequenceBuilder.splice(index, 1);
         renderSequenceBuilder();
       })
     );
+    li.appendChild(controls);
 
     li.addEventListener("dragstart", (e) => {
       e.dataTransfer.setData("text/plain", String(index));
@@ -841,12 +888,36 @@ function renderMultiColumnsConfig(entries) {
       });
       li.appendChild(rowSelect);
 
-      li.appendChild(
+      // Up/down reorder (6.33's own touch-friendly fix, extended here so
+      // Split View's per-column round order isn't stuck as "remove and
+      // re-add everything" the way Sequence mode's was before that fix -
+      // the same iPad-Safari-doesn't-fire-drag-events limitation applies
+      // equally here, and this column builder never had drag-and-drop to
+      // begin with (6.23 - deliberately, since a column's rounds are
+      // added in the order they should play - but that's exactly the case
+      // where a mis-ordered "+ Add Sequence" click most needs a fix that
+      // isn't delete-everything-and-redo).
+      const controls = document.createElement("div");
+      controls.className = "sequence-controls";
+      controls.appendChild(
+        buildMoveButton("up", "Move earlier in this column", itemIndex === 0, () => {
+          [draft.items[itemIndex - 1], draft.items[itemIndex]] = [draft.items[itemIndex], draft.items[itemIndex - 1]];
+          renderMultiColumnsConfig(entries);
+        })
+      );
+      controls.appendChild(
+        buildMoveButton("down", "Move later in this column", itemIndex === draft.items.length - 1, () => {
+          [draft.items[itemIndex], draft.items[itemIndex + 1]] = [draft.items[itemIndex + 1], draft.items[itemIndex]];
+          renderMultiColumnsConfig(entries);
+        })
+      );
+      controls.appendChild(
         buildRemoveButton("Remove from column", () => {
           draft.items.splice(itemIndex, 1);
           renderMultiColumnsConfig(entries);
         })
       );
+      li.appendChild(controls);
 
       list.appendChild(li);
     });
@@ -880,6 +951,22 @@ function renderMultiColumnsConfig(entries) {
 function startWatching(selection) {
   clearInterval(pollTimer);
   clearInterval(trainingPollTimer);
+  // Bumping BOTH tokens unconditionally - not just whichever one this new
+  // selection's own mode will use - is what actually closes the gap: a
+  // still-in-flight pollCurrent()/pollMulti() call from before this switch
+  // only ever checks its own `pollToken` copy, and a still-in-flight
+  // training poll only ever checks `trainingPollToken`. Bumping only the
+  // "relevant" one left the other kind of in-flight call free to land
+  // later and act on `currentSelection`/the DOM after it had already been
+  // reassigned to a completely different mode - e.g. Split View -> Training
+  // while a pollMulti() fetch was still resolving could have it come back,
+  // pass its stale-check (pollToken untouched), and call
+  // renderMultiBoard(currentSelection.entries, ...) with `entries` now
+  // undefined (a training selection has no `.entries`), crashing the
+  // render on what may be an unattended tablet. See ARCHITECTURE.md for
+  // the write-up.
+  pollToken++;
+  trainingPollToken++;
   currentSelection = selection;
   saveSelection(selection);
   updateHostLabel(selection.host);
@@ -919,6 +1006,11 @@ function startWatching(selection) {
 function goBackToSetup() {
   clearInterval(pollTimer);
   clearInterval(trainingPollTimer);
+  // Same reasoning as the top of startWatching() - invalidates any poll
+  // still in flight from before this click, so it can't write to
+  // currentSelection/the DOM after the user has already left the board.
+  pollToken++;
+  trainingPollToken++;
   el.board.hidden = true;
   el.controller.hidden = true;
   el.setup.hidden = false;
@@ -1044,16 +1136,45 @@ document.addEventListener("fullscreenchange", () => {
 // where the sentinel was already released before the tab became visible
 // again, so there's no live sentinel left to have fired that event on.
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && document.fullscreenElement && !wakeLockSentinel) {
-    requestWakeLock();
+  if (document.visibilityState !== "visible") return;
+  if (document.fullscreenElement && !wakeLockSentinel) requestWakeLock();
+  // The regular setInterval poll (3s for watch/multi, 1s for training) is
+  // throttled or fully suspended by the browser while the tab/screen is
+  // backgrounded - previously the board just kept showing whatever it last
+  // fetched before that happened, for however long the screen was off,
+  // with nothing forcing a fresh fetch the moment it comes back. Force one
+  // immediately here instead of waiting for the next natural tick.
+  if (el.setup.hidden && currentSelection) {
+    if (currentSelection.kind === "training") pollTrainingIndex();
+    else if (currentSelection.kind === "multi") pollMulti();
+    else pollCurrent();
   }
 });
 
 async function fetchRoundJson(host, roundId) {
   const res = await fetch(`/api/round/${host}/${roundId}`);
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data.error || `Error ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
   return data;
+}
+
+// A network-level failure (offline, DNS, the fetch() call itself rejecting)
+// never reaches a real HTTP response, so it has no `.status` at all - that's
+// what actually distinguishes "can't reach the server/internet" from "the
+// server answered, and it was bad news". A 404 specifically means the round
+// itself is gone from results.info (deleted/archived), not a connectivity
+// problem - previously all three cases showed the exact same
+// "Connection lost: Upstream 404 for /api/v1/category_rounds/.../results"
+// text, which told callzone staff nothing about whether to just wait it out
+// or go pick a different round.
+function describeConnectionError(err) {
+  if (err.status === 404) return "This round could not be found on results.info anymore - pick a different one.";
+  if (err.status) return `Connection lost: ${err.message}`;
+  return "Connection lost - check the WiFi/network connection.";
 }
 
 async function pollRound(host, roundId, token) {
@@ -1067,7 +1188,7 @@ async function pollRound(host, roundId, token) {
     return true;
   } catch (err) {
     if (token !== pollToken) return false;
-    el.statusLine.textContent = `Connection lost: ${err.message}`;
+    el.statusLine.textContent = describeConnectionError(err);
     el.statusLine.classList.add("stale");
     return false;
   }
@@ -1107,12 +1228,41 @@ async function updateNextInSequence() {
       : (await getRoundLabel(host, next.id)) ?? "…";
   if (myToken !== pollToken) return; // superseded while fetching labels
   el.nextInSequence.hidden = false;
-  el.nextInSequence.innerHTML = "";
-  el.nextInSequence.appendChild(document.createTextNode("Next up: "));
+  el.nextInSequenceLabel.innerHTML = "";
+  el.nextInSequenceLabel.appendChild(document.createTextNode("Next up: "));
   const strong = document.createElement("strong");
   strong.textContent = label;
-  el.nextInSequence.appendChild(strong);
+  el.nextInSequenceLabel.appendChild(strong);
 }
+
+// Manual backup for a sequence entry that never resolves as finished (e.g.
+// a heat that never gets a real recorded result - equipment failure, an
+// unflagged walkover) - mirrors the paired-entry "Switch category now"
+// button's philosophy (6.12): no automatic timeout is ever added for this,
+// only a human clicking moves the sequence forward. Works the same way
+// regardless of whether the current entry is plain or paired - just moves
+// the cursor and lets the next pollCurrent() pick up fresh from there,
+// the exact same two lines pollCurrent() itself runs when a round finishes
+// naturally. Shares #nextInSequence's own visibility (updateNextInSequence()
+// above only shows the strip once a next entry actually exists), so this
+// is never offered with nothing to skip to.
+el.skipToNextBtn.addEventListener("click", async () => {
+  const seq = currentSelection?.sequence;
+  if (!seq || sequenceIndex >= seq.length - 1) return;
+  // Disabled for the duration of the resulting poll - otherwise a rapid
+  // double-click (plausible exactly because clicking gives no feedback
+  // that the first click registered) increments sequenceIndex twice
+  // before either pollCurrent() call's fetch resolves, silently skipping
+  // an extra entry instead of just the intended one.
+  el.skipToNextBtn.disabled = true;
+  sequenceIndex++;
+  pairedState = null;
+  try {
+    await pollCurrent();
+  } finally {
+    el.skipToNextBtn.disabled = false;
+  }
+});
 
 // Sequence mode: poll the current entry, and if it's done and there's a
 // next one queued up, jump straight to it (no artificial delay) rather than
@@ -1178,7 +1328,7 @@ async function pollOneMultiColumn(entry, token) {
     try {
       round = await fetchRoundJson(currentSelection.host, current.id);
     } catch (err) {
-      return { error: err.message };
+      return { error: describeConnectionError(err) };
     }
     if (token !== pollToken) return null;
     const hasNext = entry.sequenceIndex < entry.sequence.length - 1;
@@ -1209,7 +1359,7 @@ async function pollMulti() {
   // column's own "Couldn't load: ..." text.
   const configured = results.filter((r) => !r.empty);
   if (configured.length && configured.every((r) => r.error)) {
-    el.statusLine.textContent = `Connection lost: ${configured[0].error}`;
+    el.statusLine.textContent = configured[0].error;
     el.statusLine.classList.add("stale");
   } else {
     el.statusLine.textContent = `Updated ${new Date().toLocaleTimeString("en-GB")}`;
@@ -1255,7 +1405,7 @@ async function pollPairedTick(entry, token) {
     [dataA, dataB] = await Promise.all([fetchRoundJson(host, entry.a), fetchRoundJson(host, entry.b)]);
   } catch (err) {
     if (token !== pollToken) return { ok: false, bothDone: false }; // superseded while fetching
-    el.statusLine.textContent = `Connection lost: ${err.message}`;
+    el.statusLine.textContent = describeConnectionError(err);
     el.statusLine.classList.add("stale");
     return { ok: false, bothDone: false };
   }
@@ -1627,7 +1777,11 @@ function computeBoulderLane(round, route, finalMode) {
 
 function athleteLine(athlete) {
   if (!athlete) return "";
-  const bib = athlete.bib ? `#${athlete.bib} · ` : "";
+  // Not a bare `athlete.bib ?` check - that's falsy for a legitimate bib
+  // number of 0, which would silently drop the "#0 · " prefix. `!= null`
+  // (also catches undefined) plus an explicit empty-string check is what
+  // "no bib assigned" actually looks like.
+  const bib = athlete.bib != null && athlete.bib !== "" ? `#${athlete.bib} · ` : "";
   return `${bib}${athlete.name}`;
 }
 
@@ -1950,7 +2104,8 @@ function stageHeatsRemaining(round, stageName) {
 
 function heatAthleteLine(athlete) {
   if (!athlete) return "";
-  const bib = athlete.bib ? `#${athlete.bib} · ` : "";
+  // Same falsy-zero fix as athleteLine() above - see its comment.
+  const bib = athlete.bib != null && athlete.bib !== "" ? `#${athlete.bib} · ` : "";
   const last = athlete.lastname?.toUpperCase() ?? "";
   return `${bib}${last} ${athlete.firstname ?? ""}`.trim();
 }
@@ -2261,7 +2416,7 @@ function renderMultiBoard(entries, results) {
       block.appendChild(heading);
       const err = document.createElement("div");
       err.className = "lane-finished";
-      err.textContent = `Couldn't load: ${result.error}`;
+      err.textContent = result.error;
       block.appendChild(err);
       return;
     }
@@ -2359,6 +2514,30 @@ function renderMultiBoard(entries, results) {
       next.className = "next-in-sequence";
       next.dataset.columnIndex = i;
       next.hidden = true;
+      const label = document.createElement("span");
+      next.appendChild(label);
+      // Per-column manual backup, same reasoning and mechanism as the
+      // single-Sequence-mode "Skip to next" button (6.32) - a column stuck
+      // on a round that never resolves as finished previously had no way
+      // forward short of leaving the board entirely, unlike normal
+      // Sequence mode. Advances only THIS column's own sequenceIndex, then
+      // re-polls everything - the other columns are completely unaffected,
+      // same independence every other per-column mechanism here already
+      // has.
+      const skipBtn = document.createElement("button");
+      skipBtn.type = "button";
+      skipBtn.className = "ghost";
+      skipBtn.textContent = "Skip to next →";
+      skipBtn.addEventListener("click", async () => {
+        skipBtn.disabled = true;
+        entry.sequenceIndex++;
+        try {
+          await pollMulti();
+        } finally {
+          skipBtn.disabled = false;
+        }
+      });
+      next.appendChild(skipBtn);
       block.appendChild(next);
     }
   });
@@ -2384,11 +2563,15 @@ async function updateMultiNextLabels(entries) {
       const el2 = document.querySelector(`.next-in-sequence[data-column-index="${i}"]`);
       if (!el2) return; // column re-rendered (e.g. a tab click) before this resolved
       el2.hidden = false;
-      el2.innerHTML = "";
-      el2.appendChild(document.createTextNode("Next: "));
+      // Written into the inner <span>, not el2 itself - el2 also holds the
+      // "Skip to next" button now, and overwriting el2's own innerHTML
+      // would wipe that button out on every label refresh.
+      const labelEl = el2.querySelector("span");
+      labelEl.innerHTML = "";
+      labelEl.appendChild(document.createTextNode("Next: "));
       const strong = document.createElement("strong");
       strong.textContent = label;
-      el2.appendChild(strong);
+      labelEl.appendChild(strong);
     })
   );
 }
@@ -2437,7 +2620,7 @@ async function startTrainingSession(selection) {
   try {
     trainingRoundData = await fetchRoundJson(selection.host, selection.roundId);
   } catch (err) {
-    statusEl.textContent = `Couldn't load round: ${err.message}`;
+    statusEl.textContent = describeConnectionError(err);
     statusEl.classList.add("stale");
     return;
   }
@@ -2461,7 +2644,11 @@ async function pollTrainingIndex() {
   try {
     const res = await fetch(`/api/training/${currentSelection.host}/${currentSelection.roundId}`);
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+    if (!res.ok) {
+      const err = new Error(data.error || `Error ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
     if (myToken !== trainingPollToken) return;
     trainingIndex = data.index ?? 0;
     if (isController) renderController(trainingRoundData, trainingIndex);
@@ -2470,14 +2657,24 @@ async function pollTrainingIndex() {
     statusEl.classList.remove("stale");
   } catch (err) {
     if (myToken !== trainingPollToken) return;
-    statusEl.textContent = `Connection lost: ${err.message}`;
+    statusEl.textContent = describeConnectionError(err);
     statusEl.classList.add("stale");
   }
 }
 
+// Disabled for the duration of the request - both the "Back"/"Next" pair
+// this device actually shows AND the other device's pair, harmlessly, since
+// exactly one pair is ever visible per device. Without this, a double-tap
+// under time pressure (plausible exactly because there's no other feedback
+// that the first tap registered) fires trainingStep() twice before the
+// first request's response comes back, silently advancing the roster by 2
+// instead of 1.
+const trainingStepButtons = [el.trainingBack, el.trainingNext, el.controlBack, el.controlNext];
+
 async function trainingStep(delta) {
   const myToken = ++trainingPollToken;
   const statusEl = currentSelection.control ? el.controllerStatus : el.statusLine;
+  for (const btn of trainingStepButtons) btn.disabled = true;
   try {
     const res = await fetch(`/api/training/${currentSelection.host}/${currentSelection.roundId}`, {
       method: "POST",
@@ -2485,15 +2682,24 @@ async function trainingStep(delta) {
       body: JSON.stringify({ delta }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+    if (!res.ok) {
+      const err = new Error(data.error || `Error ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
     if (myToken !== trainingPollToken) return;
     trainingIndex = data.index ?? trainingIndex;
     if (currentSelection.control) renderController(trainingRoundData, trainingIndex);
     else renderTrainingBoard(trainingRoundData, trainingIndex);
   } catch (err) {
     if (myToken !== trainingPollToken) return;
-    statusEl.textContent = `Connection lost: ${err.message}`;
+    statusEl.textContent = describeConnectionError(err);
     statusEl.classList.add("stale");
+  } finally {
+    // Only re-enable if nothing newer has already taken over - otherwise
+    // this older call's finally would re-enable the buttons mid-flight of
+    // a genuinely newer trainingStep() call.
+    if (myToken === trainingPollToken) for (const btn of trainingStepButtons) btn.disabled = false;
   }
 }
 

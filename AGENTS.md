@@ -458,6 +458,17 @@ previously-reported problems:
   informational/troubleshooting text with no access-control concern, and
   deliberately stays visible in kiosk mode. See
   [ARCHITECTURE.md §6.21](ARCHITECTURE.md#621-host-label-next-to-the-status-line).
+- **server.js: `isKnownHost()`/`requireHost` uses `hasOwnProperty`, not a
+  bare `!HOSTS[host]` truthiness check** - `HOSTS` is a plain object, so a
+  truthiness check also (wrongly) accepts inherited `Object.prototype`
+  names like `"constructor"`. And **every `:eventId`/`:roundId` route param
+  goes through `requireNumericId()`** (`/^\d+$/`) before being spliced into
+  the upstream URL - every real id this app has ever seen is a plain
+  positive integer (§3's fixture table), and validating this closes off
+  path/query injection against the upstream host via a crafted id. Adding
+  a new route that takes an id from `results.info` needs the same
+  middleware, not a fresh ad-hoc check. See
+  [ARCHITECTURE.md §6.36](ARCHITECTURE.md#636-serverjs-hardening-host-allowlist-numeric-ids-cache-touch-error-sanitization).
 - `#routeTabs`/`renderGroupTabs()`/`renderRouteTabs()`/
   `renderBoulderModeToggle()`/`filterRoutesBySelection()` (6.22/6.23) - route
   tabs dedicate a tablet to one or several routes/boulders within whatever
@@ -530,7 +541,11 @@ previously-reported problems:
   Drag-reorder (`dragstart`/`dragend`/`dragover`/`drop` on each `<li>`) is
   unchanged and still works - don't remove it "for consistency" with
   Multimode's per-column rows, which deliberately don't support it; order
-  matters here in a way it doesn't there.
+  matters here in a way it doesn't there. **Up/down buttons
+  (`buildMoveButton()`, 6.33) are additive, not a replacement** - added
+  because iOS/iPad Safari never fires `dragstart` from a touch gesture, so
+  drag alone was unusable on this app's main devices. Keep both; don't
+  simplify down to just one reorder mechanism.
 - **`#pairedEntryHint`** - a permanent visible label ("or interleave two
   Speed finals:") between "+ Add round" and "+ Add paired entry", **must**
   keep `el.pairedEntryHint.hidden` set to the exact same expression as
@@ -545,6 +560,51 @@ previously-reported problems:
   explanation, carry the explanation forward too - a control's stated
   *purpose* is as much a feature as its click handler, not decoration to
   drop during a redesign.
+- **`isElimination` is a prefix match (`format_identifier?.startsWith("speed_elimination_ifsc_")`),
+  not an exact match against one hardcoded year.** Confirmed live against
+  a real production event that `"speed_elimination_ifsc_2023"` is also
+  real and currently in use, with the exact same `speed_elimination_stages[]`
+  shape as `"_2026"` - our `dav-stage` test fixtures only ever exercise
+  `_2026`, which is exactly how the exact-match version of this check went
+  unnoticed for so long (see the fixture table in §3). If results.info
+  ever introduces yet another year suffix, this prefix match already
+  covers it - don't narrow it back to an exact string "to be safe". See
+  [ARCHITECTURE.md §6.31](ARCHITECTURE.md#631-iselimination-matches-any-speed_elimination_ifsc_-year-not-just-_2026).
+- **"Skip to next" (`#skipToNextBtn`, inside `#nextInSequence`, and its
+  Split View per-column twin inside each `.next-in-sequence[data-column-index]`,
+  6.41)** is a manual-only escape hatch for a sequence entry that never
+  resolves as finished - deliberately **not** an automatic timeout,
+  mirroring the paired-entry "Switch category now" button's
+  already-established philosophy (6.12: a timeout was tried there once and
+  explicitly removed by request). Don't add a timer-based auto-skip here
+  either without asking first - same reasoning applies. Both skip buttons
+  disable themselves for the duration of their own poll call (6.38) - keep
+  that if you touch either one, a double-click otherwise silently skips an
+  extra entry. See
+  [ARCHITECTURE.md §6.32](ARCHITECTURE.md#632-skip-to-next---a-manual-backup-for-a-sequence-entry-that-never-resolves-as-finished)
+  and
+  [§6.41](ARCHITECTURE.md#641-split-view-parity-per-column-skip-to-next-and-updown-reorder).
+- **`pollToken`/`trainingPollToken` must both be bumped on every mode
+  transition** (`startWatching()`, `goBackToSetup()`) - not just whichever
+  one the new/old mode "obviously" uses. A real crash shipped because
+  switching modes only ever relied on the poll functions themselves
+  (`pollCurrent()`/`pollMulti()`/`pollTrainingIndex()`) to bump their own
+  token, and neither transition function touched either token itself - an
+  in-flight poll from the mode being left could land after the switch and
+  act on a `currentSelection` shaped for a completely different mode. If
+  you add a new mode/kind, make sure entering AND leaving it goes through
+  these two functions rather than a new bespoke transition path. See
+  [ARCHITECTURE.md §6.34](ARCHITECTURE.md#634-cross-mode-poll-token-invalidation---a-real-crash-found-by-a-full-codebase-review).
+- **`describeConnectionError(err)`** is the one shared place that turns a
+  failed fetch into user-facing text - every poll path uses it (`pollRound`,
+  `pollMulti`, `pollOneMultiColumn`, `pollPairedTick`, both training poll
+  functions). Don't reintroduce an ad-hoc `` `Connection lost: ${err.message}` ``
+  somewhere new - it only works because `fetchRoundJson()` and the two
+  training fetches attach a real `.status` to whatever they throw; a new
+  fetch call needs to do the same (`err.status = res.status`) for this to
+  correctly tell a 404 (round gone) apart from a network failure (no
+  status at all). See
+  [ARCHITECTURE.md §6.37](ARCHITECTURE.md#637-distinguishing-the-round-is-gone-from-the-network-is-down-and-a-more-visible-stale-indicator).
 - **Multimode - displayed as "Split View" in the UI, code/docs still say
   "Multimode"/"multi" throughout.** The mode tab, "Show Split View"
   button, and board heading text are the only things that changed; the
@@ -804,6 +864,7 @@ athlete data — no need to hunt for a live competition to test against.
 | `stage` | 1595 | `13782` (SPEED Damen+ Finale) | **The stage-advancement bug, reproduced.** `status: "under_appeal"`; stage "1/8" fully confirmed, stage "1/4" heat 9 already confirmed but heats 10-12 still pending — correct behavior is to show heat 10 as current, not get stuck on heat 9 or on stage "1/8". Also the source of the `"active"` ascent-status and `"under_appeal"` round-status values documented in Quirks C/D. |
 | `stage` | 1595 | `13769`/`13770` (BOULDER Herren+/Damen+ Quali) | Active status, `starting_groups`, but zero results yet as of investigation — baseline "round started, nobody's climbed a given route yet" case. Also the fixture for Multimode's (6.23) initial live verification: a two-column Multimode selection with column 1 = `13769` → `13785` (Herren+ Quali → Finale) and column 2 = `13770` (Damen+ Quali) confirmed independent per-column group/route filtering and, via a mocked `isRoundFullyFinished()`, independent per-column auto-advance (only column 1's `sequenceIndex` moved when only its round was reported finished). |
 | `stage` | 1595 | `13785`/`13786` (BOULDER Herren+/Damen+ Finale) | `format_identifier: "boulder_finals_one_by_one"` — a Boulder finals format not seen elsewhere, but same `routes[]` shape as qualification, so no special-casing needed. `status: "pending"`, no startlist yet as of investigation. |
+| `prod` | `2069` "KidsCup Hessen Finale 2026" (Darmstadt, 2026-09-05) | 5 Speed finals, e.g. `15777` (SPEED U13 m Finale) | **The `isElimination` exact-match bug, found and confirmed live (6.31).** All five Speed finals here report `format_identifier: "speed_elimination_ifsc_2023"`, not `"_2026"` like every `dav-stage` fixture above — structurally identical `speed_elimination_stages[]`, just a different rules-year identifier, and the reason `isElimination`'s exact-match check silently made "+ Add paired entry" permanently unavailable for this whole real event. Checked again once the finals had actually concluded (all `status: "finished"`, every heat resolved, including one `dns`-decided Small Final) — didn't reproduce the separately-reported "stuck last Speed round" issue, so that one's root cause (6.32) is still not deterministically confirmed. First real, non-`dav-stage`/non-onboarding production event this table has a fixture entry for — worth returning to if a future report needs comparing against genuine external-organizer data rather than the user's own hand-edited test events. |
 
 Event 1595 in particular is worth checking for fresh data on any future
 Boulder/Speed bug report — it was purpose-built by the user as a test bed

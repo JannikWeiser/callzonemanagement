@@ -7,7 +7,65 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Fixed (full-codebase review pass)
+- **A real crash: switching modes (e.g. Split View → Training) while a
+  poll was still in flight could throw, or briefly show stale data** —
+  `startWatching()`/`goBackToSetup()` never invalidated a still-in-flight
+  poll from the mode being left. Both now bump every poll-staleness token
+  unconditionally on every mode switch. Verified live with an artificially
+  delayed fetch. See [ARCHITECTURE.md §6.34](ARCHITECTURE.md#634-cross-mode-poll-token-invalidation---a-real-crash-found-by-a-full-codebase-review).
+- **A legitimate bib number of 0 would silently disappear** from athlete
+  cards and queue lists (a falsy-zero check, not a null check). See
+  [ARCHITECTURE.md §6.35](ARCHITECTURE.md#635-falsy-zero-bib-number-bug).
+- **Four server.js hardening fixes**: the host allowlist wrongly accepted
+  JS `Object.prototype` names like `"constructor"`; `eventId`/`roundId`
+  were spliced into the upstream URL with no validation, allowing
+  path/query injection against the upstream host; the cache's "LRU-ish"
+  eviction was actually plain FIFO; and non-HTTP errors leaked raw
+  internal error text to the client. See
+  [ARCHITECTURE.md §6.36](ARCHITECTURE.md#636-serverjs-hardening-host-allowlist-numeric-ids-cache-touch-error-sanitization).
+- **"Connection lost" looked identical for a WiFi blip, a deleted round,
+  and a server outage** — now distinguishes a 404 ("this round is gone,
+  pick another") from a real network failure ("check the WiFi") from a
+  genuine server-side error. The stale status indicator is also now a
+  bold, colored pill instead of a subtle text-color change. See
+  [ARCHITECTURE.md §6.37](ARCHITECTURE.md#637-distinguishing-the-round-is-gone-from-the-network-is-down-and-a-more-visible-stale-indicator).
+- **A rapid double-click on Training's Next/Back or Sequence's "Skip to
+  next" could silently advance by 2 instead of 1** — both now disable
+  themselves for the duration of the request. See
+  [ARCHITECTURE.md §6.38](ARCHITECTURE.md#638-double-click-protection-trainings-nextback-and-sequences-skip-to-next).
+- **A tablet whose screen was off/backgrounded for a while didn't refresh
+  immediately when turned back on** — reactivating the tab/screen now
+  forces one immediate poll instead of waiting for the next natural tick.
+  See [ARCHITECTURE.md §6.39](ARCHITECTURE.md#639-immediate-re-poll-when-the-tabscreen-becomes-visible-again).
+- **Several confirmed mobile layout bugs** (~375-410px): the Ko-fi button
+  overlapped "Legal Information" in the footer; Training's "Link to
+  control from another device" row was unusable (a ~28px-wide input, a
+  squeezed-off QR code); the new Sequence-mode ▲/▼/× buttons were
+  undersized, packed too close together, and squeezed round names down to
+  an unreadable hard clip with no ellipsis. See
+  [ARCHITECTURE.md §6.40](ARCHITECTURE.md#640-mobile-layout-fixes-ko-fifooter-overlap-control-link-row-sequence-item-touch-targets).
+
+### Added (full-codebase review pass)
+- **Split View now has per-column "Skip to next" and ▲/▼ reorder buttons**,
+  matching what Sequence mode already had — closing a UX gap found by
+  direct comparison between the two modes. See
+  [ARCHITECTURE.md §6.41](ARCHITECTURE.md#641-split-view-parity-per-column-skip-to-next-and-updown-reorder).
+
+### Changed (full-codebase review pass)
+- Single round's setup-screen button renamed "Show" → "Show round" for
+  consistency with the other three modes' own descriptive labels.
+
 ### Fixed
+- **"+ Add paired entry" never appeared for events using an older Speed
+  elimination format** — `isElimination` only matched the exact
+  `format_identifier` string `"speed_elimination_ifsc_2026"`, which is
+  what our test fixtures happen to use, but confirmed real production
+  events (verified live) instead report `"speed_elimination_ifsc_2023"` —
+  structurally identical data, just a different rules-year identifier.
+  Fixed by matching any `speed_elimination_ifsc_*` prefix instead of one
+  hardcoded year. See
+  [ARCHITECTURE.md §6.31](ARCHITECTURE.md#631-iselimination-matches-any-speed_elimination_ifsc_-year-not-just-_2026).
 - **The Ko-fi "Support me" button stayed visible on the board/controller
   view, not just the setup screen** — Ko-fi's widget script appends its
   floating button directly to `<body>`, not inside the footer it's loaded
@@ -28,6 +86,19 @@ section number); this file is the *what happened, when* log.
   active. See [ARCHITECTURE.md §6.28](ARCHITECTURE.md#628-training-mode-hint-stays-visible-for-the-whole-time-the-mode-is-active).
 
 ### Added
+- **Up/down reorder buttons on each Sequence-mode row** — native HTML5
+  drag-and-drop (the only way to reorder until now) doesn't fire from
+  touch gestures on iPad/iOS Safari, making reordering effectively
+  unusable on the tablets this app mainly runs on. The existing mouse
+  drag is untouched; the buttons are a guaranteed-working alternative for
+  touch. See
+  [ARCHITECTURE.md §6.33](ARCHITECTURE.md#633-updown-reorder-buttons---a-touch-friendly-addition-alongside-the-existing-drag).
+- **A "Skip to next →" button on the "Next up" strip in Sequence mode** —
+  a manual backup for the rare case a round never resolves as finished
+  (e.g. a walkover that never gets flagged), mirroring the "Switch
+  category now" button's philosophy for paired entries (6.12): no
+  automatic timeout, only ever advances on a human clicking. See
+  [ARCHITECTURE.md §6.32](ARCHITECTURE.md#632-skip-to-next---a-manual-backup-for-a-sequence-entry-that-never-resolves-as-finished).
 - **An "About" entry in the setup screen's footer** — explains why the
   donate button exists (free tool, ongoing hosting/development costs) and
   links to the existing English User Guide, now shipped as

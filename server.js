@@ -4,6 +4,10 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Keep this in sync with the <select id="host"> options in
+// public/index.html - the two lists are maintained independently (no
+// shared source of truth, since the frontend is plain static HTML with no
+// build/templating step) and a new host needs both updated by hand.
 const HOSTS = {
   prod: "https://dav.results.info",
   ifsc: "https://ifsc.results.info",
@@ -26,7 +30,16 @@ const MAX_CACHE_ENTRIES = 200; // a full competition day across several tablets 
 
 async function cachedFetch(key, ttlMs, fetcher) {
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < ttlMs) return hit.data;
+  if (hit && Date.now() - hit.at < ttlMs) {
+    // Touch it: delete + re-set moves the key to the end of the Map's
+    // insertion order, so the eviction below (which always drops the
+    // FRONT of that order) age's out genuinely-unused entries first
+    // instead of a frequently-polled one that just happens to have been
+    // inserted early.
+    cache.delete(key);
+    cache.set(key, hit);
+    return hit.data;
+  }
   const data = await fetcher();
   if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value);
   cache.set(key, { at: Date.now(), data });
@@ -51,15 +64,51 @@ async function upstreamJson(host, urlPath) {
 const app = express();
 app.use(express.static(path.join(__dirname, "public")));
 
+// `HOSTS` is a plain object literal, so a bare `!HOSTS[host]` truthiness
+// check also (wrongly) passes for inherited Object.prototype property names
+// such as "constructor" or "toString" - hasOwnProperty is what actually
+// enforces "one of exactly these keys".
+function isKnownHost(host) {
+  return Object.prototype.hasOwnProperty.call(HOSTS, host);
+}
+
 function requireHost(req, res, next) {
-  if (!HOSTS[req.params.host]) {
+  if (!isKnownHost(req.params.host)) {
     const valid = Object.keys(HOSTS).map((k) => `"${k}"`).join(", ");
     return res.status(400).json({ error: `Unknown host "${req.params.host}", use one of: ${valid}` });
   }
   next();
 }
 
-app.get("/api/event/:host/:eventId", requireHost, async (req, res) => {
+// results.info ids are always plain positive integers in every event/round
+// this app has ever seen (see AGENTS.md's fixture table) - rejecting
+// anything else up front (rather than string-interpolating it straight into
+// the upstream URL) closes off path/query-injection against the upstream
+// host via a crafted, percent-encoded id (e.g. "123%3Ffoo=bar").
+const ID_PATTERN = /^\d+$/;
+
+function requireNumericId(paramName) {
+  return (req, res, next) => {
+    if (!ID_PATTERN.test(req.params[paramName])) {
+      return res.status(400).json({ error: `"${paramName}" must be a positive integer` });
+    }
+    next();
+  };
+}
+
+// Only `err.status` (set by upstreamJson() above for a real, well-formed
+// upstream HTTP response) is safe to echo back verbatim - it's just a
+// number and a URL path we already know. Anything else (a network error, a
+// malformed-URL TypeError, ...) gets a generic message instead of whatever
+// internal Node/undici wording it happens to carry, logged server-side for
+// debugging instead.
+function sendUpstreamError(res, err) {
+  if (err.status) return res.status(err.status).json({ error: err.message });
+  console.error("Upstream request failed:", err);
+  res.status(502).json({ error: "Upstream request failed" });
+}
+
+app.get("/api/event/:host/:eventId", requireHost, requireNumericId("eventId"), async (req, res) => {
   const { host, eventId } = req.params;
   try {
     const data = await cachedFetch(`event:${host}:${eventId}`, 20_000, () =>
@@ -67,11 +116,11 @@ app.get("/api/event/:host/:eventId", requireHost, async (req, res) => {
     );
     res.set("Cache-Control", "no-store").json(data);
   } catch (err) {
-    res.status(err.status ?? 502).json({ error: err.message });
+    sendUpstreamError(res, err);
   }
 });
 
-app.get("/api/round/:host/:roundId", requireHost, async (req, res) => {
+app.get("/api/round/:host/:roundId", requireHost, requireNumericId("roundId"), async (req, res) => {
   const { host, roundId } = req.params;
   try {
     const data = await cachedFetch(`round:${host}:${roundId}`, 3_000, () =>
@@ -79,7 +128,7 @@ app.get("/api/round/:host/:roundId", requireHost, async (req, res) => {
     );
     res.set("Cache-Control", "no-store").json(data);
   } catch (err) {
-    res.status(err.status ?? 502).json({ error: err.message });
+    sendUpstreamError(res, err);
   }
 });
 
@@ -96,12 +145,12 @@ function trainingKey(host, roundId) {
   return `${host}:${roundId}`;
 }
 
-app.get("/api/training/:host/:roundId", requireHost, (req, res) => {
+app.get("/api/training/:host/:roundId", requireHost, requireNumericId("roundId"), (req, res) => {
   const key = trainingKey(req.params.host, req.params.roundId);
   res.set("Cache-Control", "no-store").json({ index: trainingIndex.get(key) ?? 0 });
 });
 
-app.post("/api/training/:host/:roundId", requireHost, express.json(), (req, res) => {
+app.post("/api/training/:host/:roundId", requireHost, requireNumericId("roundId"), express.json(), (req, res) => {
   const key = trainingKey(req.params.host, req.params.roundId);
   const delta = Number(req.body?.delta);
   if (!Number.isInteger(delta)) {

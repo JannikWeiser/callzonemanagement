@@ -111,6 +111,7 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+  flex-wrap: wrap;
   background: var(--panel);
   border: 1px solid #333846;
   border-radius: 10px;
@@ -120,11 +121,22 @@ h1 {
 .sequence-item.dragging { opacity: 0.4; }
 .sequence-item span { overflow-wrap: anywhere; }
 /* Every sequence entry (Sequence mode, 6.10, and Multimode's per-column
-   steps, 6.23) is a live <select> now rather than a static label - flex
-   with min-width: 0 so a long round name doesn't force the row wider than
-   its list and push the "×" out, letting the select's own rendering
-   shrink/ellipsis instead. */
-.sequence-item select { flex: 1; min-width: 0; }
+   steps, 6.23) is a live <select> now rather than a static label - flex so
+   a long round name doesn't force the row wider than its list. A 140px
+   floor (rather than 0) plus `flex-wrap` on `.sequence-item` above means a
+   narrow phone wraps the ▲/▼/× control group onto its own line below
+   instead of continuing to shrink the select past readable - confirmed
+   live at ~375-410px this used to compress the select down to ~30px wide,
+   cutting the round name off with no visual indicator; the ellipsis rule
+   below now also shows "…" instead of a bare hard clip whenever it's
+   narrower than the full name even before wrapping kicks in. */
+.sequence-item select {
+  flex: 1;
+  min-width: 140px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* A paired ("interleave two Speed finals", 6.12) entry's two sides sit in
    their own inner flex row so the outer .sequence-item still only has two
@@ -144,15 +156,46 @@ h1 {
 .sequence-pair-sep { color: var(--muted); flex-shrink: 0; }
 
 .sequence-remove {
+  /* 0.55rem vertical padding (was 0 - the single biggest offender: a
+     ~19px-tall tap target with no vertical padding at all) brings this to
+     a real ~34-36px touch target, in line with the usual 32-40px
+     guideline for something meant to be tapped on a tablet/phone. */
   background: transparent;
   border: none;
   color: var(--muted);
   font-size: 1.2rem;
   line-height: 1;
-  padding: 0 0.25rem;
+  padding: 0.55rem 0.5rem;
   cursor: pointer;
 }
 .sequence-remove:hover { color: var(--danger); }
+
+/* Groups the up/down/remove buttons as one flex-shrink-proof unit, so
+   .sequence-item's own space-between layout still only ever has two
+   top-level children (the select/pair, and this group) - unchanged since
+   before these move buttons were added. Gap widened from 0.15rem (~2.4px)
+   to 0.35rem - the three buttons sat close enough together to make
+   mis-tapping the wrong one (or the remove button) an easy touchscreen
+   mistake. */
+.sequence-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+}
+.sequence-move {
+  /* Same touch-target sizing reasoning as .sequence-remove above - was a
+     ~21x21px box, now ~32-34px. */
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.55rem 0.5rem;
+  cursor: pointer;
+}
+.sequence-move:hover:not(:disabled) { color: var(--accent); }
+.sequence-move:disabled { opacity: 0.3; cursor: default; }
 
 /* Not draggable, unlike the plain sequence-item it otherwise matches -
    Multimode's per-column round lists (6.23) don't support reordering. */
@@ -222,6 +265,17 @@ button.ghost {
     flex column above; naturally becomes 0 and the footer just follows
     the content when there's enough of it to fill the screen anyway */
   padding-top: 1rem;
+  /* Clears the Ko-fi floating "Support me" button (6.27), which is
+     `position: fixed` near the bottom-left corner of the viewport and
+     therefore not part of this element's own layout flow at all - nothing
+     here pushes it out of the way on its own. Confirmed live on a narrow
+     phone (~375-410px): the footer's centered text sits close enough to
+     the bottom-left corner there that "Legal Information" rendered
+     directly underneath/behind the button, unreadable. This padding is
+     harmless dead space on a wide screen (where the button sits far from
+     the centered footer text horizontally) - simpler and more robust than
+     a narrow-viewport-only media query. */
+  padding-bottom: 4.5rem;
   border-top: 1px solid #333846;
   text-align: center;
 }
@@ -315,7 +369,19 @@ button.ghost {
   color: var(--muted);
   font-size: 0.85rem;
 }
-.status-line.stale { color: var(--danger); }
+/* Deliberately more than just a color swap - this is the only signal that
+   something's wrong, and the app's whole design principle otherwise is
+   large, at-a-glance cards (the lane cards themselves never change
+   appearance when data goes stale). A background pill + bold weight makes
+   it noticeable from a few meters away, not just on close inspection of
+   small corner text. */
+.status-line.stale {
+  color: var(--danger);
+  font-weight: 700;
+  background: rgba(255, 95, 95, 0.15);
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+}
 
 .paired-bar {
   display: flex;
@@ -336,6 +402,7 @@ button.ghost {
   display: flex;
   align-items: center;
   gap: 1rem;
+  flex-wrap: wrap;
   margin-bottom: 1.25rem;
   padding: 0.75rem 1rem;
   background: var(--panel);
@@ -359,6 +426,7 @@ button.ghost {
   display: flex;
   align-items: center;
   gap: 0.6rem;
+  flex-wrap: wrap;
   margin-bottom: 1.25rem;
 }
 
@@ -428,6 +496,11 @@ button.ghost {
 }
 
 .next-in-sequence {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
   margin-top: 0.5rem;
   padding-top: 0.9rem;
   border-top: 1px solid #333846;
@@ -450,6 +523,7 @@ button.ghost {
   letter-spacing: 0.08em;
   font-size: 0.85rem;
   margin-bottom: 0.75rem;
+  overflow-wrap: anywhere;
 }
 
 .lane-finished {
@@ -477,6 +551,12 @@ button.ghost {
 .card-athlete {
   font-weight: 800;
   line-height: 1.15;
+  /* A long, unbreakable athlete/route name from live results.info data
+     could otherwise force a Multimode column past its grid track's
+     minmax() floor and visibly overflow the column border - the same
+     overflow class of bug already fixed for the grid track width itself,
+     just not for the text content until now. */
+  overflow-wrap: anywhere;
 }
 
 .card--at-wall {
@@ -501,7 +581,7 @@ button.ghost {
   flex-direction: column;
   gap: 0.35rem;
 }
-.queue-list li { color: var(--text); }
+.queue-list li { color: var(--text); overflow-wrap: anywhere; }
 
 @media (max-width: 640px) {
   .lanes-grid { grid-template-columns: 1fr; }

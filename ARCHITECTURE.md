@@ -2554,6 +2554,371 @@ full copy to git history - fine at this scale, but don't reach for
 `git filter-repo`/history rewrites over this without asking first if it
 ever becomes a real concern.
 
+### 6.31 `isElimination` matches any `speed_elimination_ifsc_*` year, not just `_2026`
+
+**A real, confirmed production bug, found while investigating a live
+report** ("+ Add paired entry" never showing up for a specific real
+event): `isElimination` (`populateRounds()`, [app.js](public/app.js)) used
+an exact-string match, `round.format_identifier ===
+"speed_elimination_ifsc_2026"` - but that's only the identifier our
+`dav-stage` test fixtures happen to use. Verified live against a real,
+currently-running production event on `dav.results.info` (event 2069,
+2026-09-05, "KidsCup Hessen Finale 2026") that all five of its Speed
+finals instead report `format_identifier: "speed_elimination_ifsc_2023"`
+- structurally identical `speed_elimination_stages[]` (same stage names,
+same heat/ascent shape), just an older rules-year identifier still very
+much in live use. Since `eliminationCount` (§6.12) is a straight count of
+`isElimination` entries, every event using the "_2023" identifier had
+`eliminationCount === 0` - "+ Add paired entry" and `#pairedEntryHint`
+were hidden for the entire event, permanently, no matter what staff did
+with the sequence builder. This is exactly why the live report described
+it as the button "never coming back after deleting all sequence
+entries" - it was never there to begin with, since the only fixture data
+this had ever been checked against (`dav-stage`) exclusively uses
+`_2026`.
+
+**Fix:** prefix match instead of exact match -
+`format_identifier?.startsWith("speed_elimination_ifsc_")` - the same
+style already used for `isSpeed`/`isBoulder` just above it, and forward-
+compatible with whatever year identifier results.info introduces next
+without needing another hunt-and-fix cycle. Verified live against both
+the real "_2023" production event (button now appears, paired entry
+built and displayed correctly) and the existing "_2026" stage fixtures
+(unaffected, still works).
+
+### 6.32 "Skip to next" - a manual backup for a sequence entry that never resolves as finished
+
+**Problem this solves:** `isRoundFullyFinished()`'s Speed path requires
+the bracket's last heat to reach a definite outcome (§5.2/§6.12's
+`heatIsDone()`) before advancing Sequence mode to the next entry. Reported
+live as a Speed final occasionally appearing to "get stuck" and not hand
+off to the next queued category. Investigated against the exact reporting
+event (2069) once its Speed finals had actually finished - every heat,
+including the one edge case (a `dns`-decided Small Final), *did*
+eventually resolve correctly, so no deterministic root cause reproduced
+in the post-mortem data. Most likely explanation: a genuine, if brief,
+mismatch between what's visibly happening at the wall and what
+results.info has confirmed yet (e.g. a walkover/no-show not immediately
+flagged with `dns`/"NOT STARTED" by whoever's entering results) - the
+same class of "data hasn't caught up to reality yet" gap already known
+for paired entries (§6.12's stuck-heat discussion), just for a plain
+sequence entry, which - unlike a paired entry's "⇄ Switch category now" -
+had no manual override at all.
+
+**Deliberately not an automatic timeout.** A `STUCK_TIMEOUT_MS`-style
+watchdog was already tried for the paired-entry case and explicitly
+removed by request (§6.12) - the display should only ever move on a
+genuine confirmed completion or a human choosing to, never silently on
+its own. This extends that exact same accepted principle to plain
+sequence entries instead of re-litigating it.
+
+**Implementation:** `#nextInSequence` (the "Next up: …" strip, §6.19) now
+also carries a "Skip to next →" button (`#skipToNextBtn`,
+[index.html](public/index.html)), always shown together with the strip -
+so it's only ever offered when a next entry genuinely exists
+(`updateNextInSequence()`'s own visibility condition, unchanged). Its
+click handler is the same two lines `pollCurrent()` itself already runs
+when a round finishes naturally: `sequenceIndex++; pairedState = null;`,
+followed by an immediate `pollCurrent()` call so the new entry renders
+right away instead of waiting for the next 3s tick. Works identically
+whether the current entry is plain or paired - clicking it during a
+paired entry moves past *both* interleaved categories at once (distinct
+from "Switch category now", which only toggles which of the two is
+currently shown at the same sequence position) - verified live: with a
+paired entry active (`#pairedBar` visible, "Switch category now" button
+present) followed by a plain entry, clicking "Skip to next" correctly
+hides `#pairedBar` and advances straight to the plain entry. `#nextInSequenceLabel`
+is a new inner `<span>` so `updateNextInSequence()`'s label rewrite
+(`innerHTML = ""` + rebuild) no longer wipes out the button sitting next
+to it - previously both the label and the button would have been the
+same element's `innerHTML`.
+
+### 6.33 Up/down reorder buttons - a touch-friendly addition alongside the existing drag
+
+**Problem:** the Sequence-mode builder's reordering has only ever worked
+via native HTML5 drag-and-drop (`draggable`, `dragstart`/`dragover`/`drop`
+on each `<li>`, §6.10). That API is fundamentally mouse-shaped - iPad/iOS
+Safari (and touch browsers generally) don't fire `dragstart` from a touch
+gesture for an arbitrary element at all, so reordering was effectively
+unusable on the tablets this app is mainly used from.
+
+**Fix, deliberately additive rather than a drag rewrite:** each row now
+also has "▲"/"▼" buttons (`buildMoveButton()`, next to `buildRemoveButton()`
+in [app.js](public/app.js)) that swap the item with its neighbor in
+`sequenceBuilder` and re-render - the exact same one-line array swap a
+native drag-drop already does, just triggered by a click instead of a
+drag gesture. Disabled (not hidden) at whichever end of the list a
+direction doesn't apply to. The existing drag wiring is completely
+untouched - both mechanisms coexist, a mouse user can keep dragging, a
+touch user gets a guaranteed-working alternative. Considered and rejected:
+rewriting drag itself on Pointer Events (works on touch too, but far more
+code - scroll-vs-drag disambiguation, auto-scroll near list edges, visual
+drag feedback - for lists that are typically only a handful of entries
+long, where simple buttons are more than fast enough). Verified live:
+reordering via the buttons updates both the visible order and disabled
+states correctly, "Show sequence" then plays the rounds back in the new
+order, and native mouse drag still works unchanged.
+
+`.sequence-controls` groups the three buttons (▲/▼/×) as one flex-shrink-proof
+unit in [styles.css](public/styles.css), so `.sequence-item`'s own
+`space-between` two-child layout (select/pair on one side, this group on
+the other) didn't need restructuring for the two new buttons.
+
+### 6.34 Cross-mode poll-token invalidation - a real crash, found by a full-codebase review
+
+**The bug:** `pollToken`/`trainingPollToken` (6.13, and the staleness-guard
+comment near `pollCurrent()`) only ever got bumped by the poll functions
+themselves (`pollCurrent()`, `pollMulti()`, `pollTrainingIndex()`) - never
+by `startWatching()` or `goBackToSetup()`, the two places that actually
+change which mode is active. Both `pollCurrent()`/`pollMulti()` share one
+counter (`pollToken`) and training uses a completely separate one
+(`trainingPollToken`), so switching modes never invalidated whichever kind
+of poll the OLD mode was using unless the NEW mode happened to use the
+same counter. Concretely: Split View -> Training left a still-in-flight
+`pollMulti()` call free to land later, pass its now-stale-but-untouched
+`pollToken` check, and call `renderMultiBoard(currentSelection.entries,
+...)` with `currentSelection` already reassigned to the training selection
+(no `.entries` property) - `entries.forEach(...)` on `undefined` throws,
+crashing the render on what may be an unattended wall-mounted tablet. The
+reverse direction (Training -> Watch/Multi) had the same gap for
+`trainingPollToken`, non-crashing but capable of briefly rendering stale
+training data over the just-started board.
+
+**Fix:** `startWatching()` and `goBackToSetup()` now bump **both** tokens
+unconditionally, every time, regardless of which mode is being entered or
+left - simpler and more robust than figuring out per-transition which one
+actually needs it (and correct for every current AND future mode
+combination, not just the two directions that happened to be reported).
+Verified live: patched `fetch()` to delay every `/api/round/` response by
+2s, started a `pollMulti()` tick, then immediately switched to Training
+mid-flight (before the delayed fetch resolved) - no error, no stale
+content; the delayed `pollMulti()` call's eventual resolution was
+correctly discarded, and the Training board rendered its own fresh data
+once its own (also-delayed) fetch completed.
+
+### 6.35 Falsy-zero bib number bug
+
+`athleteLine()` and `heatAthleteLine()` used `athlete.bib ? \`#${bib} · \`
+: ""` - a bare truthiness check that silently drops the "#0 · " prefix for
+a legitimate bib number of `0` (numeric zero is falsy; `athlete.bib` in
+every real sample seen so far has been a non-empty numeric-looking string
+like `"208"`, but nothing guarantees results.info never sends a literal
+`0`). Fixed to `athlete.bib != null && athlete.bib !== "" ? ... : ""` in
+both places - explicit "missing" checks instead of relying on JS
+truthiness, no behavior change for every bib value seen in practice so
+far.
+
+### 6.36 server.js hardening: host allowlist, numeric ids, cache touch, error sanitization
+
+Four related fixes to [server.js](server.js), all found by the same
+full-codebase review, none changing any endpoint's normal-case behavior
+(verified live against real event data both before and after):
+
+- **`requireHost` now checks `Object.prototype.hasOwnProperty.call(HOSTS,
+  host)`, not a bare `!HOSTS[host]` truthiness check.** `HOSTS` is a plain
+  object literal, so a truthiness check also (wrongly) passes for
+  inherited `Object.prototype` property names like `"constructor"` or
+  `"toString"` - `GET /api/event/constructor/123` used to slip past the
+  allowlist and blow up downstream with a raw `TypeError` once `HOSTS[host]`
+  resolved to the `Object` constructor function. Verified live: now a
+  clean 400 `Unknown host "constructor"`.
+- **`eventId`/`roundId` must match `/^\d+$/`** (`requireNumericId()`
+  middleware, applied to all four `:eventId`/`:roundId` routes including
+  both training endpoints) - every real id this app has ever seen (AGENTS.md's
+  fixture table) is a plain positive integer, spliced unvalidated into the
+  upstream URL before this fix. Rejecting anything else up front closes
+  off path/query injection against the upstream host via a crafted,
+  percent-encoded id (e.g. `123%3Ffoo=bar` decoding into an injected query
+  string). Verified live: `/api/round/stage/abc` now 400s;
+  `/api/round/stage/13739` still 200s exactly as before.
+- **Cache entries are "touched" on a hit** (`cachedFetch()`: delete + re-set
+  the same key on a cache hit, moving it to the end of the `Map`'s
+  insertion order) - the eviction below it always drops the *front* of
+  that order, so without this a frequently-polled key sitting near the
+  front from having been inserted early could be evicted before a
+  rarely-reused one just because of insertion order, despite the "LRU-ish"
+  framing in the original comment. Low real-world impact given the short
+  TTLs (3s/20s) but a genuine correctness gap in what the code claimed to
+  do.
+- **Non-HTTP errors get a generic message instead of the raw
+  internal one** (`sendUpstreamError()`) - only `err.status` (set by
+  `upstreamJson()` for a real, well-formed upstream HTTP response, e.g.
+  `Upstream 404 for ...`) is echoed back verbatim now; anything else (a
+  malformed-URL `TypeError`, a network-level failure) gets a generic
+  "Upstream request failed" and is logged server-side instead, so a client
+  never sees raw Node/undici internals. A genuine 404/502/etc. from
+  results.info itself still passes through with its real status and
+  message exactly as before - verified live.
+
+The training endpoints' `roundId` validation narrows but doesn't fully
+close the "no auth" griefing surface noted during review (anyone can still
+POST real-looking numeric round ids to fill the shared in-memory map) -
+deliberately left alone rather than bolting on an authentication system,
+since "no account/auth system" is this app's own documented design choice
+(6.11), and the training position store is already explicitly ephemeral
+and non-authoritative by design.
+
+### 6.37 Distinguishing "the round is gone" from "the network is down", and a more visible stale indicator
+
+**Problem:** every failed poll - a dropped WiFi connection, results.info
+being briefly unreachable, and a round genuinely deleted/archived out from
+under a watching tablet - rendered the exact same
+`"Connection lost: Upstream 404 for /api/v1/category_rounds/.../results"`
+text (or equivalent for other statuses). Staff at a live event had no way
+to tell "this resolves itself in a few seconds" from "this round doesn't
+exist any more, go pick a different one."
+
+**Fix:** `fetchRoundJson()` (and the two ad-hoc training fetches in
+`trainingStep()`/`pollTrainingIndex()`) now attach the real HTTP `.status`
+to whatever error they throw, and a new shared `describeConnectionError(err)`
+turns that into one of three distinct, actionable messages - reused by
+every poll path in the app (`pollRound`, `pollMulti`'s aggregate line,
+`pollOneMultiColumn`'s per-column text, `pollPairedTick`, both training
+poll functions) so the wording is consistent everywhere a fetch can fail:
+- `err.status === 404` -> `"This round could not be found on results.info
+  anymore - pick a different one."`
+- any other real `err.status` (a genuine HTTP response from our own
+  server, e.g. a results.info 502) -> `"Connection lost: <the original
+  message>"`, same as before
+- no `.status` at all (a network-level failure - offline, DNS, the
+  `fetch()` call itself rejecting, never reaching a real HTTP response)
+  -> `"Connection lost - check the WiFi/network connection."`
+
+Verified live for all three cases, including the real 404 rendering
+correctly in the actual status line end to end (not just the helper
+function in isolation).
+
+**Also:** `.status-line.stale` was color-only (`color: var(--danger)`) -
+the sole indicator that something's wrong, on an app whose entire other
+design principle is large, at-a-glance cards meant to be readable from a
+few meters away; a WiFi drop could go unnoticed in small, easy-to-miss
+corner text. Now also bold with a translucent red background pill, still
+proportioned to fit the top bar rather than a full redesign.
+
+### 6.38 Double-click protection: Training's Next/Back and Sequence's "Skip to next"
+
+Neither `trainingStep()` (Training mode's Back/Next, wired to both the
+wall-tablet buttons and the remote-control device's buttons) nor
+`#skipToNextBtn` (6.32) disabled themselves while their request was in
+flight - a rapid double-tap (plausible exactly because clicking gives no
+other feedback that the first tap registered, especially on a phone
+outdoors under time pressure) fired the handler twice before the first
+response came back, silently advancing the roster/sequence by 2 instead of
+1. Fixed by disabling the relevant button(s) for the duration of the
+request, re-enabling in a `finally` - for `trainingStep()`, all four
+Back/Next buttons (wall tablet + remote control) are disabled together,
+harmlessly, since only one pair is ever visible per device; for
+`trainingStep()` specifically, the re-enable is guarded by `myToken ===
+trainingPollToken` so an older call's `finally` can't re-enable the
+buttons mid-flight of a genuinely newer step. Verified live: a scripted
+double-click on Training's "Next" advanced the shared server-side counter
+by exactly 1, not 2.
+
+### 6.39 Immediate re-poll when the tab/screen becomes visible again
+
+The existing `visibilitychange` listener (6.7) only ever re-acquired the
+screen wake lock - the regular `setInterval` poll (3s for watch/multi, 1s
+for training) is throttled or fully suspended by browsers while a tab/screen
+is backgrounded, and nothing forced a fresh fetch the moment it came back;
+the board could sit showing whatever it last fetched before the screen
+went dark for however long that was, with no visible indication anything
+was stale (the last real fetch had succeeded, so `.stale` was never set).
+Now the same listener also fires one immediate `pollCurrent()`/`pollMulti()`/
+`pollTrainingIndex()` (whichever the active `currentSelection.kind` needs)
+as soon as `document.visibilityState` becomes `"visible"`, but only while
+actually watching something (`!el.setup.hidden`) - not on the setup screen.
+Verified live by monkey-patching `pollMulti` and dispatching a synthetic
+`visibilitychange` event while in Split View: confirmed called.
+
+### 6.40 Mobile layout fixes: Ko-fi/footer overlap, control-link row, Sequence-item touch targets
+
+A batch of confirmed, live-tested (~375-410px viewport) mobile layout
+bugs, all in [styles.css](public/styles.css):
+
+- **The Ko-fi "Support me" button (6.27) overlapped "Legal Information"
+  in the footer** on a narrow phone - the button is `position: fixed`
+  near the bottom-left corner of the viewport, entirely outside
+  `.setup-footer`'s own layout flow, so nothing in the footer's own CSS
+  could push it out of the way. Fixed with `padding-bottom: 4.5rem` on
+  `.setup-footer` - harmless extra space on a wide screen (where the
+  button sits far from the horizontally-centered footer text anyway),
+  simpler and more robust than a narrow-viewport-only media query.
+- **Training mode's "Link to control from another device" row broke
+  outright on a narrow phone** - confirmed live: the share input shrank to
+  ~28px wide (fully unusable/unreadable) and the QR code was squeezed
+  against the viewport edge, because `.share-row` had no `flex-wrap` and
+  its long, `white-space: nowrap` label competed with the input, Copy
+  button, and QR code for the same single line. Fixed by adding
+  `flex-wrap: wrap` to `.share-row` - the label (too long to share a line
+  with everything else at this width) now wraps to its own line, leaving
+  the input, button, and QR code a full line's worth of room on the next
+  one. Verified live: input width went from ~28px to ~101px, and
+  `document.body.scrollWidth` matched the viewport exactly (no horizontal
+  overflow at all). `.training-controls` (the Back/Next/label row) got the
+  same `flex-wrap: wrap` fix for the same underlying reason - it was the
+  only other multi-item control row in the file missing it.
+- **Sequence-item touch targets were too small and squeezed the round
+  name unreadable** - a side effect of 6.33 adding two more buttons
+  (▲/▼) next to the existing "×": `.sequence-remove` had *zero* vertical
+  padding (~19px tall) and `.sequence-move` was ~21×21px, both well under
+  the ~32-40px touch-target guideline, packed with only ~2.4px between
+  them; and the extra buttons left less room for `.sequence-item select`,
+  which had no ellipsis handling and simply hard-clipped the round name
+  with no visual indicator anything was cut off. Fixed by: real vertical
+  padding on both button types (~32-36px targets now, verified live),
+  widening `.sequence-controls`'s gap to 0.35rem, giving the select
+  `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` (shows
+  "…" instead of a bare clip), and a 140px `min-width` floor on the select
+  combined with `flex-wrap: wrap` on `.sequence-item` itself - so on a
+  narrow enough phone the ▲/▼/× group now wraps to its own line below the
+  select instead of continuing to squeeze it past readable. Verified live
+  at 375px: select shows "BOULDER U1…" instead of an unreadably narrow
+  hard clip, with no wrap needed at that particular width once the other
+  fixes freed up room; still fits everything on one row up to a point,
+  wraps gracefully past it.
+- **Long, unbreakable athlete/route names had no `overflow-wrap`** in
+  `.lane-heading`, `.card-athlete`, and `.queue-list li` - could otherwise
+  force a Multimode column past its grid track's `minmax()` floor and
+  visibly overflow the column border, the same overflow class of bug
+  already fixed for the grid track width itself (6.23) but not for the
+  text content inside it. Added `overflow-wrap: anywhere` to all three.
+
+### 6.41 Split View parity: per-column "Skip to next" and up/down reorder
+
+Found during the same review, by direct comparison with what Sequence
+mode had just gained (6.32, 6.33): Split View's per-column "Next: …" strip
+had no equivalent manual-advance backup, and its column builder
+(`renderMultiColumnsConfig()`, 6.23) had no reorder mechanism at all
+(deliberately, at the time - "remove-only... a column's rounds are added
+in the order they should play") - but that reasoning predates discovering
+that iPad Safari doesn't fire native drag events at all (6.33's whole
+premise), so a mis-ordered column previously had no fix short of removing
+and re-adding every entry.
+
+Both extended to match, reusing the exact same mechanisms:
+- Each column's `.next-in-sequence` strip (`renderMultiBoard()`) now also
+  carries a "Skip to next →" button, structurally identical to 6.32's
+  top-level one but scoped to that one column's own `entry.sequenceIndex`
+  - clicking it advances only that column and re-polls; the other columns
+  are completely unaffected, verified live (column 0 skipped forward,
+  column 1's own independent position untouched). The label text moved
+  into its own inner `<span>` (`updateMultiNextLabels()` now writes there
+  instead of the strip's own `innerHTML`) so refreshing the label on each
+  tick doesn't wipe out the button sitting next to it.
+- Each row in the column builder now also has the same ▲/▼ `buildMoveButton()`
+  pair Sequence mode's builder uses, wrapped in the same `.sequence-controls`
+  group alongside the existing remove button - same swap-with-neighbor
+  mechanism, same disabled-at-the-ends behavior. Verified live: reordering
+  a column's rounds via the buttons updates both the visible order and the
+  column's actual playback order (confirmed via the resulting "Next: …"
+  labels after a skip), with no effect on the other column.
+
+**Also, while comparing button labels across modes:** the Single round
+setup screen's primary action button was a bare "Show", while every other
+mode names what it does ("Show sequence", "Show Split View", "Start
+training") - renamed to "Show round" for consistency. Text-only change, no
+id/behavior change.
+
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
 - **A visual bracket tree** for Speed elimination (like the PDF heat sheet
@@ -2569,6 +2934,41 @@ ever becomes a real concern.
   would need a manual "mark done, advance" control that doesn't exist yet.
 - **A language switcher** — the UI is English-only by deliberate choice
   (6.8), not because a toggle wasn't considered.
+- **`heatIsReady()`'s exact `=== 2` athlete-count check** — a full-codebase
+  review (6.34-6.41) flagged that a genuine database "bye" (a heat that
+  really does only have 1 athlete, as opposed to the already-handled
+  2-athlete wildcard/false-start case) would never satisfy this and could
+  freeze `findCurrentHeatIndex()` on that heat for the rest of the round.
+  Deliberately not changed - there's no confirmed real example of what
+  such a heat's data actually looks like (`athletes: []`? one entry with a
+  placeholder? something else?), and guessing at the shape risks trading a
+  theoretical freeze for a real, wrong rendering. Revisit if a live report
+  or a real captured payload ever shows this shape.
+- **`SPEED_STAGE_ORDER`'s fixed stage-name list** — same review, same
+  reasoning: extending it with guessed additional stage names (a "1/64"
+  bracket, a differently-worded 3rd-place stage) without a confirmed real
+  example would be exactly the kind of unverified assumption AGENTS.md §2
+  already warns against. The existing "unknown name sorts last, never
+  blocks the other, known side" fallback is a safe default in the
+  meantime.
+- **Multimode's "Lead by exclusion" discipline inference** and **the
+  exact `=== "Boulder"`/`"Speed"` `round.discipline` string checks** — both
+  flagged as fragile against a hypothetical fourth discipline or a
+  differently-cased/localized value on a federation host never yet seen
+  live (fasi/usac/saccas). Not changed for the same reason as the two
+  bullets above - there is no confirmed alternative value to check against,
+  and results.info has only ever exposed three disciplines to this app so
+  far.
+- **A single shared source of truth for the host list** (server.js's
+  `HOSTS` vs. index.html's `<select id="host">` options) — flagged as a
+  maintenance-drift risk (a new host needs both updated by hand). Not
+  turned into a runtime dependency (e.g. the frontend fetching the list
+  from a new endpoint) - that would make the most critical first screen in
+  the app depend on an extra network round-trip succeeding before it can
+  even show the form, for a low-severity, infrequent (5 hosts added since
+  this app existed) maintenance issue. Addressed instead with a
+  cross-referencing comment in both files (6.36's write-up covers the
+  rest of that pass).
 - **Authentication / access control** — the app has none by design; the
   underlying competition data is already public on results.info, and the
   training-control link (6.13) follows the same no-accounts trust model.

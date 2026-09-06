@@ -17,6 +17,8 @@
     </label>
     <label>
       Server
+      <!-- Keep this in sync with the HOSTS map in server.js - the two are
+           maintained independently, no shared source of truth. -->
       <select id="host">
         <option value="prod">dav.results.info</option>
         <option value="ifsc">ifsc.results.info</option>
@@ -42,7 +44,7 @@
       Category / round
       <select id="roundSelect"></select>
     </label>
-    <button id="watchRound">Show</button>
+    <button id="watchRound">Show round</button>
     <button id="startTraining">Start training</button>
   </div>
   <div id="trainingHint" class="training-hint" hidden>
@@ -190,7 +192,10 @@
   <div id="routeTabs" class="group-tabs" hidden></div>
   <div id="boulderModeRow" class="share-row" hidden></div>
   <div id="lanes" class="lanes"></div>
-  <div id="nextInSequence" class="next-in-sequence" hidden></div>
+  <div id="nextInSequence" class="next-in-sequence" hidden>
+    <span id="nextInSequenceLabel"></span>
+    <button id="skipToNextBtn" class="ghost">Skip to next &rarr;</button>
+  </div>
 </main>
 
 <main id="controller" class="controller" hidden>
