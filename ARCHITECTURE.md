@@ -2807,12 +2807,42 @@ response came back, silently advancing the roster/sequence by 2 instead of
 1. Fixed by disabling the relevant button(s) for the duration of the
 request, re-enabling in a `finally` - for `trainingStep()`, all four
 Back/Next buttons (wall tablet + remote control) are disabled together,
-harmlessly, since only one pair is ever visible per device; for
-`trainingStep()` specifically, the re-enable is guarded by `myToken ===
-trainingPollToken` so an older call's `finally` can't re-enable the
-buttons mid-flight of a genuinely newer step. Verified live: a scripted
-double-click on Training's "Next" advanced the shared server-side counter
-by exactly 1, not 2.
+harmlessly, since only one pair is ever visible per device.
+
+**Regression, reported live and fixed:** the first version of this fix
+guarded the re-enable with `if (myToken === trainingPollToken)`, reusing
+the same counter `pollTrainingIndex()`'s own passive 1s poll loop also
+bumps on every tick, completely independent of whether a `trainingStep()`
+request happened to be in flight. Under fast repeated tapping (or just
+unlucky timing - any POST slower than the 1s interval), the passive poll's
+next tick could bump `trainingPollToken` while a `trainingStep()` call was
+still waiting on its own POST; when that POST resolved, the stale
+`myToken` check failed, and the `finally` block's re-enable was skipped -
+**permanently**, since nothing else ever touches `trainingStepButtons`.
+Reproduced live by delaying the POST past the next tick: both Back and
+Next stayed disabled forever, immune even to a later successful click
+(which a disabled button simply swallows) - only a page reload recovered.
+
+**Fixed properly** by decoupling the two concerns that were sharing one
+counter: a dedicated `trainingStepPending` boolean now guards the button
+disable/re-enable, touched only by `trainingStep()` itself and always
+cleared unconditionally in `finally` - safe, because the disabled buttons
+already prevent a real overlapping `trainingStep()` call from ever
+happening (a click can't reach a disabled button), so nothing needs to
+compare against a shared, externally-mutated counter for that any more.
+Whether to still *apply* an already-resolved step's result (skip if the
+user left this exact training session while the request was in flight) is
+decided separately, by capturing `currentSelection` at the start of the
+call and comparing by reference afterward - `startWatching()` always
+assigns a brand new object to `currentSelection` on every mode switch, so
+this is naturally true exactly when the session is still current, with no
+extra bookkeeping and no more collision with `pollTrainingIndex()`'s own,
+legitimate use of `trainingPollToken` for its own tick-ordering (unchanged).
+Verified live: a POST artificially delayed past the next passive tick now
+correctly re-enables both buttons once it resolves; 5 rapid sequential
+clicks advanced the server-side counter by exactly 5 (no hang, no lost
+clicks); 3 near-simultaneous clicks still collapse to a single advance
+(the original double-click protection this section is about, unaffected).
 
 ### 6.39 Immediate re-poll when the tab/screen becomes visible again
 

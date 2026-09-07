@@ -605,6 +605,24 @@ previously-reported problems:
   correctly tell a 404 (round gone) apart from a network failure (no
   status at all). See
   [ARCHITECTURE.md §6.37](ARCHITECTURE.md#637-distinguishing-the-round-is-gone-from-the-network-is-down-and-a-more-visible-stale-indicator).
+- **`trainingStepPending` (Training's Back/Next double-click guard) is
+  deliberately its own boolean, not `trainingPollToken`.** A real,
+  reported-live bug: an earlier version guarded the button re-enable with
+  `myToken === trainingPollToken`, but `pollTrainingIndex()`'s own passive
+  1s poll loop *also* bumps that same counter on every tick, completely
+  unrelated to whether a `trainingStep()` POST is in flight - a slow POST
+  (or just unlucky timing) let the passive tick steal the counter,
+  permanently skipping the re-enable with no way to recover short of a
+  reload. **General lesson, not just about this one flag:** a
+  staleness/generation counter shared across two independently-timed loops
+  can silently invalidate one from the other, even when they have nothing
+  to do with each other - don't reuse one for a new purpose just because
+  it happens to already be in scope; check what ELSE bumps it first, and
+  give unrelated concerns (like a button-disable guard) their own state,
+  or gate on something that actually reflects your identity check (this
+  fix uses `currentSelection` reference equality) rather than a
+  general-purpose tick counter. See
+  [ARCHITECTURE.md §6.38](ARCHITECTURE.md#638-double-click-protection-trainings-nextback-and-sequences-skip-to-next).
 - **Multimode - displayed as "Split View" in the UI, code/docs still say
   "Multimode"/"multi" throughout.** The mode tab, "Show Split View"
   button, and board heading text are the only things that changed; the

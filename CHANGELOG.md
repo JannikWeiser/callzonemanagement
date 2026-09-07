@@ -7,6 +7,15 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Fixed
+- **Training mode's Back/Next buttons could get permanently stuck
+  disabled under fast repeated tapping** — a regression in the previous
+  double-click fix: it shared its staleness counter with the unrelated
+  passive 1-second poll loop, which could bump that counter mid-request
+  and skip the re-enable step forever. Reported live, reproduced, and
+  fixed by giving the button guard its own independent state. See
+  [ARCHITECTURE.md §6.38](ARCHITECTURE.md#638-double-click-protection-trainings-nextback-and-sequences-skip-to-next).
+
 ### Fixed (full-codebase review pass)
 - **A real crash: switching modes (e.g. Split View → Training) while a
   poll was still in flight could throw, or briefly show stale data** —

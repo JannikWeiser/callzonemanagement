@@ -2671,8 +2671,40 @@ async function pollTrainingIndex() {
 // instead of 1.
 const trainingStepButtons = [el.trainingBack, el.trainingNext, el.controlBack, el.controlNext];
 
+// A REAL bug, reported live and reproduced: reusing `trainingPollToken` here
+// (as an earlier version of this double-tap guard did) permanently hung the
+// Back/Next buttons under fast repeated tapping. `trainingPollToken` is also
+// bumped by every 1s `pollTrainingIndex()` tick, completely independent of
+// whether a trainingStep() POST happens to be in flight - so a slow POST
+// (or just unlucky timing against the 1s interval) could have the passive
+// poll's own next tick bump the counter out from under it. When the POST
+// then resolved, `myToken !== trainingPollToken` was true, so the old
+// `finally` block's `if (myToken === trainingPollToken)` guard skipped
+// re-enabling the buttons - and nothing else ever re-enabled them, since
+// pollTrainingIndex() only ever touches the board/status text, never
+// `trainingStepButtons`. Reproduced live by delaying the POST past the next
+// 1s tick: both buttons stayed disabled forever, surviving even a
+// successful follow-up click (which the disabled button simply swallowed).
+//
+// Fixed by giving the button guard its OWN state, `trainingStepPending`,
+// completely decoupled from `trainingPollToken` (which stays exactly as it
+// was for pollTrainingIndex()'s own unrelated tick-ordering, below) - the
+// buttons themselves already prevent a real overlapping trainingStep() call
+// (a click can't reach a disabled button), so nothing else needs to bump or
+// check this flag, and `finally` always clears it unconditionally. Whether
+// to still *apply* a resolved step's result is a separate question, decided
+// by capturing `currentSelection` at the start and comparing by reference:
+// `startWatching()` always assigns a brand new object to `currentSelection`
+// on every mode switch, so this reference check is naturally already true
+// exactly when this training session is still the active one - no extra
+// bookkeeping needed, and no more collision with the passive poll's own
+// counter.
+let trainingStepPending = false;
+
 async function trainingStep(delta) {
-  const myToken = ++trainingPollToken;
+  if (trainingStepPending) return; // belt-and-braces - the disabled buttons already prevent this
+  trainingStepPending = true;
+  const mySelection = currentSelection;
   const statusEl = currentSelection.control ? el.controllerStatus : el.statusLine;
   for (const btn of trainingStepButtons) btn.disabled = true;
   try {
@@ -2687,19 +2719,17 @@ async function trainingStep(delta) {
       err.status = res.status;
       throw err;
     }
-    if (myToken !== trainingPollToken) return;
+    if (currentSelection !== mySelection) return; // left this training session while the request was in flight
     trainingIndex = data.index ?? trainingIndex;
     if (currentSelection.control) renderController(trainingRoundData, trainingIndex);
     else renderTrainingBoard(trainingRoundData, trainingIndex);
   } catch (err) {
-    if (myToken !== trainingPollToken) return;
+    if (currentSelection !== mySelection) return;
     statusEl.textContent = describeConnectionError(err);
     statusEl.classList.add("stale");
   } finally {
-    // Only re-enable if nothing newer has already taken over - otherwise
-    // this older call's finally would re-enable the buttons mid-flight of
-    // a genuinely newer trainingStep() call.
-    if (myToken === trainingPollToken) for (const btn of trainingStepButtons) btn.disabled = false;
+    trainingStepPending = false;
+    for (const btn of trainingStepButtons) btn.disabled = false;
   }
 }
 
