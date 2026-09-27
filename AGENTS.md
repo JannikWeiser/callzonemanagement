@@ -846,6 +846,22 @@ previously-reported problems:
   `setMode()` call site needs the error cleared, clear it explicitly at
   that call site, the way the mode-tab click listener does, rather than
   inside `setMode()`.
+- **`withNextCategoryPreview()`/`nextCategoryRoutesFor()` (Sequence mode's
+  next-category startlist preview, 6.42)** - only ever touches `lane.queue`,
+  **never** `atWall`/`onDeck`. Don't extend this to fill a blank "NEXT" card
+  once the current round runs out, even though it would look more
+  "complete" - "NEXT" has real operational meaning on this app's
+  wall-mounted tablets (someone gets called to isolation because of it),
+  discussed and deliberately rejected for exactly that reason. Also don't
+  drop the exact-lane-count gate in `nextCategoryRoutesFor()` to "best-effort
+  map" mismatched lane counts - no partial/guessed lane correspondence,
+  feature is simply off when counts differ. `nextRoundPreview`/
+  `nextRoundPreviewKey` must be reset to `null` at every `sequenceIndex++`
+  site (`pollCurrent()`'s two advance points, the paired-tick advance, and
+  "Skip to next"), not only inside `updateNextInSequence()`'s own early
+  returns - otherwise the entry just advanced past can render one stale
+  tick previewing itself. See
+  [ARCHITECTURE.md §6.42](ARCHITECTURE.md#642-sequence-mode-next-categorys-startlist-preview-in-the-queue-list).
 
 If a change requires touching one of these, update the corresponding
 ARCHITECTURE.md section in the same change — don't let the doc drift from

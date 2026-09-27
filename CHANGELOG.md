@@ -7,6 +7,17 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Added
+- **Sequence mode can now preview the next category's startlist inside the
+  queue list** as the current one runs low, instead of only the existing
+  "Next up: …" name strip — real athlete names appear after a deliberate
+  blank gap, dimmed until their round is actually live. Off entirely
+  whenever the current and next round don't have the same number of
+  lanes/routes, and never touches the CLIMBING/NEXT cards (only the plain
+  queue list) for operational-safety reasons. New checkbox in the Sequence
+  setup screen, default on. See
+  [ARCHITECTURE.md §6.42](ARCHITECTURE.md#642-sequence-mode-next-categorys-startlist-preview-in-the-queue-list).
+
 ### Fixed
 - **Speed qualification's two lanes could show mismatched heat pairings**
   — Lane A and Lane B were inferred fully independently (same code path as

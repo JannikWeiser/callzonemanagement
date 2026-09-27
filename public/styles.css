@@ -52,6 +52,16 @@ h1 {
 
 .setup-row label.grow { flex: 1; min-width: 260px; }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+.checkbox-row input { width: 1.1rem; height: 1.1rem; cursor: pointer; }
+
 .mode-tabs {
   display: flex;
   flex-wrap: wrap;
@@ -582,6 +592,7 @@ button.ghost {
   gap: 0.35rem;
 }
 .queue-list li { color: var(--text); overflow-wrap: anywhere; }
+.queue-list li.queue-item--preview { color: var(--muted); font-style: italic; }
 
 @media (max-width: 640px) {
   .lanes-grid { grid-template-columns: 1fr; }

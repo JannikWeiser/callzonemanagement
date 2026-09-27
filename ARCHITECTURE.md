@@ -3028,6 +3028,124 @@ mode names what it does ("Show sequence", "Show Split View", "Start
 training") - renamed to "Show round" for consistency. Text-only change, no
 id/behavior change.
 
+### 6.42 Sequence mode: next category's startlist preview in the queue list
+
+**Problem this solves:** the existing "Next up: …" strip (6.19) only names
+the next category — it doesn't show anyone's actual name, so callzone
+staff can't start preparing for the handoff until the switch has already
+happened. Requested explicitly, discussed and refined with the user over
+several messages before being scoped and planned.
+
+**What it does:** once a lane's own queue list has fewer than 6 real
+entries left (the current round is running out), it pads back out to a
+virtual 6-real-equivalent total: the real entries, then exactly **one blank
+gap**, then enough of the *next* round's own startlist to reach that
+virtual 6 (`6 - realCount` preview names) — so 5 real gets 1 preview name,
+0 real gets 6. Preview names render dimmed/italic
+(`.queue-item--preview`, `styles.css`) until their round is actually live.
+
+**The CLIMBING and NEXT (`atWall`/`onDeck`) cards are never touched — only
+the plain queue list below them.** This is a deliberate, discussed safety
+boundary, not an oversight: "NEXT" has real operational meaning on this
+app's wall-mounted tablets (6.7) - that person gets called to isolation -
+so showing a not-yet-live category's athlete there, even briefly, risks
+calling the wrong person. `withNextCategoryPreview()` only appends to
+`lane.queue`, never touches `atWall`/`onDeck`, and bails out entirely
+(`lane.finished`) once a lane shows the "Round finished" placeholder rather
+than a queue list at all.
+
+**Gating - only when the lane counts match, no partial/guessed mapping:**
+`nextCategoryRoutesFor(visibleRouteCount)` (`renderBoard()`) compares the
+CURRENTLY VISIBLE lane count for this round (`routesToShow.length`, i.e.
+already after group/route-tab filtering) against the next round's own
+default group's route count (`collectRouteGroups(nextRoundPreview)[0]`) -
+anything other than an exact match returns `null` and the feature is
+silently off for that render. No attempt to map lanes across different
+counts or disciplines - explicitly decided against guessing here, matching
+this app's general "don't guess API shapes" stance (AGENTS.md §2, applied
+here to guessing a lane correspondence instead of a field name). When it
+does match, lanes are paired by plain array index (lane *i* of the current
+round previews with route *i* of the next round's default group) - no name-
+based matching needed since both come from the API's own natural route
+order.
+
+**Scope, deliberately narrow for v1:**
+- **Sequence mode only** (`currentSelection.kind === "watch"`) - not Split
+  View/Multimode, even though its columns are also sequences (6.23).
+  `renderMultiBoard()`'s own `buildLane()` call simply doesn't pass the new
+  5th parameter (`undefined`), so `withNextCategoryPreview()`'s
+  `!previewRoute` check turns the feature off there with no code path
+  change needed. Can be extended later the same way "Skip to next" was
+  (Sequence first, Split View parity as a separate follow-up, 6.41).
+- **Plain sequence entries only** - if either the current or the next
+  sequence entry is `type: "paired"` (6.12, Speed-elimination category
+  interleaving), the preview is off. Paired entries render via
+  `renderPairedBoard()`, a completely separate path from `buildLane()`.
+- **The generic `buildLane()` family only** (Lead, Boulder, Speed
+  qualification via §5.7) - **not** Speed elimination finals
+  (`renderSpeedElimination()`/`buildSpeedLane()`), which render via an
+  entirely different function and heat-shaped data. Still covers the main
+  real-world case (a Boulder/Lead Qualification → Finals handoff within the
+  same category).
+
+**Data flow - reusing the existing "one-off, cached, not part of the 3s
+poll" pattern (6.19):** `getNextRoundPreviewData(host, roundId)` mirrors
+`getRoundLabel()`'s cache exactly (same rationale: a round's `routes`/
+`startlist` never change within its lifetime), but caches the **full**
+parsed round object in its own `nextRoundFullCache` Map rather than
+widening `roundLabelCache` - keeps `getRoundLabel()`'s existing callers
+(the paired-entry "A ↔ B" label, 6.12) untouched. `updateNextInSequence()`
+(6.19) is extended to also call this - once per sequence position, guarded
+by `nextRoundPreviewKey` (`host:roundId` of whatever `nextRoundPreview`
+currently represents) so it doesn't re-fetch or re-render every 3s tick
+once settled - and to call `renderBoard(lastRoundData)` again once the
+preview data lands, so it appears without waiting for the next poll tick
+(the label strip already has this same "populates a moment after the
+initial render" property and it was never an issue).
+
+**`nextRoundPreview`/`nextRoundPreviewKey` are reset to `null` at every
+place `sequenceIndex` is incremented** (`pollCurrent()`'s two advance
+points, the paired-tick advance, and the manual "Skip to next" handler,
+6.32/6.38) - **not just inside `updateNextInSequence()`'s own early
+returns.** Without this, the entry that was being previewed becomes the new
+*current* entry, but `pollCurrent()`'s loop calls `pollRound()` →
+`renderBoard()` for it immediately, one full await-chain before
+`updateNextInSequence()` gets a chance to re-derive the (now different)
+real next entry - a lane whose fresh queue happens to already be short
+(a small category) could otherwise render one stale tick showing itself
+as a dimmed "preview" of its own athletes. Reset immediately at the
+increment site instead, so the very next render is already clean.
+
+**Toggle - checkbox in `#sequenceRow`, default ON, encoded in the share
+link:** `currentSelection.showNextPreview` (boolean), read from
+`el.showNextPreview.checked` when "Show sequence" is clicked. URL param
+`preview` (`"0"` to turn off; **absent means on**, not just "true" written
+explicitly) - so an already-shared link from before this feature existed
+gets the new default-on behavior rather than silently defaulting to off.
+Only relevant for `kind: "watch"` - Training/Multi selections don't carry
+or read it.
+
+**Reused, not reinvented:** the boundary gap needs no new rendering code at
+all - it's a plain `null` queue entry, the exact same convention Boulder's
+World Series padding (6.17) already established for "not a real athlete
+yet, render the blank dash." `renderLaneBody()` gained one small additive
+branch (`item?.preview` → render `item.preview` with the dimmed CSS class)
+that `buildTrainingLane()` (`renderLaneBody()`'s only other caller) never
+triggers, since it never builds a `{ preview }`-shaped queue entry.
+
+Verified live (mocked, same technique as §5.7's fix): a real Boulder-groups
+round (`13769`) with route "1" mutated to 4 real queue entries remaining
+showed exactly `4 real + 1 gap + 2 preview` (padding to 6) with the preview
+names correctly dimmed - while the round's OTHER two untouched routes
+(still full queues) showed no gap/preview at all, proving per-lane
+independence. Regression-checked: a lane-count mismatch (3 vs. 4 routes)
+left the queue at its natural short length with no gap/preview; the
+checkbox off (`showNextPreview: false`) cleared an already-set preview on
+the next `updateNextInSequence()` call; either side being a paired entry
+kept the preview off; a plain Lead round with no sequence context was
+completely unaffected; Split View continued rendering with zero preview
+items despite reusing the same `buildLane()`/`renderLaneBody()` functions.
+
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
 - **A visual bracket tree** for Speed elimination (like the PDF heat sheet

@@ -17,6 +17,7 @@ const el = {
   addRoundToSequence: document.getElementById("addRoundToSequence"),
   pairedEntryHint: document.getElementById("pairedEntryHint"),
   addPairedToSequence: document.getElementById("addPairedToSequence"),
+  showNextPreview: document.getElementById("showNextPreview"),
   watchSequence: document.getElementById("watchSequence"),
   multiSetup: document.getElementById("multiSetup"),
   multiCountTabs: document.getElementById("multiCountTabs"),
@@ -81,7 +82,7 @@ let pollToken = 0;
 // Tracks what the currently-watched board is showing, so re-renders (poll
 // ticks, group-tab clicks) and the share link stay in sync without having
 // to thread these values through every function call.
-//   - watch:    { kind: "watch", host, eventId, group, route, sequence }
+//   - watch:    { kind: "watch", host, eventId, group, route, sequence, showNextPreview }
 //   - training: { kind: "training", host, eventId, roundId, control, route }
 //   - multi:    { kind: "multi", host, eventId, entries }
 // `route`, like `group`, dedicates this tablet to one or several
@@ -280,7 +281,11 @@ function readUrlSelection() {
     : roundParam
     ? [{ type: "round", id: roundParam }]
     : null;
-  return sequence ? { kind: "watch", host, eventId, group, route, sequence } : null;
+  // Default "1" (on) when absent - an older, already-shared link without
+  // this param should get the new default-on behavior, not silently fall
+  // back to off.
+  const showNextPreview = params.get("preview") !== "0";
+  return sequence ? { kind: "watch", host, eventId, group, route, sequence, showNextPreview } : null;
 }
 
 function buildShareLink(sel) {
@@ -309,6 +314,10 @@ function buildShareLink(sel) {
   else url.searchParams.set("round", tokens[0]);
   if (sel.group) url.searchParams.set("group", sel.group);
   if (sel.route?.length) url.searchParams.set("route", sel.route.join(","));
+  // Only written when off - "1" is the default readUrlSelection() already
+  // assumes when the param is absent, so an untouched (checked) checkbox
+  // doesn't need to clutter every share link with "preview=1".
+  if (sel.showNextPreview === false) url.searchParams.set("preview", "0");
   return url.toString();
 }
 
@@ -564,7 +573,15 @@ function populateRounds(eventData, host, eventId) {
     const sequence = sequenceBuilder.map((item) =>
       item.type === "paired" ? { type: "paired", a: item.aId, b: item.bId } : { type: "round", id: item.roundId }
     );
-    startWatching({ kind: "watch", host, eventId, group: null, route: null, sequence });
+    startWatching({
+      kind: "watch",
+      host,
+      eventId,
+      group: null,
+      route: null,
+      sequence,
+      showNextPreview: el.showNextPreview.checked,
+    });
   };
 
   // `.onclick =` (not addEventListener) - populateRounds() re-runs on
@@ -1207,6 +1224,41 @@ async function getRoundLabel(host, roundId) {
   }
 }
 
+// Full round data for the "next category" startlist preview (6.42 - keep
+// ARCHITECTURE.md in sync if this changes) - same caching rationale as
+// roundLabelCache/getRoundLabel() right above: a round's routes/startlist
+// never change within its lifetime, only its live ranking/ascent data does,
+// and the preview only ever reads the former (a not-yet-started round has
+// no live data worth polling anyway). Deliberately a separate cache/Map
+// from roundLabelCache rather than widening that one to store full objects
+// - keeps getRoundLabel()'s existing callers (the paired-entry label case)
+// untouched.
+const nextRoundFullCache = new Map();
+async function getNextRoundPreviewData(host, roundId) {
+  const cacheKey = `${host}:${roundId}`;
+  if (nextRoundFullCache.has(cacheKey)) return nextRoundFullCache.get(cacheKey);
+  try {
+    const data = await fetchRoundJson(host, roundId);
+    nextRoundFullCache.set(cacheKey, data);
+    return data;
+  } catch {
+    return null; // preview just stays off for this tick, same as a label fetch failure
+  }
+}
+
+// The currently-relevant "next category" round, for the startlist preview
+// inside the queue list (6.42) - null whenever the feature doesn't apply
+// (checkbox off, last sequence entry, either side is a paired entry, or the
+// fetch above failed/hasn't resolved yet). Set by updateNextInSequence()
+// below, read by renderBoard()/buildLane(). Deliberately NOT part of
+// currentSelection - it's derived, re-fetched state, not user selection.
+let nextRoundPreview = null;
+// Cache key (`host:roundId`) that `nextRoundPreview` currently represents -
+// lets updateNextInSequence() below tell "already loaded, nothing to do"
+// apart from "not loaded yet" without re-fetching or re-rendering on every
+// 3s tick once the preview has settled.
+let nextRoundPreviewKey = null;
+
 // The "next up" strip below the lanes (6.10) - only meaningful in Sequence
 // mode with more than one entry, and only once the CURRENT entry is known
 // (sequenceIndex has settled - see the two call sites in pollCurrent()).
@@ -1217,9 +1269,12 @@ async function updateNextInSequence() {
   const seq = currentSelection?.sequence;
   if (!seq || seq.length <= 1 || sequenceIndex >= seq.length - 1) {
     el.nextInSequence.hidden = true;
+    nextRoundPreview = null;
+    nextRoundPreviewKey = null;
     return;
   }
   const myToken = pollToken;
+  const current = seq[sequenceIndex];
   const next = seq[sequenceIndex + 1];
   const host = currentSelection.host;
   const label =
@@ -1233,6 +1288,23 @@ async function updateNextInSequence() {
   const strong = document.createElement("strong");
   strong.textContent = label;
   el.nextInSequenceLabel.appendChild(strong);
+
+  // Startlist preview inside the queue list (6.42) - only for two plain
+  // (non-paired) entries back to back, and only with the checkbox on.
+  // Paired entries are a Speed-elimination concept with their own
+  // rendering (renderPairedBoard(), 6.12) and are excluded entirely.
+  if (current.type === "paired" || next.type === "paired" || !currentSelection.showNextPreview) {
+    nextRoundPreview = null;
+    nextRoundPreviewKey = null;
+    return;
+  }
+  const cacheKey = `${host}:${next.id}`;
+  if (nextRoundPreviewKey === cacheKey) return; // already loaded, nothing to do
+  const data = await getNextRoundPreviewData(host, next.id);
+  if (myToken !== pollToken) return; // superseded while fetching the full round
+  nextRoundPreview = data;
+  nextRoundPreviewKey = cacheKey;
+  if (lastRoundData) renderBoard(lastRoundData); // show it now instead of waiting for the next 3s tick
 }
 
 // Manual backup for a sequence entry that never resolves as finished (e.g.
@@ -1257,6 +1329,11 @@ el.skipToNextBtn.addEventListener("click", async () => {
   el.skipToNextBtn.disabled = true;
   sequenceIndex++;
   pairedState = null;
+  // The entry we were about to preview is now the CURRENT one - clearing
+  // this prevents one stale render showing it as a dimmed "preview" of
+  // itself before updateNextInSequence() re-derives the real next entry.
+  nextRoundPreview = null;
+  nextRoundPreviewKey = null;
   try {
     await pollCurrent();
   } finally {
@@ -1288,6 +1365,8 @@ async function pollCurrent() {
       if (bothDone && sequenceIndex < seq.length - 1) {
         sequenceIndex++;
         pairedState = null;
+        nextRoundPreview = null; // see the skip-button handler's comment above
+        nextRoundPreviewKey = null;
         continue;
       }
       updateNextInSequence();
@@ -1300,6 +1379,8 @@ async function pollCurrent() {
     const hasNext = sequenceIndex < seq.length - 1;
     if (hasNext && isRoundFullyFinished(lastRoundData)) {
       sequenceIndex++;
+      nextRoundPreview = null; // see the skip-button handler's comment above
+      nextRoundPreviewKey = null;
       continue;
     }
     updateNextInSequence();
@@ -1913,11 +1994,19 @@ function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
     list.className = "queue-list";
     // "Next" is implicitly queue position 1, so this list continues from 2.
     list.setAttribute("start", "2");
-    for (const athlete of queue) {
+    for (const item of queue) {
       const li = document.createElement("li");
-      // A `null` entry is a World Series-mode padding slot (6.17) - not yet
-      // a real athlete, so it renders the same blank dash a card would.
-      li.textContent = athleteLine(athlete) || "—";
+      // A `{ preview: athlete }` entry is the next category's startlist
+      // preview (6.42) - shown dimmed/italic since they're not part of THIS
+      // round. A `null` entry is either that preview's own boundary gap or
+      // a World Series-mode padding slot (6.17) - both render the same
+      // blank dash a card would.
+      if (item?.preview) {
+        li.textContent = athleteLine(item.preview) || "—";
+        li.classList.add("queue-item--preview");
+      } else {
+        li.textContent = athleteLine(item) || "—";
+      }
       list.appendChild(li);
     }
     laneEl.appendChild(list);
@@ -1935,7 +2024,26 @@ function laneLabelPrefixFor(round) {
   return "Route";
 }
 
-function buildLane(round, route, laneLabelPrefix, boulderFinalMode) {
+// Sequence mode's "next category" startlist preview (6.42): once this
+// lane's own queue has fewer than 6 real entries left, pad it back out with
+// one blank boundary gap followed by the next round's own startlist for the
+// matching lane - up to a virtual 6-real-equivalent total, so 5 real gets 1
+// preview name, 0 real gets 6. Reuses the SAME `null`-padding convention
+// World Series mode (6.17) already relies on for the gap - renderLaneBody()
+// needs no separate code path for it. `previewRoute` is `undefined` unless
+// renderBoard() has already confirmed the current and next round render the
+// same number of lanes (see nextCategoryRoutes() below) - no partial/guessed
+// lane matching here.
+function withNextCategoryPreview(lane, previewRoute) {
+  if (lane.finished || !previewRoute || !nextRoundPreview || lane.queue.length >= 6) return lane;
+  const previewCount = 6 - lane.queue.length;
+  const preview = orderedAthletesForRoute(nextRoundPreview, previewRoute)
+    .slice(0, previewCount)
+    .map((athlete) => ({ preview: athlete }));
+  return { ...lane, queue: [...lane.queue, null, ...preview] };
+}
+
+function buildLane(round, route, laneLabelPrefix, boulderFinalMode, previewRoute) {
   // Discipline check, not a format_identifier check - deliberately covers
   // every Boulder round shape (qualification, two-group, and any future
   // final format that reuses the same routes/starting_groups shape), while
@@ -1945,12 +2053,14 @@ function buildLane(round, route, laneLabelPrefix, boulderFinalMode) {
   // of computeLane() - by the time buildLane() runs, an elimination round
   // has already been routed to renderSpeedElimination() by renderBoard(),
   // so `discipline === "Speed"` here always means qualification.
-  const lane =
+  const lane = withNextCategoryPreview(
     round.discipline === "Boulder"
       ? computeBoulderLane(round, route, boulderFinalMode)
       : round.discipline === "Speed"
       ? computeSpeedQualificationLane(round, route, speedQualificationSharedIndex(round))
-      : computeLane(round, route);
+      : computeLane(round, route),
+    previewRoute
+  );
   const laneEl = document.createElement("section");
   laneEl.className = "lane";
 
@@ -2438,14 +2548,26 @@ function renderBoard(round) {
       if (lastRoundData) renderBoard(lastRoundData);
     });
     const routesToShow = filterRoutesBySelection(group.routes, routeNames, currentSelection);
+    const nextRoutes = nextCategoryRoutesFor(routesToShow.length);
 
     const grid = document.createElement("div");
     grid.className = routesToShow.length === 1 ? "lanes-grid lanes-grid--single" : "lanes-grid";
-    for (const route of routesToShow) {
-      grid.appendChild(buildLane(round, route, laneLabelPrefix, boulderFinalMode));
-    }
+    routesToShow.forEach((route, i) => {
+      grid.appendChild(buildLane(round, route, laneLabelPrefix, boulderFinalMode, nextRoutes?.[i]));
+    });
     el.lanes.appendChild(grid);
   }
+}
+
+// Only activates the "next category" preview (6.42, withNextCategoryPreview())
+// when the currently-visible lane count for THIS round exactly matches the
+// next round's own (default group's) lane count - no partial/guessed lane
+// matching. Returns null (feature off for this render) whenever
+// nextRoundPreview isn't set or the counts don't match.
+function nextCategoryRoutesFor(visibleRouteCount) {
+  if (!nextRoundPreview) return null;
+  const nextRoutes = collectRouteGroups(nextRoundPreview)[0]?.routes ?? [];
+  return nextRoutes.length === visibleRouteCount ? nextRoutes : null;
 }
 
 // Multimode (6.23): one `.multi-block` per column, each independently
