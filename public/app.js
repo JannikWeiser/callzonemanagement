@@ -1591,6 +1591,68 @@ function computeLane(round, route) {
   };
 }
 
+// Speed qualification: every athlete climbs BOTH lanes exactly once, and -
+// confirmed live against real route_start_positions data, fixture 13719 -
+// position N on Lane A and position N on Lane B are two different athletes
+// racing SIMULTANEOUSLY (the same "heat" concept Speed FINALS get from
+// results.info explicitly via speed_elimination_stages[].heats[], just not
+// exposed as such for qualification). Two fully independent computeLane()
+// calls (the previous behavior, byte-identical to Lead) let whichever
+// lane's judge confirms first silently race ahead of the other - reported
+// live with a screenshot: Lane A already showing the next heat as
+// "CLIMBING" while Lane B still showed the previous one, so the two
+// "CLIMBING" cards no longer corresponded to the same real-world pairing.
+//
+// Fix: derive one SHARED index instead of a per-lane one - the same
+// "whichever side is behind caps the shared view" principle already used
+// for paired sequence entries' shared stage cursor (earlierStageName(),
+// 6.12), just at position-index granularity instead of stage-name
+// granularity, and reusing each lane's own already-correct
+// findCurrentIndex() result rather than duplicating that logic. Recomputed
+// fresh on every call (no persisted cursor) for the same reason 6.12's
+// shared stage is - a judge correcting an earlier result self-corrects the
+// shared index automatically on the next poll.
+function speedQualificationSharedIndex(round) {
+  const indexForRoute = (route) => {
+    const ordered = orderedAthletesForRoute(round, route);
+    const statusByAthlete = new Map();
+    for (const entry of round.ranking ?? []) {
+      const ascent = entry.ascents?.find((a) => a.route_id === route.id);
+      if (ascent) statusByAthlete.set(entry.athlete_id, ascent.status);
+    }
+    return findCurrentIndex(
+      ordered,
+      (a) => statusByAthlete.get(a.athlete_id) === "active",
+      (a) => DONE_STATUSES.has(statusByAthlete.get(a.athlete_id))
+    );
+  };
+  const indices = (round.routes ?? []).map(indexForRoute);
+  return indices.length ? Math.min(...indices) : 0;
+}
+
+function computeSpeedQualificationLane(round, route, sharedIndex) {
+  const ordered = orderedAthletesForRoute(round, route);
+
+  // Same not-started guard as computeLane() - see its comment above.
+  if (round.status === "pending") {
+    return {
+      routeName: route.name,
+      finished: false,
+      atWall: null,
+      onDeck: ordered[0] ?? null,
+      queue: ordered.slice(1, 1 + 6),
+    };
+  }
+
+  return {
+    routeName: route.name,
+    finished: sharedIndex >= ordered.length,
+    atWall: ordered[sharedIndex] ?? null,
+    onDeck: ordered[sharedIndex + 1] ?? null,
+    queue: ordered.slice(sharedIndex + 2, sharedIndex + 2 + 6),
+  };
+}
+
 // Boulder qualification (and some final formats) rotate athletes through
 // several boulders in a staggered pipeline: everyone visits boulder 1, then
 // 2, then 3, ... but offset in time, so a later boulder can go completely
@@ -1877,10 +1939,18 @@ function buildLane(round, route, laneLabelPrefix, boulderFinalMode) {
   // Discipline check, not a format_identifier check - deliberately covers
   // every Boulder round shape (qualification, two-group, and any future
   // final format that reuses the same routes/starting_groups shape), while
-  // strictly excluding Lead and Speed qualification, which must keep using
-  // computeLane() unchanged - see computeBoulderLane()'s comment above.
+  // strictly excluding Lead, which must keep using computeLane() unchanged -
+  // see computeBoulderLane()'s comment above. Speed qualification gets its
+  // own shared-index lane (speedQualificationSharedIndex(), above) instead
+  // of computeLane() - by the time buildLane() runs, an elimination round
+  // has already been routed to renderSpeedElimination() by renderBoard(),
+  // so `discipline === "Speed"` here always means qualification.
   const lane =
-    round.discipline === "Boulder" ? computeBoulderLane(round, route, boulderFinalMode) : computeLane(round, route);
+    round.discipline === "Boulder"
+      ? computeBoulderLane(round, route, boulderFinalMode)
+      : round.discipline === "Speed"
+      ? computeSpeedQualificationLane(round, route, speedQualificationSharedIndex(round))
+      : computeLane(round, route);
   const laneEl = document.createElement("section");
   laneEl.className = "lane";
 
@@ -2823,7 +2893,7 @@ setMode("single");
 (function renderImpressumEmail() {
   const link = document.getElementById("impressumEmail");
   if (!link) return;
-  const address = ["weiser", "jannik"].join(".") + "@" + ["gmail", "com"].join(".");
+  const address = "info" + "@" + ["comptools", "cloud"].join(".");
   link.href = `mailto:${address}`;
   link.textContent = address;
 })();

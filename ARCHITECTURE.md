@@ -749,6 +749,85 @@ event before fully trusting this for a real competition:**
   been exercised end-to-end via an actual Sequence-mode run with a Boulder
   entry in it.
 
+### 5.7 Speed qualification: a shared cross-lane index (`speedQualificationSharedIndex()`)
+
+**Problem this solves:** Speed qualification has 2 lanes/routes (`"A"`/`"B"`),
+and every athlete climbs *both* — but not independently. Confirmed live
+against real `route_start_positions` data (fixture `13719` in AGENTS.md §3):
+position N on Lane A and position N on Lane B are two *different* athletes
+racing **simultaneously**, e.g. position 1 = CURIE (A) vs. BECQUEREL (B),
+position 2 = MICHELSON (A) vs. BOLTZMANN (B). This is the exact same "heat"
+concept Speed *finals* get explicitly from results.info via
+`speed_elimination_stages[].heats[]` (5.5, Quirk F) — qualification just
+never exposes it as such; it has to be inferred from the two lanes' position
+numbers lining up.
+
+Before this fix, qualification's two lanes were rendered via two fully
+independent `computeLane()` calls — byte-identical to how Lead's two routes
+are rendered, since nothing in the data shape forced them apart. Reported
+live, with a screenshot: whichever lane's judge confirmed results faster
+raced ahead of the other, so the two "CLIMBING" cards stopped corresponding
+to the same real-world heat — Lane A showing the *next* pairing while Lane B
+still showed the *previous* one.
+
+**The fix:** derive one shared index across both lanes instead of two
+independent ones — `speedQualificationSharedIndex(round)` computes each
+lane's own index via the *existing, unchanged* `findCurrentIndex()` (same
+`Math.max(lastActive, lastConfirmed + 1)` rule as 5.2), then takes
+`Math.min()` across all of `round.routes`. Whichever lane is behind caps the
+shared view, so the ahead lane can never drag the display forward on its
+own — the exact same "whichever side is behind caps the shared view"
+principle already used for paired sequence entries' shared stage cursor
+(`earlierStageName()`, 6.12), just at position-index granularity instead of
+stage-name granularity, and reusing each lane's own already-correct
+per-lane logic rather than duplicating it. `computeSpeedQualificationLane()`
+then builds each lane's `atWall`/`onDeck`/`queue` by indexing into that
+lane's own ordered athlete list at the shared index, instead of its own
+independent one. Recomputed fresh on every call (no persisted cursor) for
+the same reason 6.12's shared stage is — a judge correcting an earlier
+result self-corrects the shared index automatically on the next poll.
+
+**Gating:** `buildLane()` branches on `round.discipline === "Speed"` — safe
+as an unqualified discipline check (unlike Boulder's, which needs to
+positively identify several format shapes) because `renderBoard()` already
+routes any round with `speed_elimination_stages` to `renderSpeedElimination()`
+*before* `buildLane()` is ever called (line ~2326) — so by the time
+`buildLane()` runs, `discipline === "Speed"` can only mean qualification.
+Lead is completely unaffected (still hits the plain `computeLane()` branch).
+
+**Accepted trade-off, discussed with the user before implementing:** unlike
+before, a lane that stops receiving results entirely (not just briefly
+behind, but genuinely stuck — e.g. a judge stops confirming) now also caps
+the *other*, otherwise-progressing lane's display, since the shared index is
+a `Math.min()` of both. This is mitigated by `findCurrentIndex()`'s existing
+"last confirmed + 1, not first pending" tolerance (a lane that resumes
+confirming later catches back up on its own, the same gap-tolerance Lead
+already relies on) — but a lane that never resumes at all will freeze the
+shared view indefinitely, with no automatic timeout, mirroring the same
+manual-only philosophy already established for paired sequence entries'
+"Switch category now" (6.12) and "Skip to next" (6.32). Accepted explicitly:
+the user's judges are trusted to review results promptly, and the finals
+side of this exact problem was already solved the same way with no reported
+issues.
+
+**Why `isRoundFullyFinished()` needed no change:** it still calls plain
+`computeLane(round, r).finished` per route (same as it already does for
+Boulder, see 5.6's "open questions" note above) — provably equivalent for
+this one field, since both lanes always have the same athlete count (every
+athlete climbs both), so "both lanes' *independent* indices have reached the
+end" (what `isRoundFullyFinished()` checks) and "the *shared* (`Math.min()`)
+index has reached the end" are the same condition by construction.
+
+Verified live: mocked a real qualification round (`13719`) with Lane A
+confirmed through position 8 and Lane B only through position 3 — before the
+fix this showed Lane A at position 9 and Lane B at position 4 (mismatched
+pairing); after the fix both lanes correctly show position 4 (`Math.min(8,
+3) = 3`, 0-indexed), matching each other and the real startlist pairing.
+Regression-checked against the same round fully confirmed (`finished` on
+both lanes), the same round with `status: "pending"` (blank `CLIMBING`,
+correct first-in-queue `NEXT` per lane), and an unrelated Lead round
+(`13682`, unaffected, still via plain `computeLane()`).
+
 ## 6. Design decisions
 
 ### 6.1 Local Node server instead of a static frontend

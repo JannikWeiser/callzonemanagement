@@ -222,6 +222,28 @@ previously-reported problems:
   the original bug this replaced, verified stuck live on multiple
   rounds/events. See
   [ARCHITECTURE.md §5.5](ARCHITECTURE.md#55-speed-elimination-heat-based-inference-computespeedelimination).
+- **`speedQualificationSharedIndex()`/`computeSpeedQualificationLane()`** -
+  Speed qualification's two lanes (`"A"`/`"B"`) are NOT independent the way
+  Lead's two routes are: every athlete climbs both, and position N on Lane A
+  races SIMULTANEOUSLY against position N on Lane B (confirmed live against
+  real `route_start_positions` data, fixture `13719` in §3). Don't revert
+  `buildLane()`'s Speed branch back to two independent `computeLane()` calls
+  ("simplifying" it to look like Lead) - that's the exact bug this replaced,
+  reported live with a screenshot: whichever lane's judge confirmed faster
+  raced ahead of the other, so the two "CLIMBING" cards stopped
+  corresponding to the same real-world heat. The fix takes `Math.min()` of
+  each lane's own (unchanged) `findCurrentIndex()` result - the same
+  "whichever side is behind caps the shared view" principle already used
+  for paired sequence entries (`earlierStageName()`, below) - not a new
+  heat/wildcard-detection scheme; Speed qualification doesn't need one; a
+  `dnf` or `dns` ascent already resolves to a real status via the *existing*
+  `findCurrentIndex()` rule, unlike Speed elimination's heats (5.5). **Known,
+  discussed-and-accepted trade-off:** a lane that stops receiving results
+  entirely now also caps the other lane's display (no automatic timeout, by
+  request - same manual-only philosophy as "Switch category now"/"Skip to
+  next" below). Don't add an automatic stuck-lane watchdog here without
+  asking first. See
+  [ARCHITECTURE.md §5.7](ARCHITECTURE.md#57-speed-qualification-a-shared-cross-lane-index-speedqualificationsharedindex).
 - `collectRouteGroups()` handling both `round.routes` and
   `round.starting_groups[].routes` — Boulder-with-groups rounds have no
   `routes` field at all; assuming it always exists breaks those rounds.
@@ -860,7 +882,7 @@ athlete data — no need to hunt for a live competition to test against.
 | `stage` | 1593 | `13833` (BOULDER Herren+ Finale) | `format_identifier: "boulder_finals_ifsc_2026"`, real live-judged data (not the hand-edited `dav-stage` test event) — 8 finalists, 4 boulders, gap 4. The fixture that exposed the "candidate shown too close" bug in the not-yet-reached readiness check and verified its fix (6.17, "World Series" mode): at the point observed, Boulder 4's own candidate was still 3 heats out (Boulder 3 - the boulder immediately before it - had 3 more heats of its own queue to clear), reported live off this exact round. Also the round used to verify the toggle itself only appears for Boulder final rounds (not Qualification) and that already-reached boulders (Route 1 finished, Routes 2/3 with real climbers) render byte-identical regardless of which mode is selected. |
 | `stage` | 1593 | mixed BOULDER + LEAD rounds (e.g. `13814` BOULDER Damen+ Quali + `13680` LEAD U11 m Quali) | Has both disciplines in the same event, unlike 1595's Boulder-only rounds — the fixture used to verify Multimode's per-column discipline lock (6.24): column 1 left on Boulder, column 2's own row `<select>` switched to a Lead round and stayed correctly offered both disciplines until its own first pick committed it, with column 1 completely unaffected. |
 | `stage` | 1594 "Lead TTT Alex & Corinna" | `13709` (BOULDER Herren+ Quali) | `starting_groups` (Group A/B, 5 routes each), format `boulder_two_groups_ifsc_2026` — the Boulder-groups AND the rotation-format case. Real `route_start_positions` here confirmed the staggered per-boulder queue order (§5.6). **Caveat:** by now hand-edited across many separate test sessions/days (see each ascent's `modified` timestamp) — no longer represents a realistic single live rotation, don't trust it for "is the current climber plausible" checks; use a controlled mock (reset every route's ascents, then fill in only what a real fresh rotation would have) for that instead, the way §5.6's fix was actually verified. |
-| `stage` | 1594 | `13719` (SPEED Herren+ Quali) | Speed qualification, routes `"A"`/`"B"` |
+| `stage` | 1594 | `13719` (SPEED Herren+ Quali) | Speed qualification, routes `"A"`/`"B"`. **Confirmed the cross-lane heat pairing (§5.7):** `startlist[].route_start_positions` shows position N on Lane A and position N on Lane B are two different athletes (e.g. position 1 = CURIE on A, BECQUEREL on B) — verified live by mocking Lane A confirmed through position 8 while Lane B was only confirmed through position 3, which (before the fix) showed the two lanes on mismatched heats and (after) correctly both showed position 4. |
 | `stage` | 1594 | `13689` (LEAD Herren+ Quali) | `status: "pending"` with 6 routes defined (no startlist published yet as of investigation) |
 | `stage` | 1594 | `13739` (SPEED Herren+ Finale) | `speed_elimination_stages` — the K.O.-bracket case, live/active as of investigation with the "1/4" stage in progress |
 | `stage` | 1594 | `13739` + `13741` (SPEED Herren+ / U15+ Männlich Finale) | Both live elimination rounds on the same event — used to verify paired sequence entries (6.12): the "Interleave two Speed finals" row, the "A ↔ B" single-row rendering, and the manual "Switch category now" override |

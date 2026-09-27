@@ -8,6 +8,20 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Fixed
+- **Speed qualification's two lanes could show mismatched heat pairings**
+  — Lane A and Lane B were inferred fully independently (same code path as
+  Lead), so whichever lane's judge confirmed faster silently raced ahead of
+  the other. Reported live with a screenshot: Lane A already showing the
+  next heat as "CLIMBING" while Lane B still showed the previous one, even
+  though both athletes' start positions pair up as one simultaneous heat
+  (confirmed against real `route_start_positions` data). Fixed by deriving
+  one shared current index across both lanes instead of two independent
+  ones — the same "whichever side is behind caps the view" principle
+  already used for paired sequence entries. Speed elimination (finals) was
+  already correct and needed no change. Verified live via a mocked
+  fast-Lane-A/slow-Lane-B scenario, plus regression checks against a
+  finished round, a not-yet-started round, and an unrelated Lead round. See
+  [ARCHITECTURE.md §5.7](ARCHITECTURE.md#57-speed-qualification-a-shared-cross-lane-index-speedqualificationsharedindex).
 - **Training mode's Back/Next buttons could get permanently stuck
   disabled under fast repeated tapping** — a regression in the previous
   double-click fix: it shared its staleness counter with the unrelated
