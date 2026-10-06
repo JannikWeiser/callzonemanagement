@@ -751,14 +751,11 @@ previously-reported problems:
   only its own content, leaving bottom borders across one row at
   different heights (an uneven-looking margin in the shared gutter below
   the shorter column). Left at the grid default (`stretch`) so every card
-  in a row shares the tallest one's height. Card text inside
-  `.multi-block` is deliberately smaller than everywhere else (fixed `rem`
-  sizes, not the normal `clamp(...vw...)` - vw is relative to the whole
-  viewport, unrelated to one column's actual rendered width) - keep any
-  new Multimode-scoped size rule qualified `.multi-block .lane ...` (one
-  level more specific than `.lanes-grid--single`'s bonus-size rule, 6.22)
-  so a single-route-filtered column doesn't blow back up to that much
-  larger size. **`.multi-block .lanes-grid` has its own, smaller
+  in a row shares the tallest one's height. Card text size comes from `--lane-fs` (6.45, container
+  query units relative to each lane's own width) - not viewport units and
+  not fixed `rem` sizes any more; `.multi-block .lane` only overrides the
+  width/height *allowances* of that formula (column heading and smaller card
+  padding), never a font-size directly. **`.multi-block .lanes-grid` has its own, smaller
   `minmax(260px, 1fr)` grid floor - do not delete this override and fall
   back to the shared, unscoped `.lanes-grid` rule's `minmax(320px, 1fr)`.**
   A real bug, reported live with a screenshot: `.multi-columns` and
@@ -884,6 +881,23 @@ previously-reported problems:
   above (calling the ordinary `computeSpeedElimination()` path instead of
   `renderPairedBoard()`'s stage-locked one). See
   [ARCHITECTURE.md §6.43](ARCHITECTURE.md#643-next-category-preview-extended-to-speed-elimination-paired-entries-and-plain-speed-finals).
+
+- **Wall-display sizing/colors/swap (6.45)** - card text sizes come from
+  `--lane-fs` on `.lane` (a `container-type: inline-size` container; width
+  rule `(100cqi - card padding) / 18`, height rule `(100dvh - chrome) / 11`),
+  CLIMBING/NEXT share it, the queue is 0.8x. Don't go back to `vw`-based
+  `clamp()` sizes ("a lane doesn't know the viewport width in Split View")
+  and don't add per-context font-size rules that beat it - adjust the two
+  allowances instead; the old sizes live on only inside
+  `@supports not (width: 1cqi)` for Safari < 16. CLIMBING stays green and
+  NEXT red with their text labels (red/green colour blindness: they differ
+  in brightness on purpose, and the label carries the meaning). The Speed
+  lane swap reverses `{lane, previewRoute}` pairs AFTER the lane identity is
+  decided and never touches the data fed to `computeLane()`/
+  `computeSpeedElimination()`; its click handler re-renders through
+  `pollCurrent()` (paired entries!) or `renderTrainingBoard()`, never
+  `renderBoard(lastRoundData)` for a paired entry. See
+  [ARCHITECTURE.md §6.45](ARCHITECTURE.md#645-wall-display-rework-greenredgrey-cards-container-query-font-sizes-speed-lane-swap).
 
 - **`upstreamJson()`'s optional API key (6.44) - send the key WITHOUT the
   `Referer`, never both.** Verified against the real API: a valid Referer

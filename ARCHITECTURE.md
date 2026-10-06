@@ -3310,6 +3310,46 @@ touches it. The spec also mentions no rate limits, webhooks or streaming;
 the `/cable` WebSocket is only reachable for signed-in sessions (checked on
 all six hosts), so there is no push channel to use.
 
+### 6.45 Wall-display rework: green/red/grey cards, container-query font sizes, Speed lane swap
+
+**Why:** staff read these tablets from a distance. CLIMBING now sits in a
+green box and NEXT in a red one (everyone else grey), the text is as large
+as the lane allows, and a tablet facing the walls from the other side can
+mirror the two Speed lanes. Display only - none of the algorithms in 5.x
+were touched.
+
+**Colors** (`--go`/`--next`/`--queue`/`--preview` in `styles.css`): CLIMBING
+is bright green with dark text, NEXT a darker red with white text, so the two
+also differ in *brightness* (about 8% of men confuse red and green) and the
+CLIMBING/NEXT labels stay on the cards. Queue rows are grey, next-category
+preview rows (6.42/6.43) a dimmer grey + italic.
+
+**Font size** is derived from each *lane's own width*: `.lane` is a
+container (`container-type: inline-size`) and `--lane-fs` =
+`max(1rem, min(width rule, height rule))`. Width rule: `(100cqi - card
+padding) / 18` - 30 characters of the bold name line (~0.56 em per character
+measured on real names, so 18 em leaves a little slack for capitals) fit on
+one line, longer names wrap. Height rule: `(100dvh - chrome) / 11` caps
+the size so about 11 lines (2 cards + up to 7 queue rows) fit below the page
+chrome; overflow is never clipped, the page just scrolls. CLIMBING and NEXT
+share `--lane-fs`, the queue (and the preview rows) are 0.8x of it. Because
+the unit is relative to the lane, a lane in a 5-column Split View sizes its
+text as if it owned the whole screen - which replaced the earlier fixed
+`rem` sizes of `.multi-block`. Browsers without `cqi` (Safari < 16) fall
+back to the previous clamp()/rem sizes via `@supports not (width: 1cqi)`.
+
+**Lane swap:** `currentSelection.swap` (URL `swap=1`, also in the share link
+and `localStorage`) reverses the lane order of 2+ lane **Speed** boards
+(qualification, elimination incl. paired entries, Training). The button
+`#swapLanesBtn` only exists while such a board is on screen (each render
+function hides `#swapRow` first, only the Speed branches re-show it). The
+reversal (`orderLanesForDisplay()`) is applied to `{lane, previewRoute}`
+pairs *after* each lane's identity and its next-category preview route were
+decided, so a lane can never get another lane's athletes. For a paired entry
+the click re-renders via `pollCurrent()`, never `renderBoard(lastRoundData)`
+(6.12 skip-ahead bug). With 4 lanes it mirrors the whole order (D C B A).
+Split View is Lead/Boulder only and has no swap.
+
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
 - **A visual bracket tree** for Speed elimination (like the PDF heat sheet

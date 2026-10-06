@@ -8,6 +8,16 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
+- **Wall-display rework: green CLIMBING / red NEXT / grey queue, text sized
+  to each lane, and a "Swap lanes" button for Speed.** CLIMBING is a green
+  box, NEXT a red one (different brightness, labels kept), the queue grey
+  and the next-category preview a dimmer grey. Font size now follows each
+  lane's own width (container query units, 30 characters per line, wraps
+  beyond that, capped by screen height), so Split View columns size their
+  text individually. Speed boards with 2+ lanes get a "⇔ Swap lanes" button
+  (URL `swap=1`) that mirrors the lane order. Display only, no logic
+  changes. See
+  [ARCHITECTURE.md §6.45](ARCHITECTURE.md#645-wall-display-rework-greenredgrey-cards-container-query-font-sizes-speed-lane-swap).
 - **Optional official results.info API key per host, with automatic
   fallback to the previous Referer-based access.** Set
   `RESULTS_API_KEY_<HOST>` (e.g. `RESULTS_API_KEY_STAGE`) in the server's

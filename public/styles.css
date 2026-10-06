@@ -7,6 +7,16 @@
   --muted: #8b93a3;
   --accent: #ffb020;
   --danger: #ff5f5f;
+  /* Wall-display signal colors: CLIMBING green, NEXT red, everyone else
+     grey. Green is bright with dark text and red is darker with white text,
+     so the two also differ in brightness (red/green colour-blind viewers
+     still tell them apart), and every card keeps its CLIMBING/NEXT label. */
+  --go: #34d36b;
+  --go-text: #052e14;
+  --next: #d92d2d;
+  --next-text: #ffffff;
+  --queue: #b7bdc9;
+  --preview: #7a8294;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -525,6 +535,18 @@ button.ghost {
   background: var(--panel);
   border-radius: 16px;
   padding: 1.25rem;
+  /* Each lane is its own size container: text sizes below are derived from
+     THIS lane's own width (cqi), so a lane in a 5-column Split View sizes
+     its text as if it owned the whole screen. */
+  container-type: inline-size;
+  /* Width rule: 30 characters fit on one line (~18 x font-size for the bold
+     names), minus the card's own horizontal padding. Height rule: caps the
+     size so ~11 text lines (2 cards + up to 7 queue rows) still fit below
+     the page chrome; longer names simply wrap. Overflow is never clipped,
+     the page just scrolls. */
+  --lane-fs-w: calc((100cqi - 2.5rem) / 18);
+  --lane-fs-h: calc((100dvh - 22rem) / 11);
+  --lane-fs: max(1rem, min(var(--lane-fs-w), var(--lane-fs-h)));
 }
 
 .lane-heading {
@@ -570,16 +592,14 @@ button.ghost {
 }
 
 .card--at-wall {
-  background: linear-gradient(135deg, var(--accent), #ff7a3d);
-  color: #201400;
+  background: var(--go);
+  color: var(--go-text);
 }
-.card--at-wall .card-athlete { font-size: clamp(1.6rem, 4vw, 2.6rem); }
 
 .card--on-deck {
-  background: var(--panel-2);
-  border: 1px solid #333846;
+  background: var(--next);
+  color: var(--next-text);
 }
-.card--on-deck .card-athlete { font-size: clamp(1.2rem, 2.6vw, 1.6rem); }
 
 .queue-list {
   list-style: decimal;
@@ -591,8 +611,8 @@ button.ghost {
   flex-direction: column;
   gap: 0.35rem;
 }
-.queue-list li { color: var(--text); overflow-wrap: anywhere; }
-.queue-list li.queue-item--preview { color: var(--muted); font-style: italic; }
+.queue-list li { color: var(--queue); overflow-wrap: anywhere; }
+.queue-list li.queue-item--preview { color: var(--preview); font-style: italic; }
 
 @media (max-width: 640px) {
   .lanes-grid { grid-template-columns: 1fr; }
@@ -601,11 +621,12 @@ button.ghost {
 /* One route/boulder selected via the route tabs (6.22) - a tablet parked
    next to a single wall gets a bigger, more legible display instead of the
    same card size used in the multi-lane grid. */
-.lanes-grid--single .lane { padding: 2rem; }
+.lanes-grid--single .lane {
+  padding: 2rem;
+  /* Roomier padding + bigger heading eat more height than a normal lane. */
+  --lane-fs-h: calc((100dvh - 33rem) / 11);
+}
 .lanes-grid--single .lane-heading { font-size: 1.3rem; }
-.lanes-grid--single .card--at-wall .card-athlete { font-size: clamp(2.4rem, 8vw, 5rem); }
-.lanes-grid--single .card--on-deck .card-athlete { font-size: clamp(1.8rem, 5vw, 3rem); }
-.lanes-grid--single .queue-list { font-size: 1.3rem; }
 
 /* Multimode (6.23) - every column side by side, wrapping onto further rows
    only once the screen is too narrow to fit them all on one - the point is
@@ -670,10 +691,14 @@ button.ghost {
 .multi-block .lane { padding: 0.85rem; }
 .multi-block .lane .lane-heading { font-size: 0.7rem; margin-bottom: 0.5rem; }
 .multi-block .lane .card { padding: 0.55rem 0.7rem; margin-bottom: 0.5rem; }
-.multi-block .lane .card-label { font-size: 0.6rem; margin-bottom: 0.15rem; }
-.multi-block .lane .card--at-wall .card-athlete { font-size: 1rem; }
-.multi-block .lane .card--on-deck .card-athlete { font-size: 0.9rem; }
-.multi-block .lane .queue-list { font-size: 0.8rem; margin-top: 0.5rem; gap: 0.25rem; }
+.multi-block .lane .card-label { margin-bottom: 0.15rem; }
+.multi-block .lane .queue-list { margin-top: 0.5rem; gap: 0.25rem; }
+/* Inside a Split View column the page chrome is taller (column heading +
+   tabs) and the card padding is smaller. */
+.multi-block .lane {
+  --lane-fs-w: calc((100cqi - 1.6rem) / 18);
+  --lane-fs-h: calc((100dvh - 26rem) / 11);
+}
 .multi-block .next-in-sequence { font-size: 0.75rem; padding-top: 0.6rem; margin-top: 0.4rem; }
 
 .controller {
@@ -718,4 +743,27 @@ button.ghost {
   flex: 1;
   font-size: 1.2rem;
   padding: 1rem;
+}
+
+/* Text sizes (Stage 1 display rework): derived from each lane's own width via
+   container query units - see .lane. CLIMBING and NEXT share one size, the
+   queue is 0.8x of it and the next-category preview rows (same size as the
+   queue) are only dimmer. Browsers without container query units (Safari
+   < 16) keep the previous fixed/viewport-based sizes. */
+@supports (width: 1cqi) {
+  .card--at-wall .card-athlete,
+  .card--on-deck .card-athlete { font-size: var(--lane-fs); }
+  .card-label { font-size: max(0.7rem, calc(var(--lane-fs) * 0.35)); }
+  .queue-list { font-size: max(0.9rem, calc(var(--lane-fs) * 0.8)); }
+}
+@supports not (width: 1cqi) {
+  .card--at-wall .card-athlete { font-size: clamp(1.6rem, 4vw, 2.6rem); }
+  .card--on-deck .card-athlete { font-size: clamp(1.2rem, 2.6vw, 1.6rem); }
+  .lanes-grid--single .card--at-wall .card-athlete { font-size: clamp(2.4rem, 8vw, 5rem); }
+  .lanes-grid--single .card--on-deck .card-athlete { font-size: clamp(1.8rem, 5vw, 3rem); }
+  .lanes-grid--single .queue-list { font-size: 1.3rem; }
+  .multi-block .lane .card-label { font-size: 0.6rem; }
+  .multi-block .lane .card--at-wall .card-athlete { font-size: 1rem; }
+  .multi-block .lane .card--on-deck .card-athlete { font-size: 0.9rem; }
+  .multi-block .lane .queue-list { font-size: 0.8rem; }
 }

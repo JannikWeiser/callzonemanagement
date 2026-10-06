@@ -47,6 +47,8 @@ const el = {
   controlQr: document.getElementById("controlQr"),
   groupTabs: document.getElementById("groupTabs"),
   routeTabs: document.getElementById("routeTabs"),
+  swapRow: document.getElementById("swapRow"),
+  swapLanesBtn: document.getElementById("swapLanesBtn"),
   boulderModeRow: document.getElementById("boulderModeRow"),
   lanes: document.getElementById("lanes"),
   nextInSequence: document.getElementById("nextInSequence"),
@@ -234,6 +236,11 @@ function readUrlSelection() {
   const routeParam = params.get("route");
   const route = routeParam ? routeParam.split(",").filter(Boolean) : null;
 
+  // `swap=1` (Speed lane swap) is a per-tablet display preference like
+  // `route` - which physical wall a tablet faces decides whether Lane A
+  // should sit left or right. Display order only, never touches any logic.
+  const swap = params.get("swap") === "1";
+
   const trainingRoundId = params.get("training");
   if (trainingRoundId) {
     return {
@@ -243,6 +250,7 @@ function readUrlSelection() {
       roundId: trainingRoundId,
       control: params.get("control") === "1",
       route,
+      swap,
     };
   }
 
@@ -285,7 +293,7 @@ function readUrlSelection() {
   // this param should get the new default-on behavior, not silently fall
   // back to off.
   const showNextPreview = params.get("preview") !== "0";
-  return sequence ? { kind: "watch", host, eventId, group, route, sequence, showNextPreview } : null;
+  return sequence ? { kind: "watch", host, eventId, group, route, sequence, showNextPreview, swap } : null;
 }
 
 function buildShareLink(sel) {
@@ -297,6 +305,7 @@ function buildShareLink(sel) {
     url.searchParams.set("training", sel.roundId);
     if (sel.control) url.searchParams.set("control", "1");
     if (sel.route?.length) url.searchParams.set("route", sel.route.join(","));
+    if (sel.swap) url.searchParams.set("swap", "1");
     return url.toString();
   }
 
@@ -318,8 +327,41 @@ function buildShareLink(sel) {
   // assumes when the param is absent, so an untouched (checked) checkbox
   // doesn't need to clutter every share link with "preview=1".
   if (sel.showNextPreview === false) url.searchParams.set("preview", "0");
+  if (sel.swap) url.searchParams.set("swap", "1");
   return url.toString();
 }
+
+// Speed lane swap (display order only): mirrors the lane order for a tablet
+// that faces the walls from the other side. Applied to already-built
+// {lane, previewRoute} pairs, never to the data that feeds
+// computeLane()/computeSpeedElimination() - lane identity (name, preview
+// mapping) is decided BEFORE the reversal, so the swap can't mismatch a
+// lane with its own athletes or its next-category preview.
+function orderLanesForDisplay(items) {
+  return currentSelection?.swap ? [...items].reverse() : items;
+}
+
+// The swap button only exists while a Speed board with 2+ visible lanes is
+// on screen; every render function hides it first (like the tab rows) and
+// only the Speed branches show it again.
+function showSwapButton() {
+  el.swapRow.hidden = false;
+  const on = !!currentSelection?.swap;
+  el.swapLanesBtn.classList.toggle("active", on);
+  el.swapLanesBtn.setAttribute("aria-pressed", String(on));
+}
+
+el.swapLanesBtn.addEventListener("click", () => {
+  if (!currentSelection) return;
+  currentSelection.swap = !currentSelection.swap;
+  saveSelection(currentSelection);
+  setShareLink(buildShareLink(currentSelection));
+  // Re-render through the mode's own poll/render path, NOT a plain
+  // renderBoard(lastRoundData): for a paired entry that would bypass the
+  // stage-locked renderPairedBoard() (the skip-ahead bug, 6.12).
+  if (currentSelection.kind === "training") renderTrainingBoard(trainingRoundData, trainingIndex);
+  else if (currentSelection.kind === "watch") pollCurrent();
+});
 
 // Renders a scannable QR code for `url` into `container` (replacing any
 // previous content) - lets a second device (phone, another tablet) open
@@ -2413,10 +2455,13 @@ function renderSpeedStage(round, result) {
   const nextRoutes = isLastSpeedStage(round, result.stageName) ? nextCategoryRoutesFor(laneNames.length) : null;
   const grid = document.createElement("div");
   grid.className = "lanes-grid";
-  laneNames.forEach((laneName, i) => {
-    grid.appendChild(buildSpeedLane(laneName, result.heats, nextRoutes?.[i]));
-  });
+  // Preview route is paired with its lane BEFORE the optional swap reversal.
+  const lanes = laneNames.map((laneName, i) => ({ laneName, previewRoute: nextRoutes?.[i] }));
+  for (const { laneName, previewRoute } of orderLanesForDisplay(lanes)) {
+    grid.appendChild(buildSpeedLane(laneName, result.heats, previewRoute));
+  }
   el.lanes.appendChild(grid);
+  if (laneNames.length >= 2) showSwapButton();
 }
 
 // --- Board rendering ---------------------------------------------------
@@ -2554,6 +2599,7 @@ function renderBoulderModeToggle(roundId, activeMode, container, onSelect) {
 function renderBoard(round) {
   el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
   el.lanes.innerHTML = "";
+  el.swapRow.hidden = true; // only the Speed branches below re-show it
   el.groupTabs.hidden = true; // only the multi-group branch below re-shows it
   el.routeTabs.hidden = true; // only the per-group branch below re-shows it
   el.boulderModeRow.hidden = true; // only the Boulder-final branch below re-shows it
@@ -2607,10 +2653,15 @@ function renderBoard(round) {
 
     const grid = document.createElement("div");
     grid.className = routesToShow.length === 1 ? "lanes-grid lanes-grid--single" : "lanes-grid";
-    routesToShow.forEach((route, i) => {
-      grid.appendChild(buildLane(round, route, laneLabelPrefix, boulderFinalMode, nextRoutes?.[i]));
-    });
+    const lanes = routesToShow.map((route, i) => ({ route, previewRoute: nextRoutes?.[i] }));
+    // Swap applies to Speed qualification only here (Lead/Boulder keep their
+    // natural order); elimination goes through renderSpeedStage() instead.
+    const speedPair = round.discipline === "Speed" && lanes.length >= 2;
+    for (const { route, previewRoute } of speedPair ? orderLanesForDisplay(lanes) : lanes) {
+      grid.appendChild(buildLane(round, route, laneLabelPrefix, boulderFinalMode, previewRoute));
+    }
     el.lanes.appendChild(grid);
+    if (speedPair) showSwapButton();
   }
 }
 
@@ -2637,6 +2688,7 @@ function nextCategoryRoutesFor(visibleRouteCount) {
 function renderMultiBoard(entries, results) {
   el.roundTitle.textContent = "Split View"; // display name only - internal "multi" naming (mode id, URL param, code identifiers) stays as-is, see 6.23
   el.lanes.innerHTML = "";
+  el.swapRow.hidden = true; // Split View is Lead/Boulder only (no Speed lanes to swap)
   el.groupTabs.hidden = true;
   el.routeTabs.hidden = true;
   el.boulderModeRow.hidden = true;
@@ -2831,6 +2883,7 @@ async function updateMultiNextLabels(entries) {
 function renderPairedBoard(round, stageResult) {
   el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""})`.trim();
   el.lanes.innerHTML = "";
+  el.swapRow.hidden = true; // renderSpeedStage() re-shows it
   el.groupTabs.hidden = true;
   el.routeTabs.hidden = true;
   el.boulderModeRow.hidden = true; // not reachable for Boulder (Speed-only view), but a stale toggle from a previous Boulder-final board must not linger here either
@@ -2983,6 +3036,7 @@ async function trainingStep(delta) {
 function renderTrainingBoard(round, index) {
   el.roundTitle.textContent = `${round.category ?? ""} — ${round.round ?? ""} (${round.discipline ?? ""}) — Training`.trim();
   el.lanes.innerHTML = "";
+  el.swapRow.hidden = true; // re-shown below once 2+ lanes are visible
   el.groupTabs.hidden = true;
   el.boulderModeRow.hidden = true; // Training is Speed-only, but a stale Boulder-final toggle from a previously-viewed Boulder round must not linger here
 
@@ -3005,10 +3059,11 @@ function renderTrainingBoard(round, index) {
 
   const grid = document.createElement("div");
   grid.className = routesToShow.length === 1 ? "lanes-grid lanes-grid--single" : "lanes-grid";
-  for (const route of routesToShow) {
+  for (const route of orderLanesForDisplay(routesToShow)) {
     grid.appendChild(buildTrainingLane(route, orderedAthletesForRoute(round, route), index, laneLabelPrefix));
   }
   el.lanes.appendChild(grid);
+  if (routesToShow.length >= 2) showSwapButton();
 }
 
 // The controller device's view is deliberately minimal (just names + two
