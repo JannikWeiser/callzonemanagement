@@ -8,3 +8,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20.11.0
+      # Fixed secret so a host device can restore a shared session after a
+      # restart (HOSTING.md D3). Generated once on the first Blueprint sync
+      # and then kept; never commit a real value here.
+      - key: SESSION_SECRET
+        generateValue: true

@@ -362,7 +362,10 @@ previously-reported problems:
   arrangement. Don't add that back in without being asked. The Hosting
   paragraph assumes Render runs in a US region (confirmed by the user) -
   if that ever changes, the Drittlandtransfer/SCC/DPF wording needs
-  updating, don't assume it's still accurate. None of this text is
+  updating, don't assume it's still accurate. A "Gemeinsame Sitzungen" paragraph was added with
+  shared sessions (6.46) - it must stay in sync with what `sessions.js`
+  actually stores (plan, password hash, short-lived client heartbeat, IPs for
+  rate limiting, 24 h idle expiry). None of this text is
   lawyer-reviewed - the user was told this explicitly and plans to have it
   checked; don't treat it as verified-correct in a future session. Summary
   label is "Legal Information" (matching `dav.results.info`'s own footer
@@ -899,6 +902,40 @@ previously-reported problems:
   `renderBoard(lastRoundData)` for a paired entry. See
   [ARCHITECTURE.md §6.45](ARCHITECTURE.md#645-wall-display-rework-greenredgrey-cards-container-query-font-sizes-speed-lane-swap).
 
+- **Shared sessions (6.46)** - `sessions.js` (server), `session-plan.js`
+  (shared pure logic, loaded by the browser, the server and the tests) and the
+  "Shared sessions" section of `app.js`. Rules that each cost a design
+  decision, don't undo them: (1) tablets follow their own current entry by
+  KEY (`entryKey()`), never by index - `applySessionPlan()` relocates it in
+  the new sequence and only falls back to "first unfinished entry" when it
+  is gone; (2) the plan is applied by `pollToken++` + an immediate
+  `pollCurrent()`/`pollMulti()`, never by mutating state under an in-flight
+  poll; (3) `saveSelection()` stores a session as a pointer, never the plan;
+  (4) a plan only ever changes through `PUT` with the right `baseVersion` and
+  host key - no last-writer-wins, no silent overwrite (`409`); (5)
+  `hostEditorBound` must stay false until the editor holds the session's plan
+  - otherwise one click on "Apply to all tablets" overwrites the live plan
+  with setup-screen defaults; (6) the confirmation before applying is decided
+  by `affectedClients()`/`removesOrReplaces()` (moving/adding entries never
+  asks); (7) never log, echo, store or send the password or the `hostKey` to
+  other viewers - `record`/`hostKey` live only in the host device's
+  `localStorage`; (8) restoring a forgotten session works only with a fixed
+  `SESSION_SECRET` - don't "fix" the 403 without it by accepting unsigned
+  restores, that would let anyone who knows an id claim it after a restart;
+  (9) `joinSession()` must not call `loadEvent()` for an event the setup
+  screen already has (it resets the builders and would wipe a host's draft);
+  (10) "Skip to next" (the single strip's button AND the per-column
+  one) is hidden in sessions - it only moves one tablet, so it would
+  silently split the tablets across different rounds; a stuck round is fixed
+  by the host in the plan (remove/replace it). Don't re-enable it there
+  without a shared-skip design; (11) Training is NOT part of sessions (the panel is hidden in Training
+  mode) - adding it needs a deliberate design for "who ends a training
+  entry", not a quick plan field. Don't add `localStorage` writes outside the
+  `lsGet/lsSet` wrappers in that section. Run `npm test` before touching
+  `sessions.js`/`session-plan.js` and walk through Tests.md for anything in
+  the browser part. See
+  [ARCHITECTURE.md §6.46](ARCHITECTURE.md#646-shared-sessions-one-published-plan-many-tablets-a-host-password).
+
 - **`upstreamJson()`'s optional API key (6.44) - send the key WITHOUT the
   `Referer`, never both.** Verified against the real API: a valid Referer
   alone authorizes a request and an invalid `x-auth-token` is silently
@@ -995,6 +1032,9 @@ before saying it's fixed:
    console errors" — confirm the actual displayed content is correct.
 4. Do a quick regression check against an unrelated round to confirm nothing
    else broke.
+5. Server-side/session changes: also run `npm test` (automated, no network
+   needed) and, for anything in the browser part of shared sessions, the
+   relevant parts of [Tests.md](Tests.md).
 
 ## 5. Git and deployment
 
@@ -1039,8 +1079,10 @@ before saying it's fixed:
 
 See [ARCHITECTURE.md §7](ARCHITECTURE.md#7-explicitly-out-of-scope-do-not-fix-without-asking)
 for the full list and reasoning (a visual bracket tree, training-progress
-persistence across server restarts, training mode inside a sequence, a
-language switcher, auth, a real database, write access to results.info).
+persistence across server restarts, training mode inside a sequence or a
+shared session, a language switcher, user accounts, a real database, write
+access to results.info). Shared sessions with a host password (6.46) were
+explicitly requested and are the one sanctioned exception to "no auth".
 If a user report sounds like it needs one of these, say so and ask before
 implementing rather than silently scoping it in.
 

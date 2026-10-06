@@ -223,6 +223,44 @@ Startklasse zeigt (statt der Auswahl-Maske):
 Jedes Tablet bekommt so seinen eigenen Link mit seiner eigenen Runde (und,
 bei Boulder, seiner eigenen Gruppe).
 
+## 7a. Gemeinsame Sitzung (ein Plan für mehrere Tablets)
+
+Statt jedes Tablet einzeln einzurichten, kannst du **einen Plan veröffentlichen**,
+dem alle Tablets folgen – und ihn später für alle gleichzeitig ändern.
+
+**Sitzung erstellen (Host):**
+1. Wie gewohnt Event laden und den Plan zusammenstellen (Single round,
+   Sequence oder Split View).
+2. Unten **„Shared session (optional)"** aufklappen, ein **Host-Passwort**
+   (mind. 4 Zeichen) eingeben und **„Create shared session…"** drücken.
+3. Es erscheint ein **Link und ein QR-Code**. Auf jedem Tablet diesen Link
+   öffnen (QR-Code scannen) – fertig. Das Tablet braucht kein Passwort.
+4. Bei Split View legst du pro Spalte auch **Gruppe und Routen/Boulder**
+   fest (Auswahl unter der Spalte). Bei normalen Sitzungen wählt jedes Tablet
+   seine Route weiter selbst über die Tabs.
+
+**Plan später ändern:**
+1. Plan oben im Editor ändern (Reihenfolge, Runden hinzufügen/entfernen …).
+   Dort steht „You have changes that are not applied to the tablets yet".
+2. **„Apply to all tablets"** drücken. Betrifft die Änderung eine Runde,
+   die gerade auf Tablets läuft, fragt das Programm vorher nach
+   („3 tablets are showing something this change removes …").
+3. Nur Verschieben oder Hinzufügen verändert **nichts** auf den Tablets –
+   jedes Tablet bleibt bei **seiner** aktuellen Runde.
+
+**Von einem anderen Gerät bearbeiten:** Auf dem Gerät „Shared session" →
+**Session-ID** und **Host-Passwort** eingeben → **„Edit existing session"**.
+Der aktuelle Plan wird in den Editor geladen. Nach 5 falschen Passwörtern
+ist die Eingabe 60 Sekunden gesperrt.
+
+**Gut zu wissen:**
+- Oben rechts am Tablet steht die Sitzungs-ID. Steht dort „offline" oder
+  „ended", zeigt das Tablet weiter den **letzten Plan** – es bricht nichts ab.
+- Im Host-Bereich steht, **wie viele Tablets online** sind.
+- Training (Abschnitt 6) ist **nicht** Teil gemeinsamer Sitzungen.
+- Das Passwort kann nicht zurückgesetzt werden – notier es dir. Notfalls eine
+  neue Sitzung erstellen.
+
 ## 8. Vollbild & Bildschirm wach halten
 
 Oben auf dem Board gibt es den Button **„Fullscreen + Always On"**. Ein

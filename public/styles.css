@@ -701,6 +701,55 @@ button.ghost {
 }
 .multi-block .next-in-sequence { font-size: 0.75rem; padding-top: 0.6rem; margin-top: 0.4rem; }
 
+/* Group/route choice of a Split View column on the setup screen (6.46) */
+.multi-view-controls {
+  margin: 0.6rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.multi-view-routes { display: flex; flex-wrap: wrap; gap: 0.4rem 0.9rem; align-items: center; }
+.multi-view-route { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--text); cursor: pointer; }
+/* Global `input` rules (padding, min-width) are meant for text fields. */
+.multi-view-route input { min-width: 0; width: 1.1rem; height: 1.1rem; padding: 0; cursor: pointer; }
+.multi-view-group select { min-width: 0; }
+
+/* Shared session panel on the setup screen (6.46) */
+.session-panel {
+  margin: 1.25rem 0 0;
+  border: 1px solid #333846;
+  border-radius: 12px;
+  background: var(--panel);
+}
+.session-panel > summary {
+  cursor: pointer;
+  padding: 0.85rem 1rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.session-body { padding: 0 1rem 1rem; }
+.session-hint { color: var(--muted); font-size: 0.85rem; margin: 0 0 1rem; }
+.session-status { margin-bottom: 0.75rem; font-size: 0.95rem; }
+.session-dirty {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: #3a2e12;
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+.session-msg {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+.session-msg--error { background: #3a1818; color: var(--danger); }
+
 .controller {
   max-width: 480px;
   margin: 0 auto;

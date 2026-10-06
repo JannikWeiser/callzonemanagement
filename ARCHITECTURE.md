@@ -35,11 +35,12 @@ was reverse-engineered from the live site (see method notes inline).
 
 The browser never talks to results.info directly — it can't, see 4.2. The
 Node server is a thin proxy + short-TTL cache + static file host. It has no
-database and no auth. The one exception to "no persistent state" is a tiny
-in-memory counter for Training mode's manual position (6.13) — not backed
-by results.info at all, and lost on restart, but real shared state
-nonetheless; see 6.13 for why that's an acceptable exception to "stateless
-proxy".
+database. It keeps exactly two kinds of in-memory state that are not
+results.info data: a tiny counter for Training mode's manual position
+(6.13) and the shared sessions (6.46, `sessions.js` - a published plan plus
+a host password hash, so the only thing in this app that has any auth). Both
+are lost on a restart, but they are real shared state; see 6.13 and 6.46 for
+why these are acceptable exceptions to "stateless proxy".
 
 ## 3. File map
 
@@ -3350,6 +3351,128 @@ the click re-renders via `pollCurrent()`, never `renderBoard(lastRoundData)`
 (6.12 skip-ahead bug). With 4 lanes it mirrors the whole order (D C B A).
 Split View is Lead/Boulder only and has no swap.
 
+### 6.46 Shared sessions: one published plan, many tablets, a host password
+
+**Why:** until now every tablet carried its own configuration in its own
+link (`rounds=...`), so changing the order of categories meant touching every
+tablet. A *session* lets a host publish ONE plan; tablets open `?s=<id>`
+(link/QR code) and follow it, picking up every change within one poll
+(5 s). Training inside a sequence (6.13) is deliberately NOT part of this
+yet.
+
+**What a plan is** (`public/session-plan.js`, shared by browser, server and
+tests - it registers on `globalThis.SessionPlan` so the same validation runs
+on both sides):
+- `watch`: `{ kind, host, eventId, sequence, showNextPreview }`, sequence
+  entries `{type:"round",id}` / `{type:"paired",a,b}` (a Single round is a
+  sequence of one).
+- `multi` (Split View): `{ kind, host, eventId, entries }`, 1-5 columns
+  `{ sequence, group, route }`. **The host's plan decides each column's
+  group and routes**; in a Split View session the board's own group/route
+  tabs are hidden (a local override would be thrown away by the next plan
+  update). In a normal (watch) session the route/group tabs, the lane swap
+  (6.45) and the Boulder final mode stay per tablet (URL `route`/`group`/
+  `swap`, `localStorage`) - they are not part of the plan.
+- `validatePlan()` validates and *normalizes* (fixed key order, string ids,
+  empty route list -> `null`), so equal plans serialize identically - the
+  host's "unapplied changes" check and the server's version bookkeeping both
+  compare `JSON.stringify()` of normalized plans. A session belongs to ONE
+  event: the server rejects a plan for another host/event.
+
+**Server** (`sessions.js`, mounted at `/api/session`; in-memory `Map`):
+`POST /` creates (or restores, below), `GET /:id` is the viewer poll
+(`?v=<version>` -> `{unchanged:true}`; `?c=<clientId>&k=<keys>` is also the
+heartbeat), `POST /:id/login`, `PUT /:id` publishes (`baseVersion` must match
+or `409` returns the current plan - last writer does NOT win),
+`GET /:id/clients` (host only) lists what the online tablets are showing.
+Viewers can watch with the id alone; every write needs the host credentials.
+- *Password:* >= 4 characters, stored only as a scrypt hash (+ salt).
+  A login returns `{hostKey, record}`; `hostKey` = HMAC-SHA256 over
+  `id:hash` with `SESSION_SECRET` and is sent as `Authorization: Bearer`.
+  Wrong passwords: 5 failures per (session, IP) lock that pair for 60 s
+  (`429`, applies even to the right password while locked); creating is
+  limited to 20 sessions per IP per hour; max 200 sessions (least recently
+  used evicted), idle 24 h -> deleted; bodies limited to 32 kB.
+- *Server restart:* sessions live in memory only. Tablets keep showing the
+  last plan they received (also cached in `localStorage` and used when the
+  link is reopened while the server has forgotten the session) and say so in
+  the host label. A device that holds the host credentials (`record` +
+  `hostKey`, kept in `localStorage`, never the password) **restores** the
+  session under the same id (`POST` with `id`) - possible ONLY when
+  `SESSION_SECRET` is set to a fixed value, because the server verifies the
+  `hostKey` HMAC without any stored state; without it every restart rotates
+  the secret and nobody - including a stranger who knows an id - can restore
+  or claim a forgotten id (it just ends, tablets keep their last plan). A
+  restore always yields a version newer than anything tablets saw; if two
+  host devices restore with different plan versions the NEWER one wins as
+  long as nobody has published since the restore; a published change always
+  wins over a restore.
+
+**Tablet side** (`joinSession()`, `pollSession()`, `applySessionPlan()`):
+- A session selection becomes the same `{kind:"watch"|"multi", ...}` object
+  the board already understands (`selectionFromPlan()`) plus `sessionId`/
+  `sessionVersion`/`sessionPlan`; nothing downstream knows about sessions.
+  `saveSelection()` stores only a pointer + the tablet's own preferences
+  (never the plan, or a bookmarked tablet would come back on a stale plan).
+- **A tablet follows ITS OWN current entry by key** (`round:<id>` /
+  `paired:<a>+<b>`, `entryKey()`), never by array index. Reordering or adding
+  entries changes nothing visible; only if the entry a tablet is on is
+  removed/replaced does it fall back to the first unfinished entry of the new
+  plan (what a freshly opened tablet would show). A paired entry's
+  lockstep state (6.12) survives an unrelated plan change. The plan is
+  applied by invalidating the in-flight poll (`pollToken++`) and re-polling
+  immediately - the same invalidation every mode switch uses.
+  Don't switch this to index-based tracking: a host moving a round up would
+  make tablets jump to the wrong category.
+- **"Skip to next" is hidden in sessions** (single strip and per-column
+  buttons): it only advances the tablet it is pressed on, so it would leave
+  that tablet on a different round than the rest - exactly the confusion a
+  session exists to avoid. A round that never resolves as finished is fixed
+  centrally: the host removes or replaces it in the plan (confirmation shows
+  how many tablets move). Without a session the button is unchanged (6.32).
+- A plan that changes kind (watch <-> Split View) or event restarts the board
+  cleanly (`startWatching()`), like reopening the link.
+- Every poll doubles as a heartbeat: an anonymous per-page-load id (not
+  persisted) plus the key(s) the tablet is on; the server only keeps them
+  15 s. This is what lets the host see "N tablets online" and how many a
+  change would affect.
+- Connection state shows in `#hostLabel`: "(offline - showing last plan)"
+  when the server can't be reached, "(ended - showing last plan)" when it
+  forgot the session. The board keeps working on the last plan either way.
+
+**Host side** (setup screen, `#sessionPanel`, collapsed `<details>`): *Create
+shared session* publishes what the editor (Single round / Sequence / Split
+View builders) currently holds. *Edit existing session* (id + password) logs
+in from ANY device and loads the plan into the same builders
+(`loadPlanIntoSetup()`). Edits are a **draft**: nothing reaches the tablets
+until *Apply to all tablets*, and the panel shows "unapplied changes". Apply
+asks the server who is online (`/clients`) and `affectedClients()` counts the
+tablets whose current entry would be removed/replaced (or whose column's
+group/route changes, or everyone on a kind change); only then does it ask
+for a confirmation (`window.confirm`) - moving/adding entries never does.
+If the clients lookup fails, `removesOrReplaces()` decides instead. A `409`
+(someone else published) applies nothing and tells the host to reload.
+`hostEditorBound` is false after every page load and every event load: the
+editor then holds defaults and must NOT be applied over the live plan, so
+Apply refuses until the plan was loaded into it ("Reload plan from server")
+or the session was created from it. The Split View builder gained per-column
+Group/Route controls (`renderColumnViewControls()`, populated from the
+column's first round) - they also work in plain Split View (they end up in
+the `multi=` link).
+
+**Privacy/security notes:** the legal text (Datenschutz) mentions the
+session data. Only `textContent` renders plan strings (a group name like
+`<img onerror=...>` is inert - verified). The host key never reaches
+viewers; the password is never stored or logged. Known, accepted limits: the
+session id is the viewers' only secret (anyone with the link can watch);
+login rate limiting is per IP, so a stranger repeatedly entering wrong
+passwords can lock the host out for 60 s at a time.
+
+**Testing:** `npm test` (`node --test`) runs `test/session-plan.test.js` and
+`test/sessions.test.js` (API, auth, conflict, rate limits, restore). The
+browser behaviour is covered by the manual checklist in
+[Tests.md](Tests.md).
+
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
 - **A visual bracket tree** for Speed elimination (like the PDF heat sheet
@@ -3400,12 +3523,18 @@ Split View is Lead/Boulder only and has no swap.
   this app existed) maintenance issue. Addressed instead with a
   cross-referencing comment in both files (6.36's write-up covers the
   rest of that pass).
-- **Authentication / access control** — the app has none by design; the
-  underlying competition data is already public on results.info, and the
-  training-control link (6.13) follows the same no-accounts trust model.
+- **User accounts / general access control** — the competition data is
+  public on results.info and the app has no accounts. The ONLY secret is the
+  shared-session host password (6.46); the training-control link (6.13) is
+  still open to anyone who has it (a session password does NOT protect
+  training yet - Training isn't part of sessions).
 - **A real database** — the server has no persistent storage beyond the
-  short-TTL results.info cache (6.2) and the small in-memory training
-  counter (6.13), both ephemeral by design.
+  short-TTL results.info cache (6.2), the in-memory training counter (6.13)
+  and the in-memory shared sessions (6.46), all ephemeral by design. Making
+  sessions survive a restart would need an external store and was
+  deliberately not built (restore from a host device covers it).
+- **Training inside a shared session / sequence** — see the bullet above;
+  sessions only carry Single round, Sequence and Split View plans.
 - **Editing/writing to results.info** — this app is read-only against the
   API; it has no code path that could modify competition data.
 

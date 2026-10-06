@@ -83,6 +83,59 @@
     <button id="watchMulti">Show Split View</button>
   </div>
 
+  <details id="sessionPanel" class="session-panel">
+    <summary>Shared session (optional)</summary>
+    <div class="session-body">
+      <p class="session-hint">
+        Publish your plan so several tablets follow it: they open one link or QR code, and whenever you change the
+        plan here and press "Apply to all tablets" they all follow. Anyone with the link can watch; changing the plan
+        needs the host password.
+      </p>
+
+      <div id="sessionHostState" hidden>
+        <div class="session-status">
+          Hosting session <strong id="sessionHostId"></strong> &middot; version <span id="sessionHostVersion"></span>
+          &middot; <span id="sessionOnline">checking tablets&hellip;</span>
+        </div>
+        <div class="share-row">
+          <span class="share-label">Link for tablets:</span>
+          <input id="sessionLink" class="share-input" type="text" readonly />
+          <button id="copySessionLink" type="button" class="ghost">Copy</button>
+          <div id="sessionQr" class="qr-code" title="Scan to open this session on a tablet"></div>
+        </div>
+        <div id="sessionDirty" class="session-dirty" hidden>You have changes that are not applied to the tablets yet.</div>
+        <div class="setup-row">
+          <button id="applySession" type="button">Apply to all tablets</button>
+          <button id="reloadSession" type="button" class="ghost">Reload plan from server</button>
+          <button id="openSessionBoard" type="button" class="ghost">Show this session</button>
+          <button id="leaveSession" type="button" class="ghost">Stop hosting on this device</button>
+        </div>
+      </div>
+
+      <div id="sessionCreateRow" class="setup-row">
+        <label>
+          Host password (min. 4 characters)
+          <input id="sessionPassword" type="password" autocomplete="new-password" />
+        </label>
+        <button id="createSession" type="button">Create shared session from the plan above</button>
+      </div>
+
+      <div id="sessionLoginRow" class="setup-row">
+        <label>
+          Existing session ID
+          <input id="sessionJoinId" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" />
+        </label>
+        <label>
+          Host password
+          <input id="sessionJoinPassword" type="password" autocomplete="current-password" />
+        </label>
+        <button id="loginSession" type="button" class="ghost">Edit existing session</button>
+      </div>
+
+      <div id="sessionMsg" class="session-msg" role="status" hidden></div>
+    </div>
+  </details>
+
   <footer class="setup-footer">
     <a href="https://docs.google.com/forms/d/e/1FAIpQLSett3gbXojzzbqAdXThI41H31U5qUGGnulLy3ysRbdR5NKEng/viewform?usp=dialog" target="_blank" rel="noopener noreferrer">Request a Feature or Send a Message</a>
     <details class="legal">
@@ -104,6 +157,7 @@
         <h4>Datenschutzerklärung</h4>
         <p><strong>Verantwortlicher</strong> im Sinne der DSGVO ist die im Impressum oben genannte Person.</p>
         <p><strong>Keine eigenen Cookies, kein eigenes Tracking.</strong> Diese Website selbst setzt keine Cookies und keine Analyse- oder Tracking-Werkzeuge ein. Die zuletzt gewählte Runde/Einstellung wird ausschließlich im <code>localStorage</code> deines Geräts gespeichert (technisch notwendig für die Kernfunktion, verlässt dein Gerät nie) - eine Einwilligung ist dafür nach § 25 Abs. 2 Nr. 2 TDDDG nicht erforderlich. Für den eingebundenen Spenden-Button siehe unten.</p>
+        <p><strong>Gemeinsame Sitzungen (optional).</strong> Nur wenn du eine gemeinsame Sitzung erstellst oder einer beitrittst, speichert der Server im Arbeitsspeicher den veröffentlichten Ablaufplan (Event- und Runden-IDs), bei Host-Sitzungen einen Hash des Host-Passworts (nicht das Passwort selbst) sowie für wenige Sekunden pro Gerät eine zufällige, nicht dauerhaft gespeicherte Kennung samt der gerade angezeigten Runde, um die Zahl verbundener Tablets anzuzeigen. Zur Missbrauchsabwehr (Passwort-Fehlversuche, Anlegen von Sitzungen) wird die IP-Adresse kurzzeitig im Arbeitsspeicher verarbeitet. Diese Daten werden bei einem Serverneustart oder nach spätestens 24 Stunden Inaktivität gelöscht. Rechtsgrundlage ist unser berechtigtes Interesse am Betrieb der Funktion und an der Abwehr von Missbrauch (Art. 6 Abs. 1 lit. f DSGVO). Auf deinem Gerät werden im <code>localStorage</code> die Sitzungs-ID, der zuletzt erhaltene Plan und - nur auf Host-Geräten - ein Zugangsschlüssel gespeichert (technisch notwendig für diese Funktion).</p>
         <p><strong>Hosting.</strong> Diese Website wird bei Render Services, Inc. (USA) gehostet. Beim Aufruf der Seite verarbeitet Render technische Zugriffsdaten (u. a. IP-Adresse, Zeitpunkt des Zugriffs) im Rahmen des Serverbetriebs; Rechtsgrundlage ist das berechtigte Interesse an einem sicheren und funktionsfähigen Betrieb (Art. 6 Abs. 1 lit. f DSGVO). Da Render seinen Sitz in den USA hat, ist eine Datenübermittlung in ein Drittland verbunden - Grundlage hierfür sind die von Render abgeschlossenen EU-Standardvertragsklauseln sowie die Zertifizierung unter dem EU-US Data Privacy Framework. Details: <a href="https://render.com/privacy" target="_blank" rel="noopener noreferrer">render.com/privacy</a> und <a href="https://render.com/dpa" target="_blank" rel="noopener noreferrer">render.com/dpa</a>.</p>
         <p><strong>Spenden-Button (Ko-fi).</strong> Zur freiwilligen Unterstützung der Serverkosten bindet diese Seite den Spenden-Button des Anbieters Ko-fi Labs Limited (Suite 501, The Nexus Building, Broadway, Letchworth Garden City, Herts, SG6 9BL, Vereinigtes Königreich) ein. Bereits beim Laden der Seite wird dafür ein Skript von <code>storage.ko-fi.com</code> nachgeladen; dabei werden technische Daten (u. a. IP-Adresse, Browser-/Geräteinformationen, aufrufende Seite) an Ko-fi übermittelt, und Ko-fi kann eigene Cookies setzen. Rechtsgrundlage ist unser berechtigtes Interesse an der Finanzierung des Serverbetriebs (Art. 6 Abs. 1 lit. f DSGVO). Details: <a href="https://more.ko-fi.com/privacy" target="_blank" rel="noopener noreferrer">more.ko-fi.com/privacy</a>. Die eigentliche Zahlungsabwicklung übernimmt nicht Ko-fi selbst, sondern der von dir dort ausgewählte Zahlungsdienstleister (z. B. PayPal oder Stripe) auf dessen eigener Seite; wir erhalten dabei keine Zahlungsdaten.</p>
         <p><strong>Externe Links.</strong> Der Link "Request a Feature or Send a Message" führt zu einem Google-Formular. Es werden keine Daten übertragen, bevor du diesen Link anklickst; danach gilt die Datenschutzerklärung von Google.</p>
@@ -219,6 +273,7 @@
 </main>
 
 <script src="qrcode.js"></script>
+<script src="session-plan.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

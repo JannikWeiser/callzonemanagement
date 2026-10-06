@@ -8,6 +8,24 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
+- **Shared sessions: one published plan for many tablets, protected by a
+  host password.** A host creates a session from the setup screen (Single
+  round, Sequence or Split View plan) and tablets open `?s=<id>` (link/QR);
+  edits are a draft until "Apply to all tablets", a change that would pull
+  tablets off their current round asks for confirmation (with the number of
+  affected tablets), and every tablet follows ITS OWN current round by id, so
+  reordering never makes one jump. The host can edit from any device after
+  entering the password; the host panel shows how many tablets are online.
+  Sessions live in server memory - tablets keep showing the last plan after
+  a server restart, and a host device restores the session under the same id
+  (needs the new optional `SESSION_SECRET` env var, see HOSTING.md). In a
+  Split View session the host decides each column's group/route (new
+  Group/Route controls in the Split View builder, which also work without a
+  session). "Skip to next" is hidden inside sessions (it would only move
+  one tablet and split them across rounds; the host removes/replaces a stuck
+  round in the plan instead). New automated tests (`npm test`) and a manual
+  checklist (Tests.md). See
+  [ARCHITECTURE.md §6.46](ARCHITECTURE.md#646-shared-sessions-one-published-plan-many-tablets-a-host-password).
 - **Wall-display rework: green CLIMBING / red NEXT / grey queue, text sized
   to each lane, and a "Swap lanes" button for Speed.** CLIMBING is a green
   box, NEXT a red one (different brightness, labels kept), the queue grey

@@ -152,6 +152,35 @@ gesperrt).
 
 ---
 
+## D3. Gemeinsame Sitzungen: `SESSION_SECRET` (empfohlen)
+
+Gemeinsame Sitzungen (ein Plan für mehrere Tablets, mit Host-Passwort) liegen
+nur im Arbeitsspeicher des Servers. Wird der Server neu gestartet (Deploy,
+Render-Neustart), **kennt er die Sitzungen nicht mehr**:
+
+- Die Tablets zeigen einfach weiter den zuletzt erhaltenen Plan (Hinweis
+  „ended - showing last plan" oben rechts) – es bricht nichts ab.
+- Mit einem festen **`SESSION_SECRET`** stellt ein Host-Gerät die Sitzung
+  danach **automatisch unter derselben ID wieder her** (Link/QR-Code bleiben
+  gültig). Ohne `SESSION_SECRET` geht das nicht, dann muss neu eine Sitzung
+  erstellt werden (neue ID).
+
+Einrichtung auf Render: Dashboard → Service `callzone-management` → Tab
+„Environment" → „Add Environment Variable" → Name `SESSION_SECRET`, Wert =
+eine lange zufällige Zeichenfolge (z. B. im Terminal `openssl rand -hex 32`),
+speichern, neu deployen. (Die Variable steht auch in `render.yaml` mit
+`generateValue: true`; wenn dein Service nicht per Blueprint synchronisiert
+wird, legst du sie wie beschrieben von Hand an.) Der Wert ist geheim: **nie** ins Repo oder in einen
+Chat. Er schützt davor, dass Fremde eine vergessene Sitzungs-ID übernehmen.
+
+**Tipp:** Während eines Wettkampfs nicht deployen – die Sitzung läuft zwar
+weiter, aber ein Neustart unterbricht kurz die Verbindung aller Tablets.
+
+Automatische Tests (ohne Netzwerk): `npm test`. Manuelle Checkliste für die
+Oberfläche: [Tests.md](Tests.md).
+
+---
+
 ## E. Troubleshooting
 
 | Symptom | Ursache | Lösung |

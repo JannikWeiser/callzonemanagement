@@ -1,6 +1,7 @@
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createSessionRouter } from "./sessions.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -121,7 +122,23 @@ async function upstreamJson(host, urlPath) {
 }
 
 const app = express();
+// Behind Render's proxy, req.ip must be the real client (the session login
+// and create rate limits are per IP).
+app.set("trust proxy", 1);
 app.use(express.static(path.join(__dirname, "public")));
+
+// Shared sessions (sessions.js, ARCHITECTURE.md 6.46). SESSION_SECRET is
+// optional: set to any fixed random string it lets a host device restore its
+// session after a server restart; without it a restart simply ends all
+// sessions (tablets keep showing their last plan).
+const sessionRouter = createSessionRouter({
+  hostNames: Object.keys(HOSTS),
+  secret: process.env.SESSION_SECRET?.trim() || undefined,
+});
+app.use("/api/session", sessionRouter);
+if (!sessionRouter.persistentSecret) {
+  console.log("SESSION_SECRET not set - shared sessions end when the server restarts (no host restore)");
+}
 
 // `HOSTS` is a plain object literal, so a bare `!HOSTS[host]` truthiness
 // check also (wrongly) passes for inherited Object.prototype property names

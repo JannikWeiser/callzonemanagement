@@ -71,5 +71,6 @@ Entscheidungen: [ARCHITECTURE.md](ARCHITECTURE.md). Hosting: [HOSTING.md](HOSTIN
 - [ANLEITUNG.md](ANLEITUNG.md) - nicht-technische Bedienungsanleitung zum Weitergeben.
 - [ARCHITECTURE.md](ARCHITECTURE.md) - technische Doku, API-Referenz, Begruendungen (Englisch).
 - [HOSTING.md](HOSTING.md) - Deployment-Pipeline GitHub -> Render, wo man was findet.
+- [Tests.md](Tests.md) - was getestet werden muss (automatisch: `npm test`, manuell: Checkliste).
 - [CHANGELOG.md](CHANGELOG.md) - chronologisches Aenderungsprotokoll (Englisch).
 - [AGENTS.md](AGENTS.md) - Arbeitsregeln fuer zukuenftige KI-Coding-Sessions in diesem Repo (Englisch).

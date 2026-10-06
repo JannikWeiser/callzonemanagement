@@ -54,6 +54,27 @@ const el = {
   nextInSequence: document.getElementById("nextInSequence"),
   nextInSequenceLabel: document.getElementById("nextInSequenceLabel"),
   skipToNextBtn: document.getElementById("skipToNextBtn"),
+  sessionPanel: document.getElementById("sessionPanel"),
+  sessionHostState: document.getElementById("sessionHostState"),
+  sessionHostId: document.getElementById("sessionHostId"),
+  sessionHostVersion: document.getElementById("sessionHostVersion"),
+  sessionOnline: document.getElementById("sessionOnline"),
+  sessionLink: document.getElementById("sessionLink"),
+  copySessionLink: document.getElementById("copySessionLink"),
+  sessionQr: document.getElementById("sessionQr"),
+  sessionDirty: document.getElementById("sessionDirty"),
+  applySession: document.getElementById("applySession"),
+  reloadSession: document.getElementById("reloadSession"),
+  openSessionBoard: document.getElementById("openSessionBoard"),
+  leaveSession: document.getElementById("leaveSession"),
+  sessionCreateRow: document.getElementById("sessionCreateRow"),
+  sessionPassword: document.getElementById("sessionPassword"),
+  createSession: document.getElementById("createSession"),
+  sessionLoginRow: document.getElementById("sessionLoginRow"),
+  sessionJoinId: document.getElementById("sessionJoinId"),
+  sessionJoinPassword: document.getElementById("sessionJoinPassword"),
+  loginSession: document.getElementById("loginSession"),
+  sessionMsg: document.getElementById("sessionMsg"),
   controllerBackBtn: document.getElementById("controllerBackBtn"),
   controllerTitle: document.getElementById("controllerTitle"),
   controllerStatus: document.getElementById("controllerStatus"),
@@ -150,6 +171,26 @@ let sequenceBuilder = [];
 let multiColumnCount = 2;
 let multiColumnDrafts = [{ items: [] }, { items: [] }];
 
+// Shared sessions (6.46) - see the "Shared sessions" section near the end of
+// this file. Declared up here (not next to the code that uses them) so no
+// early call from the setup-screen render functions can hit a temporal-dead-
+// zone error before that section has run.
+// The event the setup screen currently has loaded ({ host, eventId }), or
+// null - what "Create shared session" publishes the plan for.
+let loadedEvent = null;
+// While THIS device hosts a session: { id, hostKey, record, version, plan }.
+let hostSession = null;
+// Whether the setup screen's editor currently reflects the hosted session's
+// plan (it was loaded from it, or the session was created from it). Starts
+// false on every page load and goes false again whenever an event is
+// (re)loaded, because the editor then holds defaults - without this, a
+// fresh/reset editor would look like "unapplied changes" and one click on
+// "Apply to all tablets" would overwrite the live plan with those defaults.
+let hostEditorBound = false;
+// Last known state of the connection to the session the board follows:
+// "ok" | "offline" (server unreachable) | "lost" (server forgot the session).
+let sessionConnection = "ok";
+
 // Which setup-screen mode is selected: "single" | "sequence" | "training" | "multi".
 let currentMode = "single";
 // How many rounds in the currently-loaded event are Speed elimination
@@ -174,7 +215,21 @@ let trainingIndex = 0;
 let trainingPollTimer = null;
 
 function saveSelection(sel) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(sel));
+  // A session selection is stored as just a pointer plus this tablet's own
+  // view preferences - never the plan itself, or a bookmarked/reloaded tablet
+  // would come back on a stale copy of the plan instead of the live one.
+  const toSave = sel?.sessionId
+    ? {
+        kind: "session",
+        sessionId: sel.sessionId,
+        host: sel.host,
+        eventId: sel.eventId,
+        route: sel.route ?? null,
+        group: sel.group ?? null,
+        swap: !!sel.swap,
+      }
+    : sel;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
 }
 function loadSelection() {
   try {
@@ -226,6 +281,24 @@ function parseSequenceToken(token) {
 // device as a controller rather than the wall display.
 function readUrlSelection() {
   const params = new URLSearchParams(location.search);
+
+  // `s=<sessionId>` (6.46): this tablet follows a shared session. Host, event
+  // and the plan itself come from the server; only this tablet's own view
+  // preferences (route/group tabs of a normal session, lane swap) live in
+  // the URL.
+  // Session ids are lowercase; tolerate a link that was retyped or autocapitalized.
+  const sessionId = params.get("s")?.trim().toLowerCase();
+  if (sessionId) {
+    const routeParam = params.get("route");
+    return {
+      kind: "session",
+      sessionId,
+      route: routeParam ? routeParam.split(",").filter(Boolean) : null,
+      group: params.get("group"),
+      swap: params.get("swap") === "1",
+    };
+  }
+
   const host = params.get("host");
   const eventId = params.get("event");
   if (!host || !eventId) return null;
@@ -298,6 +371,17 @@ function readUrlSelection() {
 
 function buildShareLink(sel) {
   const url = new URL(location.pathname, location.origin);
+  if (sel.sessionId) {
+    url.searchParams.set("s", sel.sessionId);
+    // Only a normal (watch) session has per-tablet view preferences; a Split
+    // View session's groups/routes belong to the plan.
+    if (sel.kind === "watch") {
+      if (sel.group) url.searchParams.set("group", sel.group);
+      if (sel.route?.length) url.searchParams.set("route", sel.route.join(","));
+      if (sel.swap) url.searchParams.set("swap", "1");
+    }
+    return url.toString();
+  }
   url.searchParams.set("host", sel.host);
   url.searchParams.set("event", sel.eventId);
 
@@ -391,7 +475,18 @@ function renderQrCode(container, url) {
 // (unlike #roundSelect's options, which only populateRounds() fills in -
 // see 6.19's "Next up" strip for why that distinction matters here too).
 function updateHostLabel(hostKey) {
-  el.hostLabel.textContent = el.host.querySelector(`option[value="${hostKey}"]`)?.textContent ?? hostKey;
+  const base = el.host.querySelector(`option[value="${hostKey}"]`)?.textContent ?? hostKey;
+  // Session tablets also show which session they follow and whether they are
+  // still hearing from the server (6.46) - the one thing staff need to know
+  // when a plan change doesn't arrive.
+  const sel = currentSelection;
+  let suffix = "";
+  if (sel?.sessionId) {
+    suffix = ` · Session ${sel.sessionId}`;
+    if (sessionConnection === "offline") suffix += " (offline - showing last plan)";
+    else if (sessionConnection === "lost") suffix += " (ended - showing last plan)";
+  }
+  el.hostLabel.textContent = base + suffix;
 }
 
 function setShareLink(url) {
@@ -462,6 +557,10 @@ function setMode(mode) {
   populateRoundSelect();
   renderSequenceBuilder();
   updateTrainingEligibility();
+  // Training isn't part of shared sessions (yet) - the panel would only
+  // offer to publish a plan that can't contain it.
+  el.sessionPanel.hidden = mode === "training";
+  updateSessionDirty();
 }
 
 // Rebuilds #roundSelect's options from loadedEntries - filtered to Speed
@@ -505,6 +604,8 @@ function updateTrainingEligibility() {
 }
 
 function populateRounds(eventData, host, eventId) {
+  loadedEvent = { host, eventId };
+  hostEditorBound = false;
   // A freshly-loaded event starts with an empty sequence/Multimode builder -
   // carrying over entries from a previously-loaded event would silently mix
   // events.
@@ -661,8 +762,8 @@ function populateRounds(eventData, host, eventId) {
     const multiEntries = multiColumnDrafts.map((draft) => ({
       sequence: draft.items.map((item) => ({ type: "round", id: item.roundId })),
       sequenceIndex: 0,
-      group: null,
-      route: null,
+      group: draft.group ?? null,
+      route: draft.route ?? null,
     }));
     startWatching({ kind: "multi", host, eventId, entries: multiEntries });
   };
@@ -859,6 +960,7 @@ function renderSequenceBuilder() {
   const used = usedInSequenceBuilder();
   el.addRoundToSequence.disabled = !loadedEntries.some((e) => !used.has(e.roundId));
   el.addPairedToSequence.disabled = loadedEliminationEntries.filter((e) => !used.has(e.roundId)).length < 2;
+  updateSessionDirty();
 }
 
 // Rebuilds every Multimode config card from scratch (6.23) - one per
@@ -872,6 +974,100 @@ function renderSequenceBuilder() {
 // "Lead"/"Boulder"/"Speed" for one `entries[]` item - see the `isBoulder`
 // comment in populateRounds() for why Lead is inferred by elimination
 // rather than its own confirmed prefix.
+// Group/route choice of one Split View column, set on the setup screen (6.46):
+// in a shared session the host's plan decides what each column shows (the
+// board's own group/route tabs are hidden there), and a plain Split View link
+// carries the same choice. Offered from the column's FIRST round - later
+// rounds in the column match by name and fall back to "everything" when they
+// don't have that group/route, same as the board's own tabs do.
+// Route names of a round never change, so this is cached for the page's life.
+const roundRouteInfo = new Map(); // "host:roundId" -> { groups: [{ name, routes }], prefix } | { pending: true }
+
+function getRoundRouteInfo(host, roundId, onReady) {
+  const key = `${host}:${roundId}`;
+  const hit = roundRouteInfo.get(key);
+  if (hit) return hit;
+  roundRouteInfo.set(key, { pending: true });
+  fetchRoundJson(host, roundId)
+    .then((round) => {
+      roundRouteInfo.set(key, {
+        groups: collectRouteGroups(round).map((g) => ({ name: g.groupName, routes: g.routes.map((r) => r.name) })),
+        prefix: laneLabelPrefixFor(round),
+      });
+      onReady();
+    })
+    .catch(() => roundRouteInfo.delete(key)); // retried on the next render
+  return { pending: true };
+}
+
+function renderColumnViewControls(card, draft, entries) {
+  const first = draft.items[0];
+  if (!first || !loadedEvent) return;
+  const info = getRoundRouteInfo(loadedEvent.host, first.roundId, () => renderMultiColumnsConfig(entries));
+  if (!info.groups) return;
+
+  const groupNames = info.groups.map((g) => g.name).filter(Boolean);
+  // Values left over from another round (the first item was replaced) are
+  // dropped instead of silently carried into the plan.
+  if (draft.group && !groupNames.includes(draft.group)) draft.group = null;
+  const activeGroup = groupNames.length >= 2 ? draft.group ?? groupNames[0] : null;
+  const routes = (info.groups.find((g) => g.name === activeGroup) ?? info.groups[0])?.routes ?? [];
+  if (draft.route) {
+    draft.route = draft.route.filter((name) => routes.includes(name));
+    if (!draft.route.length) draft.route = null;
+  }
+  if (groupNames.length < 2 && routes.length < 2) return;
+
+  const box = document.createElement("div");
+  box.className = "multi-view-controls";
+
+  if (groupNames.length >= 2) {
+    const label = document.createElement("label");
+    label.className = "multi-view-group";
+    label.append("Group ");
+    const select = document.createElement("select");
+    for (const name of groupNames) {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      select.appendChild(opt);
+    }
+    select.value = activeGroup;
+    select.addEventListener("change", () => {
+      draft.group = select.value;
+      draft.route = null; // a route picked in the old group means something else in the new one
+      renderMultiColumnsConfig(entries);
+    });
+    label.appendChild(select);
+    box.appendChild(label);
+  }
+
+  if (routes.length >= 2) {
+    const wrap = document.createElement("div");
+    wrap.className = "multi-view-routes";
+    const caption = document.createElement("span");
+    caption.className = "share-label";
+    caption.textContent = `${info.prefix}s shown (none ticked = all):`;
+    wrap.appendChild(caption);
+    for (const name of routes) {
+      const chip = document.createElement("label");
+      chip.className = "multi-view-route";
+      const box1 = document.createElement("input");
+      box1.type = "checkbox";
+      box1.checked = !!draft.route?.includes(name);
+      box1.addEventListener("change", () => {
+        const next = routes.filter((n) => (n === name ? box1.checked : draft.route?.includes(n)));
+        draft.route = next.length && next.length < routes.length ? next : null;
+        renderMultiColumnsConfig(entries);
+      });
+      chip.append(box1, ` ${info.prefix} ${name}`);
+      wrap.appendChild(chip);
+    }
+    box.appendChild(wrap);
+  }
+  card.appendChild(box);
+}
+
 function multiEntryDiscipline(entry) {
   return entry.isSpeed ? "Speed" : entry.isBoulder ? "Boulder" : "Lead";
 }
@@ -981,6 +1177,7 @@ function renderMultiColumnsConfig(entries) {
       list.appendChild(li);
     });
     card.appendChild(list);
+    renderColumnViewControls(card, draft, entries);
 
     // Appends a new step, pre-filled with the first round *not already
     // used in this column* - never defaults to a duplicate, unlike the
@@ -1005,6 +1202,7 @@ function renderMultiColumnsConfig(entries) {
 
     el.multiColumnsConfig.appendChild(card);
   });
+  updateSessionDirty();
 }
 
 function startWatching(selection) {
@@ -1026,7 +1224,11 @@ function startWatching(selection) {
   // the write-up.
   pollToken++;
   trainingPollToken++;
+  // Session polling (6.46) follows the same rule: every transition stops the
+  // previous one, and only a selection that belongs to a session starts one.
+  stopSessionPolling();
   currentSelection = selection;
+  if (!selection.sessionId) sessionConnection = "ok";
   saveSelection(selection);
   updateHostLabel(selection.host);
   el.setup.hidden = true;
@@ -1049,6 +1251,7 @@ function startWatching(selection) {
     setShareLink(buildShareLink(selection));
     pollMulti();
     pollTimer = setInterval(pollMulti, 3000);
+    if (selection.sessionId) startSessionPolling();
     return;
   }
 
@@ -1060,6 +1263,7 @@ function startWatching(selection) {
   setShareLink(buildShareLink(selection));
   pollCurrent();
   pollTimer = setInterval(pollCurrent, 3000);
+  if (selection.sessionId) startSessionPolling();
 }
 
 function goBackToSetup() {
@@ -1070,9 +1274,11 @@ function goBackToSetup() {
   // currentSelection/the DOM after the user has already left the board.
   pollToken++;
   trainingPollToken++;
+  stopSessionPolling();
   el.board.hidden = true;
   el.controller.hidden = true;
   el.setup.hidden = false;
+  refreshHostPanelOnReturn();
 }
 el.backBtn.addEventListener("click", goBackToSetup);
 el.controllerBackBtn.addEventListener("click", goBackToSetup);
@@ -1094,6 +1300,7 @@ function wireCopyButton(inputEl, buttonEl) {
 }
 wireCopyButton(el.shareLink, el.copyLink);
 wireCopyButton(el.controlLink, el.copyControlLink);
+wireCopyButton(el.sessionLink, el.copySessionLink);
 
 // --- Fullscreen + screen-wake-lock ("kiosk mode") for a tablet mounted on
 // a wall: keeps the board visible full-bleed and stops the OS from locking
@@ -1325,6 +1532,10 @@ async function updateNextInSequence() {
       : (await getRoundLabel(host, next.id)) ?? "…";
   if (myToken !== pollToken) return; // superseded while fetching labels
   el.nextInSequence.hidden = false;
+  // "Skip to next" only moves THIS tablet (6.32) - in a shared session that
+  // would leave one tablet on a different round than all the others and
+  // confuse staff (6.46). A stuck round is fixed by the host in the plan.
+  el.skipToNextBtn.hidden = !!currentSelection.sessionId;
   el.nextInSequenceLabel.innerHTML = "";
   el.nextInSequenceLabel.appendChild(document.createTextNode("Next up: "));
   const strong = document.createElement("strong");
@@ -2780,6 +2991,10 @@ function renderMultiBoard(entries, results) {
     if (groupNames.length >= 2) {
       if (!entry.group || !groupNames.includes(entry.group)) entry.group = groupNames[0];
       renderGroupTabs(groupNames, groupTabsEl, entry, rerender);
+      // In a Split View session the host's plan decides each column's group
+      // and routes (6.46) - tablets must not keep a local override that the
+      // next plan update would silently throw away.
+      if (currentSelection.sessionId) groupTabsEl.hidden = true;
     }
 
     let boulderFinalMode = "interval";
@@ -2793,6 +3008,7 @@ function renderMultiBoard(entries, results) {
 
       const routeNames = group.routes.map((r) => r.name);
       renderRouteTabs(routeNames, laneLabelPrefix, routeTabsEl, entry, rerender);
+      if (currentSelection.sessionId) routeTabsEl.hidden = true;
       const routesToShow = filterRoutesBySelection(group.routes, routeNames, entry);
 
       const grid = document.createElement("div");
@@ -2836,7 +3052,8 @@ function renderMultiBoard(entries, results) {
           skipBtn.disabled = false;
         }
       });
-      next.appendChild(skipBtn);
+      // Not in a shared session: it would only move this tablet (6.46).
+      if (!currentSelection.sessionId) next.appendChild(skipBtn);
       block.appendChild(next);
     }
   });
@@ -3130,8 +3347,708 @@ setMode("single");
   link.textContent = address;
 })();
 
+// --- Shared sessions (6.46) ---------------------------------------------------
+//
+// A host publishes ONE plan (a sequence of rounds, or the columns of a Split
+// View) to the server; every tablet that opens `?s=<id>` follows it and picks
+// up changes within a few seconds. Everything the board does with a plan is
+// unchanged - a session simply supplies the same `sequence`/`entries` a URL
+// would, and a plan update re-enters the normal poll path (see
+// applySessionPlan()). The plan logic that must agree between server and
+// browser (validation, "who is affected by this change") lives in
+// session-plan.js; the server side in sessions.js.
+const SESSION_POLL_MS = 5000;
+const HOST_CREDS_KEY = "callzone-host-sessions"; // { [sessionId]: { hostKey, record } }
+const ACTIVE_HOST_KEY = "callzone-active-host-session";
+const sessionCacheKey = (id) => `callzone-session-${id}`;
+// Anonymous, per page load (deliberately not persisted): the server only uses
+// it to count how many tablets are online and what they are showing.
+const sessionClientId = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+
+let sessionTimer = null;
+let sessionPollToken = 0;
+let sessionRestoring = false;
+
+function lsGet(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key));
+  } catch {
+    return null;
+  }
+}
+function lsSet(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // storage unavailable (private mode/quota) - everything still works, just without the offline cache
+  }
+}
+function lsRemove(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // see lsSet
+  }
+}
+
+// Never throws on an HTTP error status (callers branch on `status`); a
+// network failure does throw, which callers treat as "offline".
+async function sessionApi(method, path, { body, hostKey } = {}) {
+  const headers = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (hostKey) headers.Authorization = `Bearer ${hostKey}`;
+  const res = await fetch(`/api/session${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    cache: "no-store",
+  });
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    // non-JSON body (proxy error page) - status alone is what callers use then
+  }
+  return { status: res.status, data };
+}
+
+function sessionUrl(id) {
+  const url = new URL(location.pathname, location.origin);
+  url.searchParams.set("s", id);
+  return url.toString();
+}
+
+function cacheSessionPlan(id, plan, version) {
+  lsSet(sessionCacheKey(id), { plan, version });
+}
+
+// ---- tablet side: follow a session ------------------------------------------
+
+// The selection object the rest of the app already understands, built from a
+// plan. `local` carries this tablet's own preferences (watch sessions only).
+function selectionFromPlan(plan, sessionId, version, local = {}) {
+  const common = { host: plan.host, eventId: plan.eventId, sessionId, sessionVersion: version, sessionPlan: plan };
+  if (plan.kind === "multi") {
+    return {
+      kind: "multi",
+      ...common,
+      entries: plan.entries.map((e) => ({
+        sequence: e.sequence.map((entry) => ({ type: "round", id: entry.id })),
+        sequenceIndex: 0,
+        group: e.group ?? null,
+        route: e.route ?? null,
+      })),
+    };
+  }
+  return {
+    kind: "watch",
+    ...common,
+    group: local.group ?? null,
+    route: local.route ?? null,
+    swap: !!local.swap,
+    sequence: plan.sequence.map((entry) => ({ ...entry })),
+    showNextPreview: plan.showNextPreview !== false,
+  };
+}
+
+// `local` is what readUrlSelection()/loadSelection() produced:
+// { kind: "session", sessionId, route, group, swap }.
+async function joinSession(local) {
+  const id = local.sessionId;
+  showError("");
+  let fresh = null;
+  let reachable = true;
+  try {
+    const r = await sessionApi("GET", `/${encodeURIComponent(id)}?c=${sessionClientId}`);
+    if (r.status === 200 && r.data?.plan) fresh = r.data;
+    else if (r.status !== 404) reachable = false;
+  } catch {
+    reachable = false;
+  }
+  // The server may have forgotten the session (restart) or be unreachable:
+  // a tablet that has seen this session before keeps showing its last plan.
+  const cached = lsGet(sessionCacheKey(id));
+  const source = fresh ?? (cached?.plan ? cached : null);
+  if (!source) {
+    showError(
+      reachable
+        ? `Session ${id} was not found - the link may be wrong, or the session ended (it ends when the server restarts).`
+        : `Couldn't reach the server to open session ${id}.`
+    );
+    return;
+  }
+  if (fresh) cacheSessionPlan(id, fresh.plan, fresh.version);
+  sessionConnection = fresh ? "ok" : reachable ? "lost" : "offline";
+  startWatching(selectionFromPlan(source.plan, id, source.version, local));
+  // Fill the setup screen in the background so "switch round" works later,
+  // same as a bookmarked normal link does - but never reload an event the
+  // setup screen already has: that would wipe a host's unapplied edits (the
+  // builders are reset on every load).
+  el.host.value = source.plan.host;
+  el.eventId.value = source.plan.eventId;
+  if (!loadedEvent || loadedEvent.host !== source.plan.host || loadedEvent.eventId !== source.plan.eventId) loadEvent();
+}
+
+function startSessionPolling() {
+  sessionTimer = setInterval(pollSession, SESSION_POLL_MS);
+  pollSession();
+}
+function stopSessionPolling() {
+  clearInterval(sessionTimer);
+  sessionTimer = null;
+  sessionPollToken++;
+}
+
+function setSessionConnection(next) {
+  if (sessionConnection === next) return;
+  sessionConnection = next;
+  if (currentSelection) updateHostLabel(currentSelection.host);
+}
+
+// What this tablet reports to the server so the host can see how many
+// tablets a change would affect: the key of the entry it is on (per column
+// in a Split View).
+function currentSessionKeys(sel) {
+  if (sel.kind === "multi") return sel.entries.map((e, i) => SessionPlan.columnKey(i, e.sequence[e.sequenceIndex]));
+  const key = SessionPlan.entryKey(sel.sequence[sequenceIndex]);
+  return key ? [key] : [];
+}
+
+async function pollSession() {
+  const sel = currentSelection;
+  if (!sel?.sessionId) return;
+  const myToken = ++sessionPollToken;
+  let r;
+  try {
+    const keys = encodeURIComponent(currentSessionKeys(sel).join(","));
+    r = await sessionApi("GET", `/${encodeURIComponent(sel.sessionId)}?v=${sel.sessionVersion}&c=${sessionClientId}&k=${keys}`);
+  } catch {
+    if (myToken === sessionPollToken && currentSelection === sel) setSessionConnection("offline");
+    return;
+  }
+  // Left the session (or moved to another selection) while this was in flight.
+  if (myToken !== sessionPollToken || currentSelection !== sel) return;
+  if (r.status === 404) {
+    setSessionConnection("lost");
+    restoreSessionFromBoard(sel);
+    return;
+  }
+  if (r.status !== 200 || !r.data) {
+    setSessionConnection("offline");
+    return;
+  }
+  setSessionConnection("ok");
+  if (r.data.unchanged || !r.data.plan || r.data.version <= sel.sessionVersion) return;
+  applySessionPlan(sel, r.data.plan, r.data.version);
+}
+
+// A new plan arrives. Every tablet keeps following ITS OWN current entry by
+// key - reordering or adding entries never moves a tablet; only a removed or
+// replaced current entry makes it fall back to the first unfinished entry of
+// the new plan (exactly what a freshly opened tablet would show).
+function applySessionPlan(sel, plan, version) {
+  if (JSON.stringify(plan) === JSON.stringify(sel.sessionPlan)) {
+    // Same content (e.g. the host restored the session after a restart) -
+    // just adopt the version number, no re-render.
+    sel.sessionVersion = version;
+    cacheSessionPlan(sel.sessionId, plan, version);
+    return;
+  }
+  if (plan.kind !== sel.kind || plan.host !== sel.host || plan.eventId !== sel.eventId) {
+    // A different kind of board: restart cleanly, like opening the link again.
+    cacheSessionPlan(sel.sessionId, plan, version);
+    startWatching(selectionFromPlan(plan, sel.sessionId, version, sel));
+    return;
+  }
+
+  if (sel.kind === "watch") {
+    const oldKey = SessionPlan.entryKey(sel.sequence[sequenceIndex]);
+    sel.sequence = plan.sequence.map((entry) => ({ ...entry }));
+    sel.showNextPreview = plan.showNextPreview !== false;
+    const found = SessionPlan.relocateIndex(oldKey, sel.sequence);
+    sequenceIndex = found >= 0 ? found : 0;
+    if (found >= 0 && pairedState) pairedState.entryIndex = found;
+    else pairedState = null;
+    if (found < 0) lastRoundData = null;
+    // The previewed "next category" may have changed with the order.
+    nextRoundPreview = null;
+    nextRoundPreviewKey = null;
+    // Invalidate whatever poll is in flight (it captured the old sequence)
+    // and show the new plan right away instead of at the next 3 s tick.
+    pollToken++;
+    pollCurrent();
+  } else {
+    const oldKeys = sel.entries.map((e) => SessionPlan.entryKey(e.sequence[e.sequenceIndex]));
+    sel.entries = plan.entries.map((e, i) => {
+      const sequence = e.sequence.map((entry) => ({ type: "round", id: entry.id }));
+      const found = SessionPlan.relocateIndex(oldKeys[i], sequence);
+      return { sequence, sequenceIndex: Math.max(found, 0), group: e.group ?? null, route: e.route ?? null };
+    });
+    lastMultiResults = null;
+    pollToken++;
+    pollMulti();
+  }
+  sel.sessionVersion = version;
+  sel.sessionPlan = plan;
+  cacheSessionPlan(sel.sessionId, plan, version);
+}
+
+// A host device that is itself showing the session notices the server forgot
+// it and brings it back under the same id (needs SESSION_SECRET on the
+// server - otherwise the server answers 403 and the session simply ends).
+async function restoreSessionFromBoard(sel) {
+  if (sessionRestoring) return;
+  const creds = (lsGet(HOST_CREDS_KEY) ?? {})[sel.sessionId];
+  if (!creds) return; // plain viewers just keep showing the last plan
+  sessionRestoring = true;
+  try {
+    const r = await sessionApi("POST", "", {
+      body: { id: sel.sessionId, record: creds.record, hostKey: creds.hostKey, plan: sel.sessionPlan, version: sel.sessionVersion },
+    });
+    if ((r.status === 200 || r.status === 201) && r.data?.plan && currentSelection === sel) {
+      if (r.data.version > sel.sessionVersion) applySessionPlan(sel, r.data.plan, r.data.version);
+      setSessionConnection("ok");
+    }
+  } catch {
+    // still unreachable - the next poll tries again
+  } finally {
+    sessionRestoring = false;
+  }
+}
+
+// ---- host side: setup-screen panel ------------------------------------------
+
+function loadHostCreds() {
+  return lsGet(HOST_CREDS_KEY) ?? {};
+}
+function saveHostCreds(id, creds) {
+  const all = loadHostCreds();
+  all[id] = creds;
+  lsSet(HOST_CREDS_KEY, all);
+  lsSet(ACTIVE_HOST_KEY, id);
+}
+function forgetHostCreds(id) {
+  const all = loadHostCreds();
+  delete all[id];
+  lsSet(HOST_CREDS_KEY, all);
+  lsRemove(ACTIVE_HOST_KEY);
+}
+
+function setSessionMsg(text, isError = false) {
+  el.sessionMsg.textContent = text;
+  el.sessionMsg.classList.toggle("session-msg--error", !!text && isError);
+  el.sessionMsg.hidden = !text;
+}
+
+function knownHostNames() {
+  return [...el.host.options].map((o) => o.value);
+}
+
+// The plan the setup screen currently describes - { plan } (validated and
+// normalized, so two equal plans serialize identically) or { error }.
+function planFromSetup() {
+  if (!loadedEvent) return { error: "Load an event first." };
+  const { host, eventId } = loadedEvent;
+  let raw;
+  if (currentMode === "multi") {
+    if (multiColumnDrafts.every((d) => d.items.length === 0)) return { error: "Add at least one round to a column." };
+    raw = {
+      kind: "multi",
+      host,
+      eventId,
+      entries: multiColumnDrafts.map((d) => ({
+        sequence: d.items.map((item) => ({ type: "round", id: item.roundId })),
+        group: d.group ?? null,
+        route: d.route ?? null,
+      })),
+    };
+  } else if (currentMode === "sequence") {
+    if (!sequenceBuilder.length) return { error: "Add at least one round to the sequence." };
+    raw = {
+      kind: "watch",
+      host,
+      eventId,
+      sequence: sequenceBuilder.map((item) =>
+        item.type === "paired" ? { type: "paired", a: item.aId, b: item.bId } : { type: "round", id: item.roundId }
+      ),
+      showNextPreview: el.showNextPreview.checked,
+    };
+  } else if (currentMode === "single") {
+    const roundId = el.roundSelect.value;
+    if (!roundId) return { error: "Pick a round first." };
+    raw = { kind: "watch", host, eventId, sequence: [{ type: "round", id: roundId }], showNextPreview: true };
+  } else {
+    return { error: "Shared sessions work with Single round, Sequence and Split View." };
+  }
+  try {
+    return { plan: SessionPlan.validatePlan(raw, knownHostNames()) };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+function updateSessionDirty() {
+  if (!hostSession?.plan || !hostEditorBound) {
+    el.sessionDirty.hidden = true;
+    return;
+  }
+  const built = planFromSetup();
+  el.sessionDirty.hidden = !built.plan || JSON.stringify(built.plan) === JSON.stringify(hostSession.plan);
+}
+
+let hostClientsTimer = null;
+function stopHostClientsPolling() {
+  clearInterval(hostClientsTimer);
+  hostClientsTimer = null;
+}
+function startHostClientsPolling() {
+  if (hostClientsTimer) return;
+  refreshOnlineCount();
+  hostClientsTimer = setInterval(refreshOnlineCount, SESSION_POLL_MS);
+}
+
+async function refreshOnlineCount() {
+  const sess = hostSession;
+  if (!sess || el.setup.hidden) return;
+  try {
+    const r = await sessionApi("GET", `/${sess.id}/clients`, { hostKey: sess.hostKey });
+    if (hostSession !== sess) return;
+    if (r.status === 200) {
+      const n = r.data.online;
+      el.sessionOnline.textContent = `${n} tablet${n === 1 ? "" : "s"} online`;
+    } else if (r.status === 404) {
+      el.sessionOnline.textContent = "session not on the server - restoring…";
+      await restoreHostSession();
+    } else if (r.status === 403) {
+      el.sessionOnline.textContent = 'host key no longer valid - use "Edit existing session" again';
+    } else {
+      el.sessionOnline.textContent = "can't check tablets";
+    }
+  } catch {
+    if (hostSession === sess) el.sessionOnline.textContent = "server unreachable";
+  }
+}
+
+// Re-creates this device's session under the same id after the server forgot
+// it (restart). Returns { ok, status }.
+async function restoreHostSession() {
+  const sess = hostSession;
+  if (!sess?.plan) return { ok: false, status: 0 };
+  try {
+    const r = await sessionApi("POST", "", {
+      body: { id: sess.id, record: sess.record, hostKey: sess.hostKey, plan: sess.plan, version: sess.version },
+    });
+    if ((r.status === 200 || r.status === 201) && r.data?.plan && hostSession === sess) {
+      sess.version = r.data.version;
+      sess.plan = r.data.plan;
+      cacheSessionPlan(sess.id, sess.plan, sess.version);
+      renderHostPanel();
+      return { ok: true, status: r.status };
+    }
+    if (r.status === 403 && hostSession === sess) {
+      el.sessionOnline.textContent = "server restarted - session can't be restored (no SESSION_SECRET), create a new one";
+    }
+    return { ok: false, status: r.status };
+  } catch {
+    return { ok: false, status: 0 };
+  }
+}
+
+function renderHostPanel() {
+  const hosting = !!hostSession;
+  el.sessionHostState.hidden = !hosting;
+  el.sessionCreateRow.hidden = hosting;
+  el.sessionLoginRow.hidden = hosting;
+  if (!hosting) {
+    stopHostClientsPolling();
+    el.sessionDirty.hidden = true;
+    return;
+  }
+  el.sessionHostId.textContent = hostSession.id;
+  el.sessionHostVersion.textContent = hostSession.plan ? String(hostSession.version) : "?";
+  const link = sessionUrl(hostSession.id);
+  if (el.sessionLink.value !== link) {
+    el.sessionLink.value = link;
+    renderQrCode(el.sessionQr, link);
+  }
+  updateSessionDirty();
+  startHostClientsPolling();
+}
+
+function startHosting(id, creds, plan, version) {
+  saveHostCreds(id, { hostKey: creds.hostKey, record: creds.record });
+  hostSession = { id, hostKey: creds.hostKey, record: creds.record, version, plan };
+  cacheSessionPlan(id, plan, version);
+  el.sessionPanel.open = true;
+  renderHostPanel();
+}
+
+async function createSession() {
+  const built = planFromSetup();
+  if (built.error) return setSessionMsg(built.error, true);
+  const password = el.sessionPassword.value;
+  if (password.length < 4) return setSessionMsg("The host password needs at least 4 characters.", true);
+  el.createSession.disabled = true;
+  try {
+    const r = await sessionApi("POST", "", { body: { password, plan: built.plan } });
+    if (r.status !== 201) return setSessionMsg(r.data?.error ?? `Couldn't create the session (error ${r.status}).`, true);
+    el.sessionPassword.value = "";
+    hostEditorBound = true; // the editor IS the plan that was just published
+    startHosting(r.data.id, r.data, r.data.plan, r.data.version);
+    setSessionMsg(
+      `Session ${r.data.id} is live. Open the link or scan the QR code on your tablets. Remember the host password - you need it to edit the session from another device.`
+    );
+  } catch {
+    setSessionMsg("Couldn't reach the server.", true);
+  } finally {
+    el.createSession.disabled = false;
+  }
+}
+
+// Puts a plan into the setup screen's own builders so the host can edit it
+// with the exact same controls used to create it. Returns { missing } (how
+// many of the plan's rounds no longer exist in the event) or null when the
+// plan's event couldn't be loaded.
+async function loadPlanIntoSetup(plan) {
+  if (!loadedEvent || loadedEvent.host !== plan.host || loadedEvent.eventId !== plan.eventId) {
+    el.host.value = plan.host;
+    el.eventId.value = plan.eventId;
+    await loadEvent();
+    if (!loadedEvent || loadedEvent.host !== plan.host || loadedEvent.eventId !== plan.eventId) return null;
+  }
+  const byId = new Map(loadedEntries.map((e) => [e.roundId, e]));
+  let missing = 0;
+  if (plan.kind === "multi") {
+    multiColumnCount = Math.min(5, Math.max(2, plan.entries.length));
+    multiColumnDrafts = Array.from({ length: multiColumnCount }, (_, i) => {
+      const column = plan.entries[i];
+      const items = [];
+      for (const entry of column?.sequence ?? []) {
+        const info = byId.get(entry.id);
+        if (info) items.push({ roundId: entry.id, discipline: multiEntryDiscipline(info) });
+        else missing++;
+      }
+      return { items, group: column?.group ?? null, route: column?.route ?? null };
+    });
+    for (const btn of el.multiCountTabs.querySelectorAll(".mode-tab")) {
+      btn.classList.toggle("active", Number(btn.dataset.count) === multiColumnCount);
+    }
+    setMode("multi");
+    renderMultiColumnsConfig(loadedEntries);
+  } else {
+    sequenceBuilder = [];
+    for (const entry of plan.sequence) {
+      if (entry.type === "paired") {
+        const a = byId.get(entry.a);
+        const b = byId.get(entry.b);
+        if (a && b) sequenceBuilder.push({ type: "paired", aId: a.roundId, aLabel: entryLabel(a), bId: b.roundId, bLabel: entryLabel(b) });
+        else missing++;
+      } else {
+        const info = byId.get(entry.id);
+        if (info) sequenceBuilder.push({ type: "round", roundId: info.roundId, label: entryLabel(info) });
+        else missing++;
+      }
+    }
+    el.showNextPreview.checked = plan.showNextPreview !== false;
+    setMode("sequence");
+  }
+  updateSessionDirty();
+  return { missing };
+}
+
+async function loginSession() {
+  const id = el.sessionJoinId.value.trim().toLowerCase();
+  const password = el.sessionJoinPassword.value;
+  if (!id) return setSessionMsg("Enter the session ID.", true);
+  if (!password) return setSessionMsg("Enter the host password.", true);
+  el.loginSession.disabled = true;
+  try {
+    const r = await sessionApi("POST", `/${encodeURIComponent(id)}/login`, { body: { password } });
+    if (r.status === 404) return setSessionMsg(`Session ${id} was not found.`, true);
+    if (r.status !== 200) return setSessionMsg(r.data?.error ?? `Login failed (error ${r.status}).`, true);
+    el.sessionJoinPassword.value = "";
+    startHosting(id, r.data, r.data.plan, r.data.version);
+    const loaded = await loadPlanIntoSetup(r.data.plan);
+    if (!loaded) return setSessionMsg(`Logged in, but couldn't load event ${r.data.plan.eventId} to edit the plan.`, true);
+    hostEditorBound = true;
+    updateSessionDirty();
+    setSessionMsg(
+      loaded.missing
+        ? `Plan loaded. ${loaded.missing} round(s) of it no longer exist in this event and were left out.`
+        : 'Plan loaded - edit it above, then press "Apply to all tablets".'
+    );
+  } catch {
+    setSessionMsg("Couldn't reach the server.", true);
+  } finally {
+    el.loginSession.disabled = false;
+  }
+}
+
+async function reloadHostPlan() {
+  const sess = hostSession;
+  if (!sess) return;
+  try {
+    const r = await sessionApi("GET", `/${sess.id}`);
+    if (r.status === 404) {
+      const restored = await restoreHostSession();
+      if (!restored.ok) return setSessionMsg("The session is no longer on the server.", true);
+      return setSessionMsg("The session had been forgotten by the server and was restored from this device's last known plan.");
+    }
+    if (r.status !== 200) return setSessionMsg(r.data?.error ?? `Couldn't load the session (error ${r.status}).`, true);
+    sess.version = r.data.version;
+    sess.plan = r.data.plan;
+    cacheSessionPlan(sess.id, sess.plan, sess.version);
+    const loaded = await loadPlanIntoSetup(sess.plan);
+    renderHostPanel();
+    if (!loaded) return setSessionMsg("Couldn't load the session's event.", true);
+    hostEditorBound = true;
+    renderHostPanel();
+    setSessionMsg(
+      loaded.missing
+        ? `Plan loaded (version ${sess.version}). ${loaded.missing} round(s) no longer exist in this event and were left out.`
+        : `Plan loaded (version ${sess.version}).`
+    );
+  } catch {
+    setSessionMsg("Couldn't reach the server.", true);
+  }
+}
+
+function describeImpact(count) {
+  const tablets = `${count} tablet${count === 1 ? "" : "s"}`;
+  return `${tablets} ${count === 1 ? "is" : "are"} showing something this change removes or replaces. ${
+    count === 1 ? "It" : "They"
+  } will switch right away (to the first unfinished round of the new plan).\n\nApply anyway?`;
+}
+
+async function applyHostPlan() {
+  const sess = hostSession;
+  if (!sess) return;
+  if (!sess.plan) return setSessionMsg('Can\'t reach the session yet - press "Reload plan from server" first.', true);
+  if (!hostEditorBound) {
+    return setSessionMsg(
+      'The editor above doesn\'t hold this session\'s plan yet. Press "Reload plan from server" first, edit that, then apply - otherwise you would overwrite the live plan with the editor\'s defaults.',
+      true
+    );
+  }
+  const built = planFromSetup();
+  if (built.error) return setSessionMsg(built.error, true);
+  const plan = built.plan;
+  if (plan.host !== sess.plan.host || plan.eventId !== sess.plan.eventId) {
+    return setSessionMsg(
+      `This session belongs to event ${sess.plan.eventId} (${sess.plan.host}). Load that event to edit it, or create a new session for this event.`,
+      true
+    );
+  }
+  if (JSON.stringify(plan) === JSON.stringify(sess.plan)) {
+    return setSessionMsg("Nothing to apply - the tablets already follow this plan.");
+  }
+
+  el.applySession.disabled = true;
+  try {
+    // How many tablets would be pulled off what they show right now?
+    let clients = null;
+    try {
+      const c = await sessionApi("GET", `/${sess.id}/clients`, { hostKey: sess.hostKey });
+      if (c.status === 200) clients = c.data.clients;
+    } catch {
+      // unknown - handled below
+    }
+    if (hostSession !== sess) return;
+    const affected = clients ? SessionPlan.affectedClients(sess.plan, plan, clients) : null;
+    if (affected === null ? SessionPlan.removesOrReplaces(sess.plan, plan) : affected > 0) {
+      const text =
+        affected === null
+          ? "Couldn't check which tablets are online. This change removes or replaces something that may be on a tablet right now.\n\nApply anyway?"
+          : describeImpact(affected);
+      if (!window.confirm(text)) return setSessionMsg("Cancelled - nothing was changed.");
+    }
+
+    let r = await sessionApi("PUT", `/${sess.id}`, { hostKey: sess.hostKey, body: { baseVersion: sess.version, plan } });
+    if (r.status === 404) {
+      // The server forgot the session (restart): restore it, then retry once.
+      const restored = await restoreHostSession();
+      if (!restored.ok) {
+        return setSessionMsg("The session is no longer on the server and couldn't be restored. Create a new session.", true);
+      }
+      r = await sessionApi("PUT", `/${sess.id}`, { hostKey: sess.hostKey, body: { baseVersion: sess.version, plan } });
+    }
+    if (r.status === 200) {
+      sess.version = r.data.version;
+      sess.plan = r.data.plan;
+      cacheSessionPlan(sess.id, sess.plan, sess.version);
+      renderHostPanel();
+      return setSessionMsg(`Applied (version ${sess.version}) - the tablets pick it up within a few seconds.`);
+    }
+    if (r.status === 409) {
+      return setSessionMsg(
+        `Someone else changed the plan in the meantime (now version ${r.data?.version}). Nothing was applied - press "Reload plan from server" to see their version, then redo your changes.`,
+        true
+      );
+    }
+    if (r.status === 403) {
+      return setSessionMsg('This device is no longer allowed to edit the session. Use "Edit existing session" to log in again.', true);
+    }
+    setSessionMsg(r.data?.error ?? `Couldn't apply the plan (error ${r.status}).`, true);
+  } catch {
+    setSessionMsg("Couldn't reach the server - nothing was applied.", true);
+  } finally {
+    el.applySession.disabled = false;
+  }
+}
+
+async function initHostPanel() {
+  const id = lsGet(ACTIVE_HOST_KEY);
+  const creds = id ? loadHostCreds()[id] : null;
+  if (!creds) return;
+  hostSession = { id, hostKey: creds.hostKey, record: creds.record, version: 0, plan: null };
+  el.sessionPanel.open = true;
+  renderHostPanel();
+  try {
+    const r = await sessionApi("GET", `/${id}`);
+    if (r.status === 200) {
+      hostSession.version = r.data.version;
+      hostSession.plan = r.data.plan;
+    } else if (r.status === 404) {
+      const cached = lsGet(sessionCacheKey(id));
+      if (cached?.plan) {
+        hostSession.version = cached.version;
+        hostSession.plan = cached.plan;
+        await restoreHostSession();
+      }
+    }
+  } catch {
+    // offline: the panel stays in "can't reach" state until the next refresh
+  }
+  renderHostPanel();
+}
+
+function refreshHostPanelOnReturn() {
+  if (!hostSession) return;
+  renderHostPanel();
+  refreshOnlineCount();
+}
+
+el.createSession.addEventListener("click", createSession);
+el.loginSession.addEventListener("click", loginSession);
+el.applySession.addEventListener("click", applyHostPlan);
+el.reloadSession.addEventListener("click", reloadHostPlan);
+el.openSessionBoard.addEventListener("click", () => {
+  if (hostSession) joinSession({ kind: "session", sessionId: hostSession.id, route: null, group: null, swap: false });
+});
+el.leaveSession.addEventListener("click", () => {
+  if (!hostSession) return;
+  forgetHostCreds(hostSession.id);
+  hostSession = null;
+  hostEditorBound = false;
+  renderHostPanel();
+  setSessionMsg("This device no longer hosts the session. The session itself keeps running for the tablets.");
+});
+el.showNextPreview.addEventListener("change", updateSessionDirty);
+
 const initial = readUrlSelection() ?? loadSelection();
-if (initial?.host && initial?.eventId) {
+if (initial?.kind === "session") {
+  joinSession(initial);
+} else if (initial?.host && initial?.eventId) {
   el.eventId.value = initial.eventId;
   el.host.value = initial.host;
   if (initial.kind === "training" || initial.kind === "multi" || initial.sequence?.length) {
@@ -3152,3 +4069,5 @@ if (initial?.host && initial?.eventId) {
     }
   });
 }
+
+initHostPanel();
