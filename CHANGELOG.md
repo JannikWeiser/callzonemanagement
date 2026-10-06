@@ -8,6 +8,15 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
+- **Optional official results.info API key per host, with automatic
+  fallback to the previous Referer-based access.** Set
+  `RESULTS_API_KEY_<HOST>` (e.g. `RESULTS_API_KEY_STAGE`) in the server's
+  environment; the key goes out as `x-auth-token` (without a Referer, so a
+  bogus key is really rejected), and a `401`/`403` falls back to the old
+  path for 5 minutes. No key, no change in behavior. Verified on `stage`
+  with a real key: accepted, and the responses are identical to the
+  Referer path for 3 events and 9 rounds. See
+  [ARCHITECTURE.md §6.44](ARCHITECTURE.md#644-optional-official-api-key-per-host-with-automatic-referer-fallback).
 - **Sequence mode can now preview the next category's startlist inside the
   queue list** as the current one runs low, instead of only the existing
   "Next up: …" name strip — real athlete names appear after a deliberate
@@ -17,6 +26,12 @@ section number); this file is the *what happened, when* log.
   queue list) for operational-safety reasons. New checkbox in the Sequence
   setup screen, default on. See
   [ARCHITECTURE.md §6.42](ARCHITECTURE.md#642-sequence-mode-next-categorys-startlist-preview-in-the-queue-list).
+- **The next-category preview now also works for Speed elimination -
+  Paired Entries and plain Speed finals**, not just Lead/Boulder/Speed
+  qualification. Only activates once the currently-shown stage is the
+  bracket's own last stage (e.g. "Final"), not at the end of every
+  mid-bracket stage. See
+  [ARCHITECTURE.md §6.43](ARCHITECTURE.md#643-next-category-preview-extended-to-speed-elimination-paired-entries-and-plain-speed-finals).
 
 ### Fixed
 - **Speed qualification's two lanes could show mismatched heat pairings**

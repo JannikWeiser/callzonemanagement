@@ -1289,11 +1289,14 @@ async function updateNextInSequence() {
   strong.textContent = label;
   el.nextInSequenceLabel.appendChild(strong);
 
-  // Startlist preview inside the queue list (6.42) - only for two plain
-  // (non-paired) entries back to back, and only with the checkbox on.
-  // Paired entries are a Speed-elimination concept with their own
-  // rendering (renderPairedBoard(), 6.12) and are excluded entirely.
-  if (current.type === "paired" || next.type === "paired" || !currentSelection.showNextPreview) {
+  // Startlist preview inside the queue list (6.42/6.43) - only with the
+  // checkbox on, and only when the NEXT entry is a plain round (a paired
+  // entry has no single roundId to preview from, still out of scope). The
+  // CURRENT entry may now be paired too (6.43, buildSpeedLane()) -
+  // pollPairedTick()'s lockstep already keeps both interleaved sides on
+  // the same stage, so the preview activates once that shared stage is the
+  // round's own last one.
+  if (next.type === "paired" || !currentSelection.showNextPreview) {
     nextRoundPreview = null;
     nextRoundPreviewKey = null;
     return;
@@ -1304,7 +1307,15 @@ async function updateNextInSequence() {
   if (myToken !== pollToken) return; // superseded while fetching the full round
   nextRoundPreview = data;
   nextRoundPreviewKey = cacheKey;
-  if (lastRoundData) renderBoard(lastRoundData); // show it now instead of waiting for the next 3s tick
+  // Re-render now instead of waiting for the next 3s tick - but NOT via
+  // plain renderBoard() when the current entry is paired: that would run
+  // the round through the ordinary computeSpeedElimination() path instead
+  // of the stage-locked renderPairedBoard() view, reintroducing the
+  // "skip-ahead" bug renderPairedBoard()'s own comment warns about (6.12).
+  // The next pollPairedTick() tick (already every 3s) picks up the cached
+  // preview via its own renderPairedBoard() call instead - a few seconds'
+  // delay is an acceptable trade-off for not touching that path here.
+  if (lastRoundData && current.type !== "paired") renderBoard(lastRoundData);
 }
 
 // Manual backup for a sequence entry that never resolves as finished (e.g.
@@ -2282,6 +2293,18 @@ function stageHeatsRemaining(round, stageName) {
   return { stageName: stage.stage_name, heats: heats.slice(currentIndex), exists: true };
 }
 
+// Whether `stageName` is this round's own LAST stage - i.e. the bracket
+// genuinely has nothing after it, regardless of bracket size (a small
+// bracket's own last stage might be "1/4" with no "1/8"/"1/16" before it,
+// see SPEED_STAGE_ORDER's comment). Used by the next-category preview
+// (6.42/6.43) to avoid triggering at the end of every mid-bracket stage -
+// `stageHeatsRemaining()`'s `heats` array is scoped to ONE stage, so it's
+// naturally short after 1/8, 1/4, 1/2, ... not just once near the very end.
+function isLastSpeedStage(round, stageName) {
+  const stages = round.speed_elimination_stages ?? [];
+  return stages.length > 0 && stages[stages.length - 1].stage_name === stageName;
+}
+
 function heatAthleteLine(athlete) {
   if (!athlete) return "";
   // Same falsy-zero fix as athleteLine() above - see its comment.
@@ -2300,7 +2323,10 @@ function athleteForLane(heat, laneName) {
 // two-line "matchup" card per heat. Requested explicitly after the
 // matchup-card version shipped: the per-lane layout matches every other
 // round type in the app and is easier to scan at a glance.
-function buildSpeedLane(laneName, heats) {
+// `previewRoute` is `undefined` unless renderSpeedStage() has confirmed
+// this is the round's own LAST stage AND the next sequence entry renders
+// the same number of lanes (6.42/6.43) - no partial/guessed lane matching.
+function buildSpeedLane(laneName, heats, previewRoute) {
   const athletes = heats.map((h) => athleteForLane(h, laneName));
 
   const laneEl = document.createElement("section");
@@ -2314,15 +2340,37 @@ function buildSpeedLane(laneName, heats) {
   laneEl.appendChild(makeCard("climbing", heatAthleteLine(athletes[0]), "at-wall"));
   laneEl.appendChild(makeCard("next", heatAthleteLine(athletes[1]), "on-deck"));
 
-  const queue = athletes.slice(2, 2 + 6);
+  let queue = athletes.slice(2, 2 + 6);
+  // Next-category preview (6.43): pad back out to a virtual 6-real-
+  // equivalent total, same principle as withNextCategoryPreview() for
+  // Lead/Boulder/Speed-qualification. Uses a distinct `{ gap: true }`
+  // sentinel rather than the bare `null` that version reuses - `athletes`
+  // here can already legitimately contain a real `null` (a heat
+  // results.info hasn't paired yet), which renders as a blank string with
+  // no "—" fallback below; a bare `null` gap would be indistinguishable
+  // from that pre-existing case and would need it to change too.
+  if (previewRoute && nextRoundPreview && queue.length < 6) {
+    const previewCount = 6 - queue.length;
+    const preview = orderedAthletesForRoute(nextRoundPreview, previewRoute)
+      .slice(0, previewCount)
+      .map((athlete) => ({ preview: athlete }));
+    queue = [...queue, { gap: true }, ...preview];
+  }
   if (queue.length) {
     const list = document.createElement("ol");
     list.className = "queue-list";
     // "Next" is implicitly queue position 1, so this list continues from 2.
     list.setAttribute("start", "2");
-    for (const athlete of queue) {
+    for (const item of queue) {
       const li = document.createElement("li");
-      li.textContent = heatAthleteLine(athlete);
+      if (item?.preview) {
+        li.textContent = heatAthleteLine(item.preview) || "—";
+        li.classList.add("queue-item--preview");
+      } else if (item?.gap) {
+        li.textContent = "—";
+      } else {
+        li.textContent = heatAthleteLine(item); // unchanged existing behavior
+      }
       list.appendChild(li);
     }
     laneEl.appendChild(list);
@@ -2356,11 +2404,18 @@ function renderSpeedStage(round, result) {
   el.lanes.appendChild(stageHeading);
 
   const laneNames = round.routes?.length ? round.routes.map((r) => r.name) : ["A", "B"];
+  // Next-category preview (6.43) only once this is the round's own LAST
+  // stage - stageHeatsRemaining()'s `heats` is scoped to one stage, so
+  // "queue running low" happens at the end of EVERY stage otherwise, not
+  // just near the true end of the bracket. Works for the paired-entry case
+  // too: pollPairedTick()'s lockstep already keeps both interleaved sides
+  // on the same stage name, so this is a meaningful signal there as well.
+  const nextRoutes = isLastSpeedStage(round, result.stageName) ? nextCategoryRoutesFor(laneNames.length) : null;
   const grid = document.createElement("div");
   grid.className = "lanes-grid";
-  for (const laneName of laneNames) {
-    grid.appendChild(buildSpeedLane(laneName, result.heats));
-  }
+  laneNames.forEach((laneName, i) => {
+    grid.appendChild(buildSpeedLane(laneName, result.heats, nextRoutes?.[i]));
+  });
   el.lanes.appendChild(grid);
 }
 

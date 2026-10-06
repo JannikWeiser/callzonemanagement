@@ -46,13 +46,72 @@ async function cachedFetch(key, ttlMs, fetcher) {
   return data;
 }
 
+// Optional official API key per host (the documented `api_key` scheme of
+// results.info's OpenAPI spec: header `x-auth-token`), read from
+// RESULTS_API_KEY_<HOST> (e.g. RESULTS_API_KEY_STAGE). Without a key - or
+// while the key is being rejected - requests go out exactly as before
+// (Referer only), so a missing, expired or revoked key never takes the app
+// down. A key only ever lives in this process's environment: never log it,
+// never send it to the browser, never put it in the repo.
+const API_KEYS = Object.fromEntries(
+  Object.keys(HOSTS).map((host) => [host, process.env[`RESULTS_API_KEY_${host.toUpperCase()}`]?.trim() || null])
+);
+const KEY_RETRY_AFTER_MS = 5 * 60_000; // after a 401/403, stay on the Referer path this long before trying the key again
+const keyState = new Map(); // host -> { ok: boolean, at: ms } - last outcome of using that host's key
+
+function apiKeyFor(host) {
+  const key = API_KEYS[host];
+  if (!key) return null;
+  const state = keyState.get(host);
+  if (state && !state.ok && Date.now() - state.at < KEY_RETRY_AFTER_MS) return null;
+  return key;
+}
+
+// Logs only on a change of outcome, so a rejected key doesn't spam the log
+// on every poll.
+function noteKeyOutcome(host, ok) {
+  if (keyState.get(host)?.ok === ok) {
+    keyState.set(host, { ok, at: Date.now() });
+    return;
+  }
+  keyState.set(host, { ok, at: Date.now() });
+  console.log(
+    ok
+      ? `[${host}] official API key accepted`
+      : `[${host}] official API key REJECTED (401/403) - falling back to Referer-only requests, retrying in ${KEY_RETRY_AFTER_MS / 60_000} min`
+  );
+}
+
+for (const [host, key] of Object.entries(API_KEYS)) {
+  if (key) console.log(`[${host}] official API key configured (from RESULTS_API_KEY_${host.toUpperCase()})`);
+}
+
+// With a key: the official path ONLY (no Referer). Verified against the real
+// API: a valid Referer alone already authorizes the request, and an invalid
+// `x-auth-token` is silently ignored when a Referer is also present - so
+// sending both would log "key accepted" for a bogus key. Without the
+// Referer, the same bogus key gets a real 401, which is what makes
+// noteKeyOutcome() trustworthy and exercises the documented API path.
+function fetchUpstream(host, urlPath, key) {
+  const headers = { Accept: "application/json" };
+  if (key) headers["x-auth-token"] = key;
+  else headers.Referer = refererFor(host);
+  return fetch(`${HOSTS[host]}${urlPath}`, { headers });
+}
+
 async function upstreamJson(host, urlPath) {
-  const res = await fetch(`${HOSTS[host]}${urlPath}`, {
-    headers: {
-      Accept: "application/json",
-      Referer: refererFor(host),
-    },
-  });
+  const key = apiKeyFor(host);
+  let res = await fetchUpstream(host, urlPath, key);
+  if (key) {
+    if (res.status === 401 || res.status === 403) {
+      // Only an auth failure retries without the key - 429/5xx would just hit
+      // the same upstream harder on the fallback path.
+      noteKeyOutcome(host, false);
+      res = await fetchUpstream(host, urlPath, null);
+    } else if (res.ok) {
+      noteKeyOutcome(host, true);
+    }
+  }
   if (!res.ok) {
     const err = new Error(`Upstream ${res.status} for ${urlPath}`);
     err.status = res.status;

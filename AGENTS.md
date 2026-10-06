@@ -862,6 +862,42 @@ previously-reported problems:
   returns - otherwise the entry just advanced past can render one stale
   tick previewing itself. See
   [ARCHITECTURE.md §6.42](ARCHITECTURE.md#642-sequence-mode-next-categorys-startlist-preview-in-the-queue-list).
+- **`isLastSpeedStage()`/`buildSpeedLane()`'s preview padding (Speed
+  elimination + Paired Entries, 6.43)** - only trigger the next-category
+  preview once the current stage is the round's own LAST stage
+  (`round.speed_elimination_stages[stages.length - 1].stage_name`), never
+  on plain `queue.length < 6`. `stageHeatsRemaining()`/
+  `computeSpeedElimination()`'s `heats` is scoped to ONE stage (5.5), so an
+  unqualified length check would fire at the end of every stage (1/8, 1/4,
+  1/2, ...), not just near the true end of the bracket. Don't drop this
+  gate "to match §6.42's Lead/Boulder version exactly" - the underlying
+  data shape is different here on purpose. The gap sentinel here is `{ gap:
+  true }`, **not** the bare `null` §6.42 reuses - `buildSpeedLane()`'s
+  `athletes` array can already legitimately contain a real `null`
+  (`athleteForLane()` for a heat that isn't paired yet), which renders as a
+  blank string with no `"—"` fallback; don't switch this to bare `null`
+  "for consistency" without also deciding whether to change that
+  pre-existing blank-rendering behavior. `updateNextInSequence()`'s
+  "re-render immediately" convenience must stay skipped when the *current*
+  sequence entry is paired - calling plain `renderBoard()` there
+  reintroduces the "skip-ahead" bug documented under `earlierStageName()`
+  above (calling the ordinary `computeSpeedElimination()` path instead of
+  `renderPairedBoard()`'s stage-locked one). See
+  [ARCHITECTURE.md §6.43](ARCHITECTURE.md#643-next-category-preview-extended-to-speed-elimination-paired-entries-and-plain-speed-finals).
+
+- **`upstreamJson()`'s optional API key (6.44) - send the key WITHOUT the
+  `Referer`, never both.** Verified against the real API: a valid Referer
+  alone authorizes a request and an invalid `x-auth-token` is silently
+  ignored when a Referer is present, so sending both reports a bogus key as
+  "accepted". The fallback to the Referer path is on `401`/`403` only, not
+  `429`/`5xx`. **Never log, echo, persist or send the key to the browser**
+  (`RESULTS_API_KEY_<HOST>` is process-environment only; the log lines name
+  the host, never the value). Don't build on `current_race`/
+  `active_athletes` or any other endpoint from the OpenAPI spec without
+  fetching real data first (rule 2 below) - and never call
+  `PATCH /speed_timing_system/ascents/{id}`, the write endpoint of the
+  timing system; this app is read-only. See
+  [ARCHITECTURE.md §6.44](ARCHITECTURE.md#644-optional-official-api-key-per-host-with-automatic-referer-fallback).
 
 If a change requires touching one of these, update the corresponding
 ARCHITECTURE.md section in the same change — don't let the doc drift from

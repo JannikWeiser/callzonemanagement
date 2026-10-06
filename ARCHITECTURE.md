@@ -109,6 +109,17 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   "https://dav-stage.results.info/api/v1/live"                                    # 200
 ```
 
+**Update (2026-10): there is also an official, documented API key.**
+results.info publishes an OpenAPI 3.1 spec (`/api-docs/v1/swagger.json`,
+behind a login) whose `api_key` scheme is the header `x-auth-token`
+(alternatively a Bearer JWT). Keys belong to a named client with a scope and
+a validity window (the one issued for `stage` runs one year), and are
+managed on the instance's own admin pages - so a key only exists for
+instances whose admin you are. The Referer gate above is undocumented and
+therefore the first thing likely to be closed; see 6.44 for how the server
+uses a key when one is configured and falls back to the Referer path
+otherwise.
+
 **This is the entire reason a backend proxy exists at all** (see 6.1). A
 pure static-file frontend (GitHub Pages, etc.) cannot set a custom `Referer`
 on `fetch()` — browsers control that header — so it would always get 401.
@@ -3141,10 +3152,163 @@ names correctly dimmed - while the round's OTHER two untouched routes
 independence. Regression-checked: a lane-count mismatch (3 vs. 4 routes)
 left the queue at its natural short length with no gap/preview; the
 checkbox off (`showNextPreview: false`) cleared an already-set preview on
-the next `updateNextInSequence()` call; either side being a paired entry
-kept the preview off; a plain Lead round with no sequence context was
-completely unaffected; Split View continued rendering with zero preview
-items despite reusing the same `buildLane()`/`renderLaneBody()` functions.
+the next `updateNextInSequence()` call; the *next* entry being a paired
+entry kept the preview off (unchanged - see §6.43 for the *current* entry
+being paired, which is now supported); a plain Lead round with no sequence
+context was completely unaffected; Split View continued rendering with
+zero preview items despite reusing the same `buildLane()`/`renderLaneBody()`
+functions.
+
+### 6.43 Next-category preview extended to Speed elimination (Paired Entries and plain Speed finals)
+
+**Problem this solves:** §6.42 explicitly excluded the whole Speed-
+elimination rendering path (`renderSpeedElimination()`/`buildSpeedLane()`),
+both for a plain Speed-elimination sequence entry and for a `type:
+"paired"` interleaving entry (6.12). Reported live: "Im paired Entry ist
+die Anzeige der nächsten Kategorie noch nicht angezeigt." Requested for
+paired entries specifically, but `renderPairedBoard()` (the paired lockstep
+view) and `renderSpeedElimination()` (a plain Speed-elimination entry) both
+bottom out in the exact same shared function, `renderSpeedStage(round,
+result)` → `buildSpeedLane()` - so fixing it there covers both at once. The
+plain-Speed-elimination case wasn't specifically asked for but comes along
+for free; kept rather than special-cased back out.
+
+**The one real design problem: Speed's "queue" is stage-scoped, not
+round-scoped.** For Lead/Boulder/Speed-qualification, "queue running low"
+reliably means "this whole round is nearly finished." For Speed
+elimination, `result.heats` (from `computeSpeedElimination()`/
+`stageHeatsRemaining()`, 5.5) is only the CURRENT STAGE's remaining heats -
+a stage like "1/4" only ever has a handful of heats total, so its queue is
+naturally short at the end of *every* stage, not just at the true end of
+the bracket. Naively reusing §6.42's `queue.length < 6` trigger as-is would
+show the next-category preview after 1/8, again after 1/4, again after
+1/2, ... - noisy and wrong (the bracket has barely started).
+
+**Fix: only activate once the currently-shown stage is the round's own
+LAST stage** - `isLastSpeedStage(round, stageName)` checks whether
+`stageName` matches the last entry in `round.speed_elimination_stages`
+(already in API-given order, so this respects whatever size bracket this
+specific round actually has - a small bracket's own last stage might be
+"1/4" with nothing after it). This works for the paired case with no extra
+logic needed: `pollPairedTick()`'s lockstep (`earlierStageName()`, 6.12)
+already keeps both interleaved sides on the *same named stage*, so "this
+side's current stage is its own last one" is a meaningful, symmetric
+signal that the *whole* paired entry - not just one side's momentary stage
+- is nearing its end. A Final stage typically has exactly 1 heat, so
+`athletes.slice(2, 8)` is naturally already empty there - the preview
+typically shows its full 6-name padding right as the Final airs.
+
+**`buildSpeedLane(laneName, heats, previewRoute)`** gained the same
+padding pattern as `withNextCategoryPreview()` (6.42), but with a
+**deliberately distinct sentinel for the gap - a small `{ gap: true }`
+object, not the bare `null`** the Lead/Boulder/Speed-qualification version
+reuses. Reason: `buildSpeedLane()`'s existing `athletes` array can already
+legitimately contain a real `null` (`athleteForLane()` returns `null` for a
+heat results.info hasn't paired yet), which renders today as a blank
+string with **no** `"—"` fallback - reusing bare `null` for the new gap
+would either silently change that pre-existing blank-rendering behavior or
+require distinguishing "pre-existing blank" from "deliberate gap" some
+other way. The `{ gap: true }` sentinel keeps the old not-yet-ready-heat
+branch byte-for-byte unchanged and only adds two new branches (`item?.preview`
+→ dimmed name + `.queue-item--preview`, same class 6.42 introduced;
+`item?.gap` → `"—"`).
+
+**`renderSpeedStage(round, result)`** computes `nextRoutes =
+isLastSpeedStage(round, result.stageName) ? nextCategoryRoutesFor(laneNames.length)
+: null` once, then passes `nextRoutes?.[i]` per lane by index - reuses
+`nextCategoryRoutesFor()` (6.42) completely unchanged; Speed always
+renders exactly 2 lanes, so this matches whenever the *next* sequence
+entry also happens to render 2 lanes (e.g. another Speed round, or any
+2-route Lead/Boulder round).
+
+**CLIMBING/NEXT stay untouched here too** - `athletes[0]`/`athletes[1]`
+feed the two cards exactly as before; only `queue` gains entries. Same
+operational-safety reasoning as 6.42 (the "NEXT" card means someone gets
+called to the wall).
+
+**`updateNextInSequence()`'s gate loosened** from `current.type ===
+"paired" || next.type === "paired"` to just `next.type === "paired"` - the
+*current* entry may now be paired; the *next* entry being paired is still
+out of scope (a paired entry has no single `roundId` to preview from).
+**The existing "re-render immediately" convenience must NOT fire when the
+current entry is paired**, though: `renderBoard(lastRoundData)` would run
+the round through the *ordinary* `computeSpeedElimination()` path instead
+of the stage-locked `renderPairedBoard()` view - exactly the "skip-ahead"
+regression already warned about in 6.12 ("Don't revert `renderPairedBoard()`
+to calling the ordinary `renderBoard()`/`computeSpeedElimination()` for a
+paired entry's active side"). For the paired case, the immediate re-render
+is skipped entirely and the next natural `pollPairedTick()` tick (already
+every 3s) picks up the now-cached `nextRoundPreview` via its own
+`renderPairedBoard()` call - a few seconds' delay is an acceptable
+trade-off for not touching that fragile path from inside
+`updateNextInSequence()`.
+
+Verified live: a real elimination round (`13739`) mocked with every stage
+but "Final" marked done and the Final heat's two athletes filled in, paired
+against a real next round (`13682`, 2 routes) - both lanes showed
+`1 gap + 6 dimmed preview names`, CLIMBING/NEXT showed only the real Final
+athletes. Regression-checked: the same mock on stage "1/4" (not the last
+stage) showed no gap/preview at all, even with a matching next round; a
+*plain* (non-paired) Speed-elimination sequence entry on the same
+Final-stage mock also correctly showed the preview (`renderBoard()` →
+`renderSpeedElimination()` → the same `renderSpeedStage()`); a next round
+with a different lane count (3 vs. 2) kept the preview off. A real paired
+sequence run through the actual poll cycle (`startWatching()` with a
+`type: "paired"` entry followed by a plain round) correctly populated
+`nextRoundPreview` without ever falling back to the ordinary board view,
+and produced no console errors.
+
+### 6.44 Optional official API key per host, with automatic Referer fallback
+
+**Why:** the Referer gate (4.2) is the only thing the app has ever relied on,
+and it is undocumented - results.info could close it at any time. The
+official API (OpenAPI spec, `x-auth-token` key) is the durable path; the goal
+is "use the real API whenever a key exists, keep scraping as the fallback".
+
+**What `server.js` does:** `upstreamJson()` reads an optional key per host
+from `RESULTS_API_KEY_<HOST>` (`_PROD`, `_IFSC`, `_STAGE`, `_FASI`, `_USAC`,
+`_SACCAS`). With a key it sends `x-auth-token` and **no Referer**; on a
+`401`/`403` it retries the same request with the Referer only (the previous
+behavior) and stays on that path for 5 minutes (`KEY_RETRY_AFTER_MS`)
+before trying the key again. Only auth failures trigger the fallback -
+`429`/`5xx` would just hit the same upstream harder on the second path, so
+they surface as errors exactly like before. Hosts without a key are
+completely unchanged. Outcomes are logged only on a *change* (accepted ↔
+rejected), never per poll, and the key itself is never logged, never sent to
+the browser, and never stored in the repo - it lives in the process
+environment only (Render: Environment tab).
+
+**Why the key goes out WITHOUT the Referer (verified against the real API,
+not assumed):** a valid Referer alone already authorizes a request, and an
+*invalid* `x-auth-token` is silently ignored when a Referer is also present
+- so sending both made a bogus placeholder key look "accepted" (HTTP 200,
+`curl` with Referer + `x-auth-token: dein-key` → 200; without the Referer
+the same bogus key → 401). Dropping the Referer on the key path is what
+makes the accepted/rejected log trustworthy and means the documented API
+path is genuinely the one being exercised.
+
+**Verified with a real key (`stage`, 2026-10-06):** the key is accepted on
+the key-only path (so the official API genuinely works without the Referer),
+and a deep comparison of the key path against the Referer path (through
+this server, three events and nine rounds covering Lead, Boulder with
+groups/finals and Speed qualification/elimination) found the JSON
+identical in every case - same `routes`, `startlist`, `ranking`,
+`speed_elimination_stages`, ascent `status` values. Only `stage` was
+checked; a key for another instance (`prod`, ...) should get the same
+comparison before being trusted there.
+
+**Deliberately not built (found in the spec, see AGENTS.md rule 2 before
+using any of it):** `/speed_timing_system/category_rounds/{id}/current_race`
+(explicit current heat + per-lane `ascent.state`/`false_start`/`fall`/
+`not_started` - a possible replacement for the Speed heuristics in 5.5, but
+only for events with the speed timing system enabled and only the *current*
+race, not the queue) and `/category_rounds/{id}/active_athletes` (only the
+formats `boulder_finals_one_by_one`, `boulder_finals_ifsc_2025`,
+`lead_one_group_one_route`). `PATCH /speed_timing_system/ascents/{id}` is a
+write endpoint for the timing system - this app is read-only and never
+touches it. The spec also mentions no rate limits, webhooks or streaming;
+the `/cable` WebSocket is only reachable for signed-in sessions (checked on
+all six hosts), so there is no push channel to use.
 
 ## 7. Explicitly out of scope (do not "fix" without asking)
 

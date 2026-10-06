@@ -128,6 +128,30 @@ kostenlose Tarif aber völlig ausreichend.
 
 ---
 
+## D2. Optional: offizieller results.info-API-Key
+
+Ohne Key läuft alles wie bisher (der Server greift über den Referer-Trick auf
+results.info zu). Mit Key nutzt der Server die offizielle API und fällt
+automatisch auf den Referer-Weg zurück, falls der Key abgelehnt wird (abgelaufen,
+gesperrt).
+
+- **Lokal testen** (der Key steht dann nur in diesem Terminal-Fenster):
+  ```bash
+  RESULTS_API_KEY_STAGE="hier-den-key" npm start
+  ```
+  Im Terminal erscheint `[stage] official API key accepted`, sobald der erste
+  Abruf geklappt hat, oder `... REJECTED ... falling back`, wenn der Key nicht
+  taugt.
+- **Auf Render:** Dashboard → Service `callzone-management` → Tab
+  „Environment" → „Add Environment Variable". Name `RESULTS_API_KEY_<HOST>`
+  mit `<HOST>` = `PROD`, `IFSC`, `STAGE`, `FASI`, `USAC` oder `SACCAS`, Wert =
+  der Key. Danach neu deployen.
+- Keys gibt es nur für Instanzen, bei denen du Admin bist (Admin-Bereich →
+  API-Client anlegen), und sie laufen ab (der Stage-Key nach einem Jahr). Der
+  Key gehört **nie** ins Repo, in den Chat oder in den Browser.
+
+---
+
 ## E. Troubleshooting
 
 | Symptom | Ursache | Lösung |
