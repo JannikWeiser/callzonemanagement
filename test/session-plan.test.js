@@ -103,3 +103,32 @@ test("removesOrReplaces flags removals, kind changes and column changes only", (
   assert.equal(removesOrReplaces(m, multi([col(["1", "2"], "Group A")])), false);
   assert.equal(removesOrReplaces(m, multi([col(["1"], "Group A"), col(["5"])])), false);
 });
+
+const training = (id) => ({ type: "training", id });
+
+test("training entries: key, normalization and the 'same round may be training AND real round' rule", () => {
+  assert.equal(entryKey(training("13719")), "training:13719");
+  const plan = validatePlan(watch([training("13719"), round("13719"), round("1")]), HOSTS);
+  assert.deepEqual(plan.sequence, [training("13719"), round("13719"), round("1")], "a training does not claim its round");
+  assert.deepEqual(validatePlan(watch([{ type: "training", id: 13719 }]), HOSTS).sequence, [training("13719")], "numeric id -> string");
+});
+
+test("training entries: only one training per round, numeric ids, never in Split View", () => {
+  assert.throws(() => validatePlan(watch([training("5"), round("1"), training("5")]), HOSTS), /Training for round 5 appears more than once/);
+  assert.throws(() => validatePlan(watch([training("x")]), HOSTS), /numeric id/);
+  assert.throws(() => validatePlan(watch([training("5?a=b")]), HOSTS), /numeric id/);
+  assert.throws(() => validatePlan(multi([{ sequence: [training("5")], group: null, route: null }]), HOSTS), /only hold plain rounds/);
+  // a real round can still not be listed twice
+  assert.throws(() => validatePlan(watch([training("5"), round("5"), round("5")]), HOSTS), /more than once/);
+});
+
+test("training entries behave like any other entry for relocation and impact", () => {
+  const seq = [round("1"), training("7"), round("2")];
+  assert.equal(relocateIndex("training:7", seq), 1);
+  const oldPlan = watch(seq);
+  const clients = [{ keys: ["training:7"] }, { keys: ["round:1"] }];
+  assert.equal(affectedClients(oldPlan, watch([round("1"), round("2")]), clients), 1, "removing the training affects the tablets on it");
+  assert.equal(affectedClients(oldPlan, watch([training("7"), round("1"), round("2")]), clients), 0, "moving it affects nobody");
+  assert.equal(removesOrReplaces(oldPlan, watch([round("1"), round("2")])), true);
+  assert.equal(removesOrReplaces(oldPlan, watch([round("2"), training("7"), round("1")])), false);
+});

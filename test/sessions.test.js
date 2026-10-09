@@ -380,3 +380,93 @@ test("restore race: of two host devices restoring after a restart the one with t
     await b.close();
   }
 });
+
+const trainingPlan = (ids = ["13719"]) => ({
+  kind: "watch",
+  host: "stage",
+  eventId: "1594",
+  sequence: [...ids.map((id) => ({ type: "training", id })), round("13722")],
+  showNextPreview: true,
+});
+
+test("training counter: everyone can read it, only a host can change it, bounds are enforced", async () => {
+  const s = await boot();
+  try {
+    const { id, hostKey } = await s.create("secret1", trainingPlan());
+    const path = `/${id}/training/13719`;
+    assert.deepEqual((await s.call("GET", path)).json, { index: 0 }, "starts at the beginning");
+    assert.equal((await s.call("POST", path, { body: { delta: 1 } })).status, 403, "no host key");
+    assert.equal((await s.call("POST", path, { key: "0".repeat(64), body: { delta: 1 } })).status, 403, "wrong host key");
+    assert.deepEqual((await s.call("GET", path)).json, { index: 0 }, "refused writes change nothing");
+
+    assert.deepEqual((await s.call("POST", path, { key: hostKey, body: { delta: 1 } })).json, { index: 1 });
+    assert.deepEqual((await s.call("POST", path, { key: hostKey, body: { delta: 4 } })).json, { index: 5 });
+    assert.deepEqual((await s.call("POST", path, { key: hostKey, body: { delta: -9 } })).json, { index: 0 }, "never below 0");
+    assert.deepEqual((await s.call("POST", path, { key: hostKey, body: { set: 24 } })).json, { index: 24 }, "finish = set to the roster length");
+    assert.deepEqual((await s.call("GET", path)).json, { index: 24 }, "viewers see the new position");
+    assert.deepEqual((await s.call("POST", path, { key: hostKey, body: { set: 0 } })).json, { index: 0 }, "restart");
+    assert.deepEqual((await s.call("POST", path, { key: hostKey, body: { set: 99999999 } })).json, { index: 10000 }, "capped");
+    for (const body of [{}, { delta: 1.5 }, { delta: "1" }, { set: -0.5 }, { delta: 1, set: 2 }, { set: null }]) {
+      assert.equal((await s.call("POST", path, { key: hostKey, body })).status, 400, JSON.stringify(body));
+    }
+  } finally {
+    await s.close();
+  }
+});
+
+test("training counter: only for training entries of the plan, scoped per session", async () => {
+  const s = await boot();
+  try {
+    const a = await s.create("secret1", trainingPlan(["13719"]));
+    const b = await s.create("secret1", trainingPlan(["13719"]));
+    assert.equal((await s.call("GET", `/${a.id}/training/13722`)).status, 404, "a plain round is not a training");
+    assert.equal((await s.call("GET", `/${a.id}/training/abc`)).status, 404);
+    assert.equal((await s.call("POST", `/${a.id}/training/99999`, { key: a.hostKey, body: { delta: 1 } })).status, 404, "unknown round: nothing is created");
+    assert.equal((await s.call("GET", `/aaaaaaaa/training/13719`)).status, 404, "unknown session");
+    await s.call("POST", `/${a.id}/training/13719`, { key: a.hostKey, body: { delta: 3 } });
+    assert.equal((await s.call("GET", `/${b.id}/training/13719`)).json.index, 0, "another session is unaffected");
+    assert.equal((await s.call("POST", `/${b.id}/training/13719`, { key: a.hostKey, body: { delta: 1 } })).status, 403, "a host key only works for its own session");
+    assert.equal(s.router.sessions.get(a.id).training.size, 1, "only real trainings are stored");
+  } finally {
+    await s.close();
+  }
+});
+
+test("training counter survives an unrelated plan change, is dropped when the training is removed and starts over when re-added", async () => {
+  const s = await boot();
+  try {
+    const { id, hostKey } = await s.create("secret1", trainingPlan(["13719"]));
+    const path = `/${id}/training/13719`;
+    await s.call("POST", path, { key: hostKey, body: { delta: 6 } });
+    const publish = (plan, baseVersion) => s.call("PUT", `/${id}`, { key: hostKey, body: { baseVersion, plan } });
+
+    assert.equal((await publish({ ...trainingPlan(["13719"]), sequence: [round("1"), ...trainingPlan(["13719"]).sequence] }, 1)).status, 200);
+    assert.equal((await s.call("GET", path)).json.index, 6, "reordering/adding keeps the position");
+
+    assert.equal((await publish(watchPlan(["1"]), 2)).status, 200);
+    assert.equal((await s.call("GET", path)).status, 404, "training removed from the plan");
+    assert.equal(s.router.sessions.get(id).training.size, 0, "its counter is gone");
+
+    assert.equal((await publish(trainingPlan(["13719"]), 3)).status, 200);
+    assert.equal((await s.call("GET", path)).json.index, 0, "re-added training starts from the beginning");
+  } finally {
+    await s.close();
+  }
+});
+
+test("training counter is lost on a restart (like the stand-alone training counter) and a restored session starts it at 0", async () => {
+  const secret = "fixed-test-secret";
+  const a = await boot({ secret });
+  const created = await a.create("secret1", trainingPlan());
+  await a.call("POST", `/${created.id}/training/13719`, { key: created.hostKey, body: { delta: 5 } });
+  await a.close();
+  const b = await boot({ secret });
+  try {
+    const restore = await b.call("POST", "", { body: { id: created.id, record: created.record, hostKey: created.hostKey, plan: trainingPlan(), version: 1 } });
+    assert.equal(restore.status, 201);
+    assert.equal((await b.call("GET", `/${created.id}/training/13719`)).json.index, 0);
+    assert.deepEqual((await b.call("POST", `/${created.id}/training/13719`, { key: created.hostKey, body: { delta: 1 } })).json, { index: 1 }, "the old host key still controls it");
+  } finally {
+    await b.close();
+  }
+});

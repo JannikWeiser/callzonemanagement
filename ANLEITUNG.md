@@ -253,11 +253,35 @@ dem alle Tablets folgen – und ihn später für alle gleichzeitig ändern.
 Der aktuelle Plan wird in den Editor geladen. Nach 5 falschen Passwörtern
 ist die Eingabe 60 Sekunden gesperrt.
 
+### Training als Teil der Sequenz / Sitzung
+
+Ein Speed-Training kann jetzt **mitten im Ablauf** stehen (z. B. Training →
+Qualifikation):
+
+1. Im Sequence-Editor **„+ Add training“** drücken und die Speed-Runde wählen,
+   deren **Startliste** das Training verwendet. Dieselbe Runde darf zusätzlich
+   als echte Runde in der Sequenz stehen.
+2. Tablets zeigen das Training wie im Training-Modus (CLIMBING/NEXT). Das
+   Weiterschalten macht ein **Steuer-Gerät**:
+   - **In einer gemeinsamen Sitzung:** im Host-Bereich erscheint
+     **„Link to control the training“** (Link + QR). Auf dem Handy öffnen,
+     einmal das **Host-Passwort** eingeben, dann **Next/Back**. Mit
+     **„Finish training“** endet das Training sofort, mit **„Restart
+     training“** beginnt es von vorn.
+   - **In einer normalen Sequenz (ohne Sitzung):** auf dem Board steht
+     „Link to control from another device“ (ohne Passwort, wie bisher).
+3. Sobald das Training **hinter dem letzten Athleten** angekommen ist, wechseln
+   **alle Tablets gleichzeitig** zur nächsten Runde.
+
+Gut zu wissen: Ein Training ohne veröffentlichte Startliste zeigt „No startlist
+yet“ und wird **nicht** übersprungen. Nach einem Server-Neustart beginnt ein
+Training wieder bei Athlet 1. In Split View gibt es kein Training.
+
 **Gut zu wissen:**
 - Oben rechts am Tablet steht die Sitzungs-ID. Steht dort „offline" oder
   „ended", zeigt das Tablet weiter den **letzten Plan** – es bricht nichts ab.
 - Im Host-Bereich steht, **wie viele Tablets online** sind.
-- Training (Abschnitt 6) ist **nicht** Teil gemeinsamer Sitzungen.
+- Training kann Teil einer Sitzung sein (siehe oben); das eigenständige Training (Abschnitt 6) bleibt davon unberührt.
 - Das Passwort kann nicht zurückgesetzt werden – notier es dir. Notfalls eine
   neue Sitzung erstellen.
 

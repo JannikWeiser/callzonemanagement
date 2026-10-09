@@ -63,6 +63,7 @@ Abbrechen).
 | affectedClients (watch) | nur Tablets, deren aktueller Eintrag verschwindet; Umsortieren/Hinzufügen betrifft niemanden; Typwechsel betrifft alle |
 | affectedClients (Split View) | Entfernen in Spalte, entfernte Spalte, Gruppen-/Routenwechsel |
 | removesOrReplaces | Fallback, wenn die Tablet-Liste nicht abrufbar ist |
+| Training-Einträge | Schlüssel `training:<id>`, nur ein Training pro Runde, dieselbe Runde darf **zusätzlich** als echte Runde im Plan stehen, nie in Split View, Auswirkung auf Tablets wie bei jedem Eintrag |
 
 `test/sessions.test.js` – Server-API:
 
@@ -82,6 +83,10 @@ Abbrechen).
 | Wiederherstellung | mit festem Secret unter derselben ID, neue Version, alter Host-Key und Passwort gelten weiter, zweiter Wiederherstellungs-Versuch überschreibt nichts |
 | Wiederherstellung – Race | das Gerät mit dem **neueren** Plan gewinnt, nie über eine veröffentlichte Änderung |
 | Wiederherstellung abgelehnt | gefälschter Key, fremder Record, kaputte Daten, ohne festes Secret nach Neustart |
+| Training-Zähler | Lesen für alle, Schreiben nur mit Host-Key, Grenzen 0..10000, `delta`/`set`, ungültige Bodies (`400`) |
+| Training-Zähler – Geltungsbereich | nur für Training-Einträge des Plans (`404` sonst), pro Sitzung getrennt, Host-Key einer anderen Sitzung wirkt nicht, nichts wird für unbekannte Runden angelegt |
+| Training-Zähler – Plan-Änderung | bleibt bei Umsortieren/Hinzufügen, wird beim Entfernen gelöscht, beim erneuten Hinzufügen wieder 0 |
+| Training-Zähler – Neustart | nach Neustart/Wiederherstellung 0, alter Host-Key steuert weiter |
 | Limits | Sitzungs-Obergrenze (am längsten ungenutzte fliegt raus), 24-h-Ablauf, Anlege-Limit pro IP |
 
 **Gegenprobe:** Wer Server-Code ändert, sollte einmal absichtlich eine
@@ -165,13 +170,42 @@ werden – so wurde das bei der Einführung geprüft (2 Tests schlugen an).
 | S-44 | Normales (Nicht-Sitzungs-)Split-View mit Gruppe/Route | URL enthält `multi=…~Group B~2+3`, Board zeigt sie | ✔ |
 | S-45 | Plan enthält Runde, die nicht (mehr) existiert | Spalte zeigt die bekannte Meldung „round could not be found“, kein Absturz; beim Laden in den Editor wird sie weggelassen und gemeldet | ✔ |
 
+### 2.7 Training als Eintrag der Sequence / Sitzung (Stufe 4)
+
+| ID | Schritte | Erwartet | Status |
+|---|---|---|---|
+| T-01 | Sequence-Modus mit geladenem Event | „+ Add training“ samt Hinweis „or add a Speed training (stepped manually):“ ist sichtbar; in Single round / Training / Split View **nicht** | ✔ |
+| T-02 | „+ Add training“ | Zeile mit Abzeichen „TRAINING“ und Auswahl **nur Speed-Runden**; Standard = erste Speed-Runde ohne Training | ✔ |
+| T-03 | Dieselbe Speed-Runde zusätzlich als normale Runde einfügen | erlaubt (Training beansprucht die Runde nicht); ein **zweites** Training auf derselben Runde wird nicht angeboten | ✔ |
+| T-04 | Training mit „▲▼×“ verschieben/entfernen | wie jede andere Zeile; der Knopf „+ Add training“ ist deaktiviert, wenn jede Speed-Runde schon ein Training hat | ✔ |
+| T-05 | Normale Sequence ohne Sitzung starten (`rounds=t13719,13689`) | Board zeigt das Training (Titel „… — Training“, CLIMBING/NEXT), „Next up:“ nennt die nächste Runde, Link enthält `t13719`, „Skip to next“ ist da | ✔ |
+| T-06 | …dieselbe Sequence: Steuer-Link-Zeile | „Link to control from another device“ erscheint **nur solange** das Training aktuell ist; im Vollbild verborgen | ✔ (Anzeige); ○ (Vollbild) |
+| T-07 | Steuer-Link öffnen, „Next“ | Board folgt innerhalb ~1 s (gemessen ≈ 0,6 s) | ✔ |
+| T-08 | Zähler bis hinter den letzten Athleten | Board wechselt von selbst zur nächsten Runde, keine weiteren Training-Abfragen | ✔ |
+| T-09 | Sitzung mit Training anlegen | Host-Bereich zeigt „Link to control the training“ (Link + QR), verschwindet, sobald das Training aus dem Plan entfernt ist | ✔ |
+| T-10 | Tablet öffnet die Sitzung | zeigt das Training, Herz-Schlag meldet `training:<id>`, kein „Skip to next“ | ✔ |
+| T-11 | Steuer-Link mit gespeichertem Host-Zugang | Back/Next/Restart/Finish sichtbar; Back/Restart bei Position 0, Next/Finish am Ende deaktiviert | ✔ |
+| T-12 | Steuer-Link **ohne** Host-Zugang | Passwortfeld, Anzeige bleibt lesbar, Knöpfe fehlen; direkter Schreibversuch → `403` | ✔ |
+| T-13 | Falsches Passwort / richtiges Passwort | „Wrong password“ / Knöpfe erscheinen, Zugang wird gespeichert | ✔ |
+| T-14 | „Next“ am Steuer-Gerät | Tablet folgt in ≈ 0,6 s | ✔ |
+| T-15 | „Finish training“ | Steuerung zeigt „Finished“, alle Tablets wechseln zur nächsten Runde | ✔ |
+| T-16 | „Restart training“ (Rückfrage) | Position 0 auf Steuerung und Tablets (solange sie noch auf dem Eintrag sind) | ✔ |
+| T-17 | Training ist der **letzte** Eintrag | Tablets zeigen „Round finished“ am Ende, „Restart“ bringt sie zurück | ✔ |
+| T-18 | Plan mit **zwei** Trainings | Steuerung zeigt eine Auswahl; Wechsel zeigt die andere Startliste | ✔ |
+| T-19 | Host entfernt das Training, während ein Tablet darauf steht → Apply | Rückfrage „1 tablet …“; Tablet springt zur ersten unfertigen Runde | ✔ |
+| T-20 | Training wieder einfügen → Apply | beginnt bei Position 0 | ✔ |
+| T-21 | Training auf einer Runde **ohne Startliste** | Board zeigt „No startlist yet …“, der Eintrag wird **nicht** übersprungen | ✔ |
+| T-22 | Plan mit Training in „Edit existing session“ laden | Zeile „TRAINING“ erscheint im Editor | ✔ |
+| T-23 | Eigenständiges Training (Modus Training, Steuer-Link) | unverändert, offene Steuerung, Back/Next sichtbar | ✔ (Back/Next; Rest unverändert aus Stufe 1/R-04) |
+| T-24 | Server-Neustart während eines Trainings | Position springt auf 0 (bekannt/akzeptiert) | ○ |
+
 ### 2.6 Sicherheit und Robustheit
 
 | ID | Schritte | Erwartet | Status |
 |---|---|---|---|
 | S-50 | Plan mit Gruppenname `<img src=x onerror=…>` | wird als Text behandelt, kein Skript läuft (`window.__xss` bleibt leer) | ✔ |
 | S-51 | Passwort/Host-Key im Netzwerk-Tab der **Zuschauer-Tablets** | kommen in keiner Antwort an Zuschauer vor | ✔ (automatisch) |
-| S-52 | Training-Modus | „Shared session“-Bereich ist ausgeblendet | ✔ |
+| S-52 | Stand-alone Training-Modus | „Shared session“-Bereich ist ausgeblendet (ein Training als **Eintrag** der Sequence/Sitzung: siehe 2.7) | ✔ |
 | S-53 | Plan mit 51 Einträgen / 6 Spalten per API | `400` | ✔ (automatisch) |
 | S-54 | Sitzungs-QR-Code mit echtem Handy scannen | öffnet das Board | ○ |
 
@@ -211,6 +245,10 @@ werden – so wurde das bei der Einführung geprüft (2 Tests schlugen an).
 ---
 
 ## 5. Nicht geprüft / bekannte Grenzen
+
+0. **Training (Stufe 4) auf echten Geräten:** Steuerung vom Handy, Latenz im
+   WLAN, Vollbild-Verhalten des Steuer-Links (T-06), Server-Neustart
+   mitten im Training (T-24).
 
 Diese Punkte konnten bei der Einführung **nicht** getestet werden – bitte vor
 dem ersten echten Einsatz einmal durchgehen:

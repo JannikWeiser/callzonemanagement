@@ -113,6 +113,14 @@ export function createSessionRouter({ hostNames, secret, now = Date.now, limits 
   const router = express.Router();
   router.use(express.json({ limit: "32kb" }));
 
+  // Training entries (6.47): the manual position of a Speed training that is
+  // part of the plan. One counter per training round, kept per session so two
+  // sessions (or the stand-alone Training mode) never share a position.
+  // Everyone may READ it (tablets follow along); only a host may change it.
+  const MAX_TRAINING_INDEX = 10_000;
+  const trainingRoundIds = (plan) =>
+    new Set(plan.kind === "watch" ? plan.sequence.filter((e) => e.type === "training").map((e) => e.id) : []);
+
   function bad(res, status, message, extra = {}) {
     return res.status(status).set("Cache-Control", "no-store").json({ error: message, ...extra });
   }
@@ -193,6 +201,7 @@ export function createSessionRouter({ hostNames, secret, now = Date.now, limits 
           createdAt: t,
           touchedAt: t,
           clients: new Map(),
+          training: new Map(),
         };
         sessions.set(id, session);
         return res.status(201).set("Cache-Control", "no-store").json({ ...publicSession(session), restored: true });
@@ -226,6 +235,7 @@ export function createSessionRouter({ hostNames, secret, now = Date.now, limits 
         createdAt: t,
         touchedAt: t,
         clients: new Map(),
+        training: new Map(),
       };
       sessions.set(id, session);
       res.status(201).set("Cache-Control", "no-store").json({
@@ -317,7 +327,40 @@ export function createSessionRouter({ hostNames, secret, now = Date.now, limits 
     s.plan = plan;
     s.version += 1;
     s.touchedAt = now();
+    // A training that is no longer in the plan loses its position - adding it
+    // again starts from the beginning.
+    const keep = trainingRoundIds(plan);
+    for (const roundId of s.training.keys()) if (!keep.has(roundId)) s.training.delete(roundId);
     res.set("Cache-Control", "no-store").json(publicSession(s));
+  });
+
+  // ---- training position (6.47) ----------------------------------------------
+  function requireTrainingRound(req, res, next) {
+    const roundId = String(req.params.roundId ?? "");
+    if (!trainingRoundIds(req.session.plan).has(roundId)) return bad(res, 404, "No training for this round in the plan");
+    req.roundId = roundId;
+    next();
+  }
+
+  router.get("/:id/training/:roundId", requireSession, requireTrainingRound, (req, res) => {
+    req.session.touchedAt = now();
+    res.set("Cache-Control", "no-store").json({ index: req.session.training.get(req.roundId) ?? 0 });
+  });
+
+  // Body: { delta: <integer> } (next/back) or { set: <integer> } (restart = 0,
+  // finish = the roster length, which only the controller knows).
+  router.post("/:id/training/:roundId", requireSession, requireTrainingRound, requireHostKey, (req, res) => {
+    const s = req.session;
+    const { delta, set } = req.body ?? {};
+    const current = s.training.get(req.roundId) ?? 0;
+    let next;
+    if (Number.isInteger(set) && delta === undefined) next = set;
+    else if (Number.isInteger(delta) && set === undefined) next = current + delta;
+    else return bad(res, 400, "Body must be { delta: <integer> } or { set: <integer> }");
+    next = Math.min(MAX_TRAINING_INDEX, Math.max(0, next));
+    s.training.set(req.roundId, next);
+    s.touchedAt = now();
+    res.set("Cache-Control", "no-store").json({ index: next });
   });
 
   // ---- who is online (host only) ------------------------------------------

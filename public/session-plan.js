@@ -9,6 +9,8 @@
 // A "plan" is what a host publishes and every tablet follows:
 //   watch: { kind: "watch", host, eventId, sequence, showNextPreview }
 //     sequence entries: { type: "round", id } | { type: "paired", a, b }
+//                       | { type: "training", id }  (a manual Speed training on
+//                       the startlist of round `id`, see ARCHITECTURE.md 6.47)
 //   multi: { kind: "multi", host, eventId, entries }
 //     entries (1-5 columns): { sequence: [{ type: "round", id }], group, route }
 // Per-tablet view preferences (route tabs of a watch session, lane swap,
@@ -27,7 +29,9 @@
   // jump to a different round.
   function entryKey(entry) {
     if (!entry) return null;
-    return entry.type === "paired" ? `paired:${entry.a}+${entry.b}` : `round:${entry.id}`;
+    if (entry.type === "paired") return `paired:${entry.a}+${entry.b}`;
+    if (entry.type === "training") return `training:${entry.id}`;
+    return `round:${entry.id}`;
   }
 
   function fail(message) {
@@ -60,6 +64,11 @@
         if (used.has(id)) fail(`Round ${id} appears more than once`);
         used.add(id);
       };
+      // A training borrows a round's startlist and does NOT claim the round:
+      // the same Speed round is normally in the sequence twice, once as the
+      // training and once as the real round. Only a second training on the
+      // same round is a duplicate.
+      const usedTraining = new Set();
       const sequence = raw.sequence.map((entry) => {
         if (!entry || typeof entry !== "object") fail("Invalid sequence entry");
         if (entry.type === "round") {
@@ -75,7 +84,13 @@
           claim(b);
           return { type: "paired", a, b };
         }
-        return fail('Sequence entry type must be "round" or "paired"');
+        if (entry.type === "training") {
+          const id = asId(entry.id, "training round id");
+          if (usedTraining.has(id)) fail(`Training for round ${id} appears more than once`);
+          usedTraining.add(id);
+          return { type: "training", id };
+        }
+        return fail('Sequence entry type must be "round", "paired" or "training"');
       });
       return { kind, host: raw.host, eventId, sequence, showNextPreview: raw.showNextPreview !== false };
     }

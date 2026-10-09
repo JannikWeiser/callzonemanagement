@@ -701,6 +701,19 @@ button.ghost {
 }
 .multi-block .next-in-sequence { font-size: 0.75rem; padding-top: 0.6rem; margin-top: 0.4rem; }
 
+/* "Training" marker in front of a training row of the sequence builder (6.47) */
+.sequence-badge {
+  align-self: center;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #1a1305;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 /* Group/route choice of a Split View column on the setup screen (6.46) */
 .multi-view-controls {
   margin: 0.6rem 0;
@@ -787,6 +800,23 @@ button.ghost {
   display: flex;
   gap: 1rem;
 }
+
+.controller-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+.controller-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 1rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.controller-extra { margin-top: 1rem; }
+#controllerMsg { margin: 0.75rem 0; }
 
 .controller-buttons button {
   flex: 1;

@@ -17,6 +17,8 @@ const el = {
   addRoundToSequence: document.getElementById("addRoundToSequence"),
   pairedEntryHint: document.getElementById("pairedEntryHint"),
   addPairedToSequence: document.getElementById("addPairedToSequence"),
+  trainingEntryHint: document.getElementById("trainingEntryHint"),
+  addTrainingToSequence: document.getElementById("addTrainingToSequence"),
   showNextPreview: document.getElementById("showNextPreview"),
   watchSequence: document.getElementById("watchSequence"),
   multiSetup: document.getElementById("multiSetup"),
@@ -79,6 +81,19 @@ const el = {
   controllerTitle: document.getElementById("controllerTitle"),
   controllerStatus: document.getElementById("controllerStatus"),
   controllerLanes: document.getElementById("controllerLanes"),
+  controllerGate: document.getElementById("controllerGate"),
+  controllerPassword: document.getElementById("controllerPassword"),
+  controllerUnlock: document.getElementById("controllerUnlock"),
+  controllerMsg: document.getElementById("controllerMsg"),
+  controllerEntryRow: document.getElementById("controllerEntryRow"),
+  controllerEntry: document.getElementById("controllerEntry"),
+  controllerExtra: document.getElementById("controllerExtra"),
+  controlRestart: document.getElementById("controlRestart"),
+  controlFinish: document.getElementById("controlFinish"),
+  sessionControlRow: document.getElementById("sessionControlRow"),
+  sessionControlLink: document.getElementById("sessionControlLink"),
+  copySessionControlLink: document.getElementById("copySessionControlLink"),
+  sessionControlQr: document.getElementById("sessionControlQr"),
   controlBack: document.getElementById("controlBack"),
   controlNext: document.getElementById("controlNext"),
 };
@@ -266,6 +281,9 @@ function saveBoulderFinalMode(roundId, mode) {
 }
 
 function parseSequenceToken(token) {
+  // `t<roundId>` is a Speed training entry (6.47) - round ids are plain
+  // digits, so the leading letter can't be mistaken for one.
+  if (/^t\d+$/.test(token)) return { type: "training", id: token.slice(1) };
   const [a, b] = token.split("+");
   return b ? { type: "paired", a, b } : { type: "round", id: a };
 }
@@ -296,6 +314,9 @@ function readUrlSelection() {
       route: routeParam ? routeParam.split(",").filter(Boolean) : null,
       group: params.get("group"),
       swap: params.get("swap") === "1",
+      // `control=1` opens the training controller of the session (6.47),
+      // which asks for the host password instead of showing a board.
+      control: params.get("control") === "1",
     };
   }
 
@@ -402,7 +423,7 @@ function buildShareLink(sel) {
     return url.toString();
   }
 
-  const tokens = sel.sequence.map((e) => (e.type === "paired" ? `${e.a}+${e.b}` : e.id));
+  const tokens = sel.sequence.map((e) => (e.type === "paired" ? `${e.a}+${e.b}` : e.type === "training" ? `t${e.id}` : e.id));
   if (tokens.length > 1) url.searchParams.set("rounds", tokens.join(","));
   else url.searchParams.set("round", tokens[0]);
   if (sel.group) url.searchParams.set("group", sel.group);
@@ -548,6 +569,9 @@ function setMode(mode) {
   // (the hint explains what the button next to it does), so there's no
   // second copy of this condition to drift out of sync with this one.
   el.pairedEntryHint.hidden = el.addPairedToSequence.hidden = mode !== "sequence" || eliminationCount < 2;
+  // Same pairing rule for the training button and its hint (6.47): only
+  // Speed rounds can be trained on (Training mode's own rule, 6.13).
+  el.trainingEntryHint.hidden = el.addTrainingToSequence.hidden = mode !== "sequence" || !loadedEntries.some((e) => e.isSpeed);
   // Multimode and Sequence both pick their round(s) inside their own
   // per-mode section now (#multiSetup / #sequenceRow's own live rows,
   // 6.10/6.23) - neither has any use for the shared "Category / round"
@@ -707,6 +731,18 @@ function populateRounds(eventData, host, eventId) {
     renderSequenceBuilder();
   };
 
+  // Appends a Speed training (6.47), pre-filled with the first Speed round
+  // that has no training yet. It borrows that round's startlist/order and is
+  // stepped manually - it does NOT claim the round, so the same round can
+  // also be in the sequence as the real thing.
+  el.addTrainingToSequence.onclick = () => {
+    const used = usedTrainingInBuilder();
+    const entry = loadedEntries.find((e) => e.isSpeed && !used.has(e.roundId));
+    if (!entry) return;
+    sequenceBuilder.push({ type: "training", roundId: entry.roundId, label: entryLabel(entry) });
+    renderSequenceBuilder();
+  };
+
   el.watchSequence.onclick = () => {
     if (!sequenceBuilder.length) {
       showError("Add at least one round to the sequence.");
@@ -714,7 +750,7 @@ function populateRounds(eventData, host, eventId) {
     }
     showError("");
     const sequence = sequenceBuilder.map((item) =>
-      item.type === "paired" ? { type: "paired", a: item.aId, b: item.bId } : { type: "round", id: item.roundId }
+      sequenceItemToEntry(item)
     );
     startWatching({
       kind: "watch",
@@ -857,9 +893,23 @@ function buildMoveButton(direction, ariaLabel, disabled, onClick) {
 // entry ("Verschränkt: A ↔ B") appears as a single row here, not as many
 // near-duplicate entries - see 6.12 for why that redesign happened.
 function usedInSequenceBuilder(excludeIndex = -1) {
+  // A training entry claims no round: it only borrows a startlist (6.47), so
+  // the round it is based on stays available as a normal entry.
   return usedIdsExcluding(sequenceBuilder, excludeIndex, (item) =>
-    item.type === "paired" ? [item.aId, item.bId] : [item.roundId]
+    item.type === "paired" ? [item.aId, item.bId] : item.type === "training" ? [] : [item.roundId]
   );
+}
+
+// Rounds that already have a training entry - a round can have only one.
+function usedTrainingInBuilder(excludeIndex = -1) {
+  return usedIdsExcluding(sequenceBuilder, excludeIndex, (item) => (item.type === "training" ? [item.roundId] : []));
+}
+
+// Builder row -> playback/plan entry.
+function sequenceItemToEntry(item) {
+  if (item.type === "paired") return { type: "paired", a: item.aId, b: item.bId };
+  if (item.type === "training") return { type: "training", id: item.roundId };
+  return { type: "round", id: item.roundId };
 }
 
 // Every entry is its own live row now, not a static label added via a
@@ -906,6 +956,21 @@ function renderSequenceBuilder() {
       pair.appendChild(sep);
       pair.appendChild(buildSide("bId", "bLabel", "aId"));
       li.appendChild(pair);
+    } else if (item.type === "training") {
+      const row = document.createElement("div");
+      row.className = "sequence-pair";
+      const badge = document.createElement("span");
+      badge.className = "sequence-badge";
+      badge.textContent = "Training";
+      row.appendChild(badge);
+      row.appendChild(
+        buildRoundSelect(loadedEntries.filter((e) => e.isSpeed), usedTrainingInBuilder(index), item.roundId, (newId, newLabel) => {
+          item.roundId = newId;
+          item.label = newLabel;
+          renderSequenceBuilder();
+        })
+      );
+      li.appendChild(row);
     } else {
       const excluded = usedInSequenceBuilder(index);
       const select = buildRoundSelect(loadedEntries, excluded, item.roundId, (newId, newLabel) => {
@@ -960,6 +1025,8 @@ function renderSequenceBuilder() {
   const used = usedInSequenceBuilder();
   el.addRoundToSequence.disabled = !loadedEntries.some((e) => !used.has(e.roundId));
   el.addPairedToSequence.disabled = loadedEliminationEntries.filter((e) => !used.has(e.roundId)).length < 2;
+  const usedTraining = usedTrainingInBuilder();
+  el.addTrainingToSequence.disabled = !loadedEntries.some((e) => e.isSpeed && !usedTraining.has(e.roundId));
   updateSessionDirty();
 }
 
@@ -1224,6 +1291,8 @@ function startWatching(selection) {
   // the write-up.
   pollToken++;
   trainingPollToken++;
+  clearTimeout(trainingFastTimer);
+  trainingEntryRoster = null;
   // Session polling (6.46) follows the same rule: every transition stops the
   // previous one, and only a selection that belongs to a session starts one.
   stopSessionPolling();
@@ -1274,7 +1343,10 @@ function goBackToSetup() {
   // currentSelection/the DOM after the user has already left the board.
   pollToken++;
   trainingPollToken++;
+  clearTimeout(trainingFastTimer);
+  trainingEntryRoster = null;
   stopSessionPolling();
+  stopSessionController();
   el.board.hidden = true;
   el.controller.hidden = true;
   el.setup.hidden = false;
@@ -1301,6 +1373,7 @@ function wireCopyButton(inputEl, buttonEl) {
 wireCopyButton(el.shareLink, el.copyLink);
 wireCopyButton(el.controlLink, el.copyControlLink);
 wireCopyButton(el.sessionLink, el.copySessionLink);
+wireCopyButton(el.sessionControlLink, el.copySessionControlLink);
 
 // --- Fullscreen + screen-wake-lock ("kiosk mode") for a tablet mounted on
 // a wall: keeps the board visible full-bleed and stops the OS from locking
@@ -1385,7 +1458,11 @@ document.addEventListener("fullscreenchange", () => {
   // context, and the controller's OWN view), not just during fullscreen.
   if (fullscreen) {
     el.controlShareRow.hidden = true;
-  } else if (currentSelection?.kind === "training" && !currentSelection?.control) {
+  } else if (
+    (currentSelection?.kind === "training" && !currentSelection?.control) ||
+    // a training entry in a plain sequence (6.47) - re-evaluated every poll anyway
+    (currentSelection?.kind === "watch" && !currentSelection.sessionId && currentSelection.sequence?.[sequenceIndex]?.type === "training")
+  ) {
     el.controlShareRow.hidden = false;
   }
   if (!fullscreen) {
@@ -1501,6 +1578,13 @@ async function getNextRoundPreviewData(host, roundId) {
 // fetch above failed/hasn't resolved yet). Set by updateNextInSequence()
 // below, read by renderBoard()/buildLane(). Deliberately NOT part of
 // currentSelection - it's derived, re-fetched state, not user selection.
+// Speed training entry in a sequence (6.47): the roster of the training the
+// board is currently showing (fetched once per entry - a startlist doesn't
+// change), and the short timer that re-polls its manual position every second
+// while that entry is current (the main loop only ticks every 3 s, far too
+// slow for someone stepping through athletes).
+let trainingEntryRoster = null; // { id, round }
+let trainingFastTimer = null;
 let nextRoundPreview = null;
 // Cache key (`host:roundId`) that `nextRoundPreview` currently represents -
 // lets updateNextInSequence() below tell "already loaded, nothing to do"
@@ -1529,6 +1613,8 @@ async function updateNextInSequence() {
   const label =
     next.type === "paired"
       ? (await Promise.all([getRoundLabel(host, next.a), getRoundLabel(host, next.b)])).map((l) => l ?? "…").join(" ↔ ")
+      : next.type === "training"
+      ? `Training: ${(await getRoundLabel(host, next.id)) ?? "…"}`
       : (await getRoundLabel(host, next.id)) ?? "…";
   if (myToken !== pollToken) return; // superseded while fetching labels
   el.nextInSequence.hidden = false;
@@ -1549,7 +1635,9 @@ async function updateNextInSequence() {
   // pollPairedTick()'s lockstep already keeps both interleaved sides on
   // the same stage, so the preview activates once that shared stage is the
   // round's own last one.
-  if (next.type === "paired" || !currentSelection.showNextPreview) {
+  // (A training is no round with a startlist worth previewing, and nothing is
+  // previewed while a training is the current entry either.)
+  if (next.type !== "round" || current.type === "training" || !currentSelection.showNextPreview) {
     nextRoundPreview = null;
     nextRoundPreviewKey = null;
     return;
@@ -1568,7 +1656,7 @@ async function updateNextInSequence() {
   // The next pollPairedTick() tick (already every 3s) picks up the cached
   // preview via its own renderPairedBoard() call instead - a few seconds'
   // delay is an acceptable trade-off for not touching that path here.
-  if (lastRoundData && current.type !== "paired") renderBoard(lastRoundData);
+  if (lastRoundData && current.type === "round") renderBoard(lastRoundData);
 }
 
 // Manual backup for a sequence entry that never resolves as finished (e.g.
@@ -1616,12 +1704,109 @@ el.skipToNextBtn.addEventListener("click", async () => {
 // newer one partway through (the natural timer firing again before a slow
 // fetch resolves, or a manual button click), it never applies its
 // now-stale results on top of the newer call's.
+async function fetchTrainingEntryIndex(sel, roundId) {
+  // A session keeps its own counter per training (host-protected writes);
+  // without a session it is the stand-alone Training mode's counter (6.13),
+  // so the existing control link works for a training in a plain sequence.
+  const url = sel.sessionId
+    ? `/api/session/${encodeURIComponent(sel.sessionId)}/training/${roundId}`
+    : `/api/training/${sel.host}/${roundId}`;
+  const res = await fetch(url, { cache: "no-store" });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || `Error ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data.index ?? 0;
+}
+
+// How many athletes the training goes through - the longest lane's startlist.
+function trainingRosterLength(round) {
+  const routes = collectRouteGroups(round).flatMap((g) => g.routes);
+  return Math.max(0, ...routes.map((r) => orderedAthletesForRoute(round, r).length));
+}
+
+// Renders a training entry and reports { ok, done }. `done` needs a real
+// startlist: an empty roster (not published yet) must not count as "already
+// finished", or the entry would be skipped before anyone could use it.
+async function pollTrainingEntry(entry, token) {
+  const sel = currentSelection;
+  try {
+    if (trainingEntryRoster?.id !== entry.id) {
+      const round = await fetchRoundJson(sel.host, entry.id);
+      if (token !== pollToken) return { ok: false };
+      trainingEntryRoster = { id: entry.id, round };
+    }
+    const index = await fetchTrainingEntryIndex(sel, entry.id);
+    if (token !== pollToken) return { ok: false };
+    const { round } = trainingEntryRoster;
+    lastRoundData = null; // no results round is on screen - tab handlers must not re-render a stale one
+    // renderTrainingBoard() and its route-tab/swap re-renders read these two.
+    trainingRoundData = round;
+    trainingIndex = index;
+    renderTrainingBoard(round, index);
+    el.statusLine.textContent = `Updated ${new Date().toLocaleTimeString("en-GB")}`;
+    el.statusLine.classList.remove("stale");
+    const total = trainingRosterLength(round);
+    return { ok: true, done: total > 0 && index >= total };
+  } catch (err) {
+    if (token !== pollToken) return { ok: false };
+    el.statusLine.textContent = describeConnectionError(err);
+    el.statusLine.classList.add("stale");
+    return { ok: false };
+  }
+}
+
+function scheduleTrainingFastPoll(token) {
+  clearTimeout(trainingFastTimer);
+  trainingFastTimer = setTimeout(() => {
+    if (token === pollToken && currentSelection?.kind === "watch") pollCurrent();
+  }, 1000);
+}
+
+// A training in a plain (non-session) sequence is controlled with the same
+// open link as the stand-alone Training mode (6.13) - shown on the board only
+// while that entry is current and never in fullscreen (the same
+// reported-live QR-over-a-wall-tablet issue, see the fullscreenchange
+// handler). In a session the controller needs the host password instead and
+// its link lives in the host panel, never on a wall display.
+function updateEntryControlRow(entry) {
+  const show = entry?.type === "training" && !currentSelection?.sessionId && !document.fullscreenElement;
+  el.controlShareRow.hidden = !show;
+  if (!show) return;
+  const link = buildShareLink({ kind: "training", host: currentSelection.host, eventId: currentSelection.eventId, roundId: entry.id, control: true });
+  if (el.controlLink.value !== link) setControlLink(link);
+}
+
 async function pollCurrent() {
   const myToken = ++pollToken;
+  clearTimeout(trainingFastTimer);
   const seq = currentSelection.sequence;
   for (;;) {
     if (myToken !== pollToken) return;
     const entry = seq[sequenceIndex];
+    updateEntryControlRow(entry);
+    if (entry.type === "training") {
+      // A manual Speed training (6.47): no results.info round behind it, its
+      // position is a counter on the server that a controller steps. The
+      // entry is "done" once the counter has passed the last athlete.
+      el.pairedBar.hidden = true;
+      const state = await pollTrainingEntry(entry, myToken);
+      if (myToken !== pollToken) return;
+      if (!state.ok) return;
+      const hasNext = sequenceIndex < seq.length - 1;
+      if (hasNext && state.done) {
+        sequenceIndex++;
+        pairedState = null;
+        nextRoundPreview = null; // see the skip-button handler's comment above
+        nextRoundPreviewKey = null;
+        continue;
+      }
+      updateNextInSequence();
+      scheduleTrainingFastPoll(myToken);
+      return;
+    }
     if (entry.type === "paired") {
       const { ok, bothDone } = await pollPairedTick(entry, myToken);
       if (myToken !== pollToken) return;
@@ -3219,6 +3404,9 @@ const trainingStepButtons = [el.trainingBack, el.trainingNext, el.controlBack, e
 let trainingStepPending = false;
 
 async function trainingStep(delta) {
+  // The two Back/Next buttons are shared with the session training
+  // controller (6.47), which has its own, host-protected write path.
+  if (sessionController) return sessionControllerAction({ delta });
   if (trainingStepPending) return; // belt-and-braces - the disabled buttons already prevent this
   trainingStepPending = true;
   const mySelection = currentSelection;
@@ -3263,6 +3451,18 @@ function renderTrainingBoard(round, index) {
     const empty = document.createElement("div");
     empty.className = "lane-finished";
     empty.textContent = "No route data for this round.";
+    el.lanes.appendChild(empty);
+    return;
+  }
+
+  // A round whose startlist isn't published yet has nobody to train on -
+  // "Round finished" on every lane (what an empty list would render as) would
+  // read as if the training were over (6.47).
+  if (trainingRosterLength(round) === 0) {
+    el.routeTabs.hidden = true;
+    const empty = document.createElement("div");
+    empty.className = "lane-finished";
+    empty.textContent = "No startlist yet - this training can start once the startlist is published.";
     el.lanes.appendChild(empty);
     return;
   }
@@ -3668,9 +3868,7 @@ function planFromSetup() {
       kind: "watch",
       host,
       eventId,
-      sequence: sequenceBuilder.map((item) =>
-        item.type === "paired" ? { type: "paired", a: item.aId, b: item.bId } : { type: "round", id: item.roundId }
-      ),
+      sequence: sequenceBuilder.map(sequenceItemToEntry),
       showNextPreview: el.showNextPreview.checked,
     };
   } else if (currentMode === "single") {
@@ -3771,6 +3969,17 @@ function renderHostPanel() {
     el.sessionLink.value = link;
     renderQrCode(el.sessionQr, link);
   }
+  // The training controller link only makes sense while the plan has a
+  // training entry (6.47).
+  const hasTraining = !!hostSession.plan?.sequence?.some((e) => e.type === "training");
+  el.sessionControlRow.hidden = !hasTraining;
+  if (hasTraining) {
+    const controlLink = `${link}&control=1`;
+    if (el.sessionControlLink.value !== controlLink) {
+      el.sessionControlLink.value = controlLink;
+      renderQrCode(el.sessionControlQr, controlLink);
+    }
+  }
   updateSessionDirty();
   startHostClientsPolling();
 }
@@ -3845,7 +4054,7 @@ async function loadPlanIntoSetup(plan) {
         else missing++;
       } else {
         const info = byId.get(entry.id);
-        if (info) sequenceBuilder.push({ type: "round", roundId: info.roundId, label: entryLabel(info) });
+        if (info) sequenceBuilder.push({ type: entry.type === "training" ? "training" : "round", roundId: info.roundId, label: entryLabel(info) });
         else missing++;
       }
     }
@@ -4045,9 +4254,257 @@ el.leaveSession.addEventListener("click", () => {
 });
 el.showNextPreview.addEventListener("change", updateSessionDirty);
 
+// ---- Training control in a session (6.47) -----------------------------------
+//
+// `?s=<id>&control=1`: a phone/tablet that steps the training of a session.
+// Reading the position needs nothing; every change needs the host password
+// (asked once, then the same host credentials the setup screen uses are
+// kept). The wall tablets of the session follow the same server counter.
+let sessionController = null; // { id, hostKey, plan, version, entryId, round, index, total, pending, timer, tick }
+
+function setControllerMsg(text) {
+  el.controllerMsg.textContent = text;
+  el.controllerMsg.hidden = !text;
+}
+
+async function startSessionController(local) {
+  const id = local.sessionId;
+  showError("");
+  let r;
+  try {
+    r = await sessionApi("GET", `/${encodeURIComponent(id)}`);
+  } catch {
+    r = null;
+  }
+  if (!r || r.status !== 200 || !r.data?.plan) {
+    showError(r?.status === 404 ? `Session ${id} was not found - the link may be wrong, or the session ended.` : `Couldn't reach the server to open session ${id}.`);
+    return;
+  }
+  // A mode transition like startWatching(): stop whatever else is running.
+  clearInterval(pollTimer);
+  clearInterval(trainingPollTimer);
+  clearTimeout(trainingFastTimer);
+  pollToken++;
+  trainingPollToken++;
+  stopSessionPolling();
+  stopSessionController();
+  currentSelection = { kind: "controller", host: r.data.plan.host, eventId: r.data.plan.eventId, sessionId: id };
+  const creds = loadHostCreds()[id];
+  sessionController = {
+    id,
+    hostKey: creds?.hostKey ?? null,
+    plan: r.data.plan,
+    version: r.data.version,
+    entryId: null,
+    round: null,
+    index: 0,
+    total: 0,
+    pending: false,
+    timer: null,
+    tick: 0,
+  };
+  el.setup.hidden = true;
+  el.board.hidden = true;
+  el.controller.hidden = false;
+  setControllerMsg("");
+  el.controllerTitle.textContent = "Training";
+  el.controllerStatus.textContent = "";
+  el.controllerLanes.innerHTML = "";
+  controllerEntries(); // picks the initial entry - the gate below depends on it
+  updateControllerGate();
+  sessionControllerTick();
+  sessionController.timer = setInterval(sessionControllerTick, 1000);
+}
+
+function stopSessionController() {
+  if (!sessionController) return;
+  clearInterval(sessionController.timer);
+  sessionController = null;
+  el.controllerGate.hidden = true;
+  el.controllerEntryRow.hidden = true;
+  el.controllerExtra.hidden = true;
+  // the stand-alone training controller (6.13) shares these two buttons
+  el.controlBack.hidden = el.controlNext.hidden = false;
+  setControllerMsg("");
+}
+
+function controllerEntries() {
+  const c = sessionController;
+  const ids = (c.plan.sequence ?? []).filter((e) => e.type === "training").map((e) => e.id);
+  if (!ids.includes(c.entryId)) {
+    c.entryId = ids[0] ?? null;
+    c.round = null;
+    c.index = 0;
+  }
+  el.controllerEntry.innerHTML = "";
+  for (const id of ids) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = `Round ${id}`;
+    el.controllerEntry.appendChild(opt);
+    // Replace the placeholder with the real label as soon as it is known.
+    getRoundLabel(c.plan.host, id).then((label) => {
+      if (label && sessionController === c) opt.textContent = label;
+    });
+  }
+  if (c.entryId) el.controllerEntry.value = c.entryId;
+  el.controllerEntryRow.hidden = ids.length < 2;
+  return ids;
+}
+
+function updateControllerGate() {
+  const c = sessionController;
+  const locked = !c.hostKey;
+  el.controllerGate.hidden = !locked;
+  el.controllerExtra.hidden = locked || !c.entryId;
+  for (const b of [el.controlBack, el.controlNext]) b.hidden = locked || !c.entryId;
+}
+
+async function sessionControllerTick() {
+  const c = sessionController;
+  if (!c) return;
+  c.tick++;
+  try {
+    // The plan is refreshed every 5th tick (a training may be added/removed).
+    if (c.tick % 5 === 0) {
+      const p = await sessionApi("GET", `/${encodeURIComponent(c.id)}?v=${c.version}`);
+      if (sessionController !== c) return;
+      if (p.status === 404) {
+        el.controllerStatus.textContent = "Session ended";
+        el.controllerStatus.classList.add("stale");
+        return;
+      }
+      if (p.status === 200 && p.data?.plan && p.data.version > c.version) {
+        c.plan = p.data.plan;
+        c.version = p.data.version;
+        controllerEntries();
+        updateControllerGate();
+      }
+    }
+    if (!c.entryId) {
+      setControllerMsg("This session has no training entry. Ask the host to add one.");
+      el.controllerLanes.innerHTML = "";
+      return;
+    }
+    setControllerMsg("");
+    if (c.round?.id === undefined || String(c.round.id) !== String(c.entryId)) {
+      const round = await fetchRoundJson(c.plan.host, c.entryId);
+      if (sessionController !== c) return;
+      c.round = round;
+      c.total = trainingRosterLength(round);
+    }
+    const r = await fetch(`/api/session/${encodeURIComponent(c.id)}/training/${c.entryId}`, { cache: "no-store" });
+    const data = await r.json().catch(() => ({}));
+    if (sessionController !== c) return;
+    if (!r.ok) {
+      const err = new Error(data.error || `Error ${r.status}`);
+      err.status = r.status;
+      throw err;
+    }
+    c.index = data.index ?? 0;
+    renderController(c.round, c.index);
+    el.controllerStatus.textContent = `Updated ${new Date().toLocaleTimeString("en-GB")}`;
+    el.controllerStatus.classList.remove("stale");
+    updateControllerButtons();
+  } catch (err) {
+    if (sessionController !== c) return;
+    el.controllerStatus.textContent = describeConnectionError(err);
+    el.controllerStatus.classList.add("stale");
+  }
+}
+
+function updateControllerButtons() {
+  const c = sessionController;
+  const busy = c.pending;
+  el.controlBack.disabled = busy || c.index <= 0;
+  el.controlNext.disabled = busy || c.index >= c.total;
+  el.controlRestart.disabled = busy || c.index === 0;
+  el.controlFinish.disabled = busy || c.index >= c.total;
+}
+
+// `body` is { delta } or { set }. Own pending flag, same reasoning as
+// `trainingStepPending` (6.38): a double tap must not step twice.
+async function sessionControllerAction(body) {
+  const c = sessionController;
+  if (!c || c.pending || !c.entryId || !c.hostKey) return;
+  c.pending = true;
+  updateControllerButtons();
+  try {
+    const r = await sessionApi("POST", `/${encodeURIComponent(c.id)}/training/${c.entryId}`, { hostKey: c.hostKey, body });
+    if (sessionController !== c) return;
+    if (r.status === 200) {
+      c.index = r.data.index;
+      renderController(c.round, c.index);
+    } else if (r.status === 403) {
+      // password changed / credentials no longer valid: ask again
+      forgetHostCreds(c.id);
+      c.hostKey = null;
+      updateControllerGate();
+      setControllerMsg("The host password is no longer valid - enter it again.");
+    } else {
+      setControllerMsg(r.data?.error ?? `Couldn't change the training (error ${r.status}).`);
+    }
+  } catch {
+    if (sessionController === c) setControllerMsg("Couldn't reach the server.");
+  } finally {
+    if (sessionController === c) {
+      c.pending = false;
+      updateControllerButtons();
+    }
+  }
+}
+
+async function unlockSessionController() {
+  const c = sessionController;
+  const password = el.controllerPassword.value;
+  if (!c || !password) return;
+  el.controllerUnlock.disabled = true;
+  try {
+    const r = await sessionApi("POST", `/${encodeURIComponent(c.id)}/login`, { body: { password } });
+    if (sessionController !== c) return;
+    if (r.status === 200) {
+      saveHostCreds(c.id, { hostKey: r.data.hostKey, record: r.data.record });
+      c.hostKey = r.data.hostKey;
+      el.controllerPassword.value = "";
+      setControllerMsg("");
+      updateControllerGate();
+    } else {
+      setControllerMsg(r.data?.error ?? `Login failed (error ${r.status}).`);
+    }
+  } catch {
+    if (sessionController === c) setControllerMsg("Couldn't reach the server.");
+  } finally {
+    el.controllerUnlock.disabled = false;
+  }
+}
+
+el.controllerUnlock.addEventListener("click", unlockSessionController);
+el.controllerPassword.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") unlockSessionController();
+});
+el.controllerEntry.addEventListener("change", () => {
+  const c = sessionController;
+  if (!c) return;
+  c.entryId = el.controllerEntry.value;
+  c.round = null;
+  c.index = 0;
+  sessionControllerTick();
+});
+el.controlFinish.addEventListener("click", () => {
+  const c = sessionController;
+  if (c) sessionControllerAction({ set: c.total });
+});
+el.controlRestart.addEventListener("click", () => {
+  if (!sessionController) return;
+  if (window.confirm("Restart this training from the first athlete? Every tablet showing it goes back to the start.")) {
+    sessionControllerAction({ set: 0 });
+  }
+});
+
 const initial = readUrlSelection() ?? loadSelection();
 if (initial?.kind === "session") {
-  joinSession(initial);
+  if (initial.control) startSessionController(initial);
+  else joinSession(initial);
 } else if (initial?.host && initial?.eventId) {
   el.eventId.value = initial.eventId;
   el.host.value = initial.host;

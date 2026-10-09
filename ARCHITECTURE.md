@@ -3357,8 +3357,7 @@ Split View is Lead/Boulder only and has no swap.
 link (`rounds=...`), so changing the order of categories meant touching every
 tablet. A *session* lets a host publish ONE plan; tablets open `?s=<id>`
 (link/QR code) and follow it, picking up every change within one poll
-(5 s). Training inside a sequence (6.13) is deliberately NOT part of this
-yet.
+(5 s). A Speed training can be a step of the plan (6.47).
 
 **What a plan is** (`public/session-plan.js`, shared by browser, server and
 tests - it registers on `globalThis.SessionPlan` so the same validation runs
@@ -3473,6 +3472,69 @@ passwords can lock the host out for 60 s at a time.
 browser behaviour is covered by the manual checklist in
 [Tests.md](Tests.md).
 
+### 6.47 Speed training as a sequence entry, controlled with the host password
+
+**Why:** a Speed training (6.13) happens between real rounds of the same day,
+so it has to be a step of the Sequence/session, not a separate mode that
+replaces the board. Decided with the user: the entry ends **automatically at
+the end of the startlist** plus a manual "Finish training" button; in a
+session only a **host-password device** may control it; stand-alone Training
+and trainings in plain (non-session) sequences keep today's open control link
+(6.13, deliberately unchanged); "Restart training" is a button, not implicit.
+
+**The entry:** `{ type: "training", id }` in a watch plan/sequence (`id` = the
+Speed round whose startlist/order the training borrows; builder offers only
+Speed rounds, `+ Add training`). It **does not claim the round**: the same
+Speed round is normally in the sequence twice, as the training and as the
+real round (`validatePlan()` only rejects a second training on the same
+round). Key `training:<id>`; URL token `t<roundId>` in `rounds=`. Not allowed
+in Split View.
+
+**Position and "done":** a counter, kept per session on the server
+(`sessions.js`: `GET/POST /api/session/:id/training/:roundId`; reading is
+public, writing needs the host key; body `{delta}` or `{set}`, capped to
+0..10000; only for training entries that are in the plan) - or, without a
+session, the stand-alone counter of 6.13 (`/api/training/:host/:roundId`), so
+the existing control link works. The entry is **done once the counter has
+passed the longest lane's startlist** (`trainingRosterLength()`); an EMPTY
+roster is not "done" (the board says "No startlist yet", the entry is not
+skipped). Removing a training from the plan drops its counter, adding it
+again starts at 0. The counter is lost on a server restart like 6.13's.
+
+**Playback** (`pollTrainingEntry()` in `pollCurrent()`): fetches the roster
+once per entry, reads the counter, renders with the normal
+`renderTrainingBoard()`, and while a training is current re-polls **every
+second** (`scheduleTrainingFastPoll()`, guarded by `pollToken`; the 3 s loop
+is far too slow for stepping through athletes - measured ~0.6 s from tap to
+wall). When the counter reaches the end and there is a next entry, every
+tablet advances on its own - they all read the same counter, so they switch
+together. A training that is the LAST entry shows "Round finished" and keeps
+polling, so "Restart" brings it back. No next-category preview is built
+during or for a training. The timer is cleared on every transition
+(`startWatching()`, `goBackToSetup()`, every `pollCurrent()`).
+
+**Control:** *session:* `?s=<id>&control=1` (link + QR in the host panel,
+only while the plan has a training) opens `#controller`; without stored host
+credentials it asks for the password once (`controllerGate`, the same login as
+the setup screen - the device becomes a host device, which is the point of
+"the same password"), then offers Back/Next, "Finish training" (`set` = the
+roster length, only the controller knows it) and "Restart training"
+(confirmation, `set: 0`), plus a select when the plan has several trainings.
+Reads stay possible while locked; a `403` (password changed) asks again.
+Back/Next reuse the stand-alone controller's two buttons - `trainingStep()`
+forwards to `sessionControllerAction()` when `sessionController` is set; it has
+its OWN pending flag (don't reuse a counter, see 6.38). *Plain sequence:* the
+board shows the stand-alone control link row while the training entry is
+current (never in fullscreen - same reported-live QR concern as 6.7; the
+`fullscreenchange` handler restores it only for a training wall display or a
+current training entry). "Skip to next" stays available there (local, no
+session).
+
+**Known, accepted limits:** "Restart" only affects tablets still on the
+entry - tablets that already moved on don't go back (they only move forward);
+to re-run a finished training the host removes and re-adds it. A server
+restart resets the position. Training is Speed only.
+
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
 - **A visual bracket tree** for Speed elimination (like the PDF heat sheet
@@ -3483,9 +3545,8 @@ browser behaviour is covered by the manual checklist in
   training counter (6.13) is in-memory only and lost on a server restart; a
   training session that gets interrupted that way just restarts at 0.
   Deferred until it proves annoying in practice, not because it's hard.
-- **Training mode inside a sequence** — sequence auto-advance needs live
-  results to detect "done" (6.10); training mode has none. Combining them
-  would need a manual "mark done, advance" control that doesn't exist yet.
+- ~~**Training mode inside a sequence**~~ — now built, see 6.47 (the manual
+  end is the counter reaching the end of the startlist or "Finish training").
 - **A language switcher** — the UI is English-only by deliberate choice
   (6.8), not because a toggle wasn't considered.
 - **`heatIsReady()`'s exact `=== 2` athlete-count check** — a full-codebase
@@ -3525,16 +3586,17 @@ browser behaviour is covered by the manual checklist in
   rest of that pass).
 - **User accounts / general access control** — the competition data is
   public on results.info and the app has no accounts. The ONLY secret is the
-  shared-session host password (6.46); the training-control link (6.13) is
-  still open to anyone who has it (a session password does NOT protect
-  training yet - Training isn't part of sessions).
+  shared-session host password (6.46); it also protects the training control
+  of a session (6.47). The stand-alone training control link (6.13) and the
+  control link of a training in a plain sequence are still open to anyone who
+  has them.
 - **A real database** — the server has no persistent storage beyond the
   short-TTL results.info cache (6.2), the in-memory training counter (6.13)
   and the in-memory shared sessions (6.46), all ephemeral by design. Making
   sessions survive a restart would need an external store and was
   deliberately not built (restore from a host device covers it).
-- **Training inside a shared session / sequence** — see the bullet above;
-  sessions only carry Single round, Sequence and Split View plans.
+- **Training in a Split View session** — Training entries exist only in
+  Sequence/Single plans (6.47), not in Split View columns.
 - **Editing/writing to results.info** — this app is read-only against the
   API; it has no code path that could modify competition data.
 

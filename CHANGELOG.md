@@ -8,6 +8,17 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Added
+- **Speed training as a step of the Sequence/session, controlled with the
+  host password.** "+ Add training" in the Sequence builder adds a manual
+  Speed training on a Speed round's startlist (the same round may also be a
+  normal entry). The tablets show it like Training mode and update within
+  about a second; the entry ends by itself when the controller has stepped
+  past the last athlete ("Finish training" ends it earlier, "Restart training"
+  starts over), and all tablets move on together. In a session only a device
+  with the host password may step it (`?s=<id>&control=1`, link/QR in the host
+  panel, asks for the password once); the stand-alone Training mode and a
+  training in a plain sequence keep their open control link. See
+  [ARCHITECTURE.md §6.47](ARCHITECTURE.md#647-speed-training-as-a-sequence-entry-controlled-with-the-host-password).
 - **Shared sessions: one published plan for many tablets, protected by a
   host password.** A host creates a session from the setup screen (Single
   round, Sequence or Split View plan) and tablets open `?s=<id>` (link/QR);

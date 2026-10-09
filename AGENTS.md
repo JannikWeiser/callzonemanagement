@@ -928,13 +928,21 @@ previously-reported problems:
   one) is hidden in sessions - it only moves one tablet, so it would
   silently split the tablets across different rounds; a stuck round is fixed
   by the host in the plan (remove/replace it). Don't re-enable it there
-  without a shared-skip design; (11) Training is NOT part of sessions (the panel is hidden in Training
-  mode) - adding it needs a deliberate design for "who ends a training
-  entry", not a quick plan field. Don't add `localStorage` writes outside the
+  without a shared-skip design; (11) a training entry (`{type:"training"}`,
+  6.47) is controlled in a session ONLY with the host key (the session counter
+  endpoint refuses writes without it) - never open it up "to make the control
+  link simpler"; the stand-alone Training mode stays on its open link on
+  purpose; (12) a training does NOT claim its round in `validatePlan()` and in
+  the builder (the same Speed round is normally also a real entry) and an
+  EMPTY roster is not "done" (or the entry would be skipped before the
+  startlist exists); (13) Training is not available in Split View plans and
+  the panel is hidden in the stand-alone Training mode. Don't add `localStorage` writes outside the
   `lsGet/lsSet` wrappers in that section. Run `npm test` before touching
   `sessions.js`/`session-plan.js` and walk through Tests.md for anything in
   the browser part. See
-  [ARCHITECTURE.md §6.46](ARCHITECTURE.md#646-shared-sessions-one-published-plan-many-tablets-a-host-password).
+  [ARCHITECTURE.md §6.46](ARCHITECTURE.md#646-shared-sessions-one-published-plan-many-tablets-a-host-password)
+  and, for training entries,
+  [§6.47](ARCHITECTURE.md#647-speed-training-as-a-sequence-entry-controlled-with-the-host-password).
 
 - **`upstreamJson()`'s optional API key (6.44) - send the key WITHOUT the
   `Referer`, never both.** Verified against the real API: a valid Referer
@@ -1079,9 +1087,8 @@ before saying it's fixed:
 
 See [ARCHITECTURE.md §7](ARCHITECTURE.md#7-explicitly-out-of-scope-do-not-fix-without-asking)
 for the full list and reasoning (a visual bracket tree, training-progress
-persistence across server restarts, training mode inside a sequence or a
-shared session, a language switcher, user accounts, a real database, write
-access to results.info). Shared sessions with a host password (6.46) were
+persistence across server restarts, a language switcher, user accounts, a
+real database, write access to results.info). Shared sessions with a host password (6.46) were
 explicitly requested and are the one sanctioned exception to "no auth".
 If a user report sounds like it needs one of these, say so and ask before
 implementing rather than silently scoping it in.
