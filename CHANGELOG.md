@@ -7,6 +7,11 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Added
+- **One-page Quick Guide (English) linked in "About".** `public/quick-guide.pdf`
+  covers the display, Sequence, shared sessions and the TI flow; the full
+  User Guide link stays next to it.
+
 ### Fixed
 - **A slot a TI keeps free is shown as "TI: no athlete".** The empty place on the
   other boulders was a bare "—", easy to mistake for a blank that is still
