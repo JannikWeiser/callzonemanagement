@@ -226,7 +226,8 @@
   // athlete is being scored again right now (their ascent is "active") - it
   // is only asked for the route the athlete climbs again on.
   // Returns the same lane object when nothing applies. Re-started athletes are
-  // copies flagged `tiRestart: true`; an empty place is `null`.
+  // copies flagged `tiRestart: true`; an empty place is `{ tiGap: true }` (drawn
+  // as "TI: no athlete" - a plain `null` would look like any other blank).
   const LANE_QUEUE = 6;
 
   function applyTechnicalIncidents(lane, { incidents, routeId, athleteById, isSuperseded, isUnderway }) {
@@ -261,7 +262,7 @@
       // athlete (the empty places are the owner's). An owner's empty place on the
       // reuser's boulder is replaced by the athlete.
       if (!restartHere && (ti.reuseOf != null || takenOver(ti))) continue;
-      let entry = null;
+      let entry = { tiGap: true };
       if (restartHere) {
         const athlete = athleteById(ti.athleteId);
         if (!athlete) continue;
@@ -275,7 +276,7 @@
         // At the end of the start list - only once the end is in view (a
         // full queue may continue beyond what is shown). An empty place at
         // the very end means nothing.
-        if (!entry || !endInView) continue;
+        if (entry.tiGap || !endInView) continue;
         let last = -1;
         list.forEach((item, i) => {
           if (item) last = i;

@@ -347,9 +347,9 @@ Callzone zeigt es auf der Wand an.
    - **„Add TI“**. Die Zeile darüber zeigt noch einmal, was gespeichert wird.
 4. **Auf der Wand:** Bei Boulder steht der TI-Athlet (blau, „TI“) **nur auf seinem
    Boulder**, an der Stelle des Slots. Auf **allen anderen Bouldern der Gruppe**
-   steht an dieser Stelle ein **leerer Platz „—“**: dort wird in diesem Intervall
+   steht an dieser Stelle der Hinweis **„TI: no athlete“** (kursiv, blau umrandet, als Karte oder als Zeile in der Warteliste): dort wird in diesem Intervall
    niemand aufgerufen. Nutzt ein TI den Slot eines anderen, steht er auf seinem
-   Boulder an dessen Stelle (kein zweiter leerer Platz). Bei Lead steht der Athlet
+   Boulder an dessen Stelle (kein zweiter Hinweis „TI: no athlete“). Bei Lead steht der Athlet
    auf seiner Route vor dem gewählten Athleten.
 5. **Ändert der TI-Rechner eine Position** (neuer TI, gelöschter TI, Warnung „neuen
    Slot durchgeben!“), beim TI auf **„Edit“** tippen, die Startposition anpassen und

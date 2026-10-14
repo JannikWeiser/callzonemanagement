@@ -1003,7 +1003,8 @@ previously-reported problems:
   different in 18 % of the calculations four days later. **Boulder is a rotation
   SLOT, not "the athlete on every boulder"** (that was built wrong once): the
   wall draws the athlete on the boulder he climbs again on and an EMPTY place
-  ("-") on every other boulder of the block, in front of the athlete the position
+  (the entry "TI: no athlete", `{ tiGap: true }` in the lane - not a bare `null`)
+  on every other boulder of the block, in front of the athlete the position
   names; a TI that uses another one's slot (`reuseOf`) has no gap of its own and
   takes the owner's place on its boulder. Start position = the position column of
   results.info on the block's first boulder, the form shows who it means.

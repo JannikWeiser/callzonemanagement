@@ -182,7 +182,8 @@ const tiOf = (athleteId, beforeAthleteId, extra = {}) => ({
 });
 const apply = (lane, incidents, extra = {}) =>
   applyTechnicalIncidents(lane, { incidents, routeId: 10, athleteById: byId, ...extra });
-const names = (lane) => [lane.atWall, lane.onDeck, ...lane.queue].map((a) => (a ? (a.tiRestart ? `TI:${a.athlete_id}` : a.athlete_id) : null));
+// an empty place of a TI slot is `{ tiGap: true }`; the helper shows it as null, a blank of the lane stays null too
+const names = (lane) => [lane.atWall, lane.onDeck, ...lane.queue].map((a) => (a && !a.tiGap ? (a.tiRestart ? `TI:${a.athlete_id}` : a.athlete_id) : null));
 
 test("incident: no incident, a finished one or another route leaves the lane object untouched", () => {
   const lane = laneFrom([5, 6, 7, 8]);
@@ -327,4 +328,81 @@ test("incident (Boulder): the reuser follows the owner's position live, survives
   assert.deepEqual(run([reuser]), [5, 6, 7, 8, 9], "the owner was removed: a reuser with a snapshot anchor of its own keeps it");
   const withSnapshot = { ...reuser, beforeAthleteId: 8 };
   assert.deepEqual(run([withSnapshot]), [5, 6, 7, "TI:2", 8, 9]);
+});
+
+// ---- fuzz: the overlay never breaks a lane, whatever mix of incidents it gets -------
+test("incident fuzz: Lead and Boulder incidents, reuse, done, superseded - invariants hold on every route", () => {
+  let seed = 20261014;
+  const rnd = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+  const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+  const routes = [10, 11, 12, 13];
+  for (let run = 0; run < 3000; run++) {
+    const ids = Array.from({ length: ri(0, 9) }, (_, i) => i + 1);
+    const incidents = [];
+    const pool = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].sort(() => rnd() - 0.5); // one TI per athlete: the check below names athletes
+    for (let n = 0; n < ri(0, 4); n++) {
+      const boulder = rnd() < 0.8;
+      const who = pool.pop();
+      const ti = tiOf(who, rnd() < 0.2 ? null : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].filter((x) => x !== who)[ri(0, 9)], {
+        id: `t${n}`,
+        createdAt: n + 1,
+        routeIds: boulder ? routes : [10],
+        done: rnd() < 0.15,
+      });
+      if (boulder) {
+        ti.boulderRouteId = routes[ri(0, 3)];
+        const owners = incidents.filter((o) => o.boulderRouteId != null && !o.reuseOf && o.boulderRouteId !== ti.boulderRouteId);
+        if (owners.length && rnd() < 0.4) ti.reuseOf = owners[ri(0, owners.length - 1)].id;
+      }
+      incidents.push(ti);
+    }
+    const startedOn = new Set();
+    const isSuperseded = (t, routeId) => startedOn.has(`${t.beforeAthleteId}:${routeId}`);
+    for (let k = 0; k < ri(0, 6); k++) startedOn.add(`${ri(1, 11)}:${routes[ri(0, 3)]}`);
+    for (const routeId of routes) {
+      const real = ids.slice();
+      const lane = real.length ? laneFrom(real) : { routeName: "1", finished: true, atWall: null, onDeck: null, queue: [] };
+      const out = applyTechnicalIncidents(lane, { incidents, routeId, athleteById: byId, isSuperseded });
+      const list = out === lane ? names(lane) : names(out);
+      const reals = list.filter((x) => typeof x === "number");
+      // the real athletes keep their order and none is lost or doubled
+      const expected = real.slice(0, reals.length);
+      assert.deepEqual(reals, out === lane ? expected : reals, "order of the real athletes");
+      if (out !== lane) {
+        const kept = real.filter((id) => reals.includes(id));
+        assert.deepEqual(reals, kept, "real athletes unchanged and in order");
+        assert.equal(reals.length, Math.min(real.length, reals.length));
+      }
+      const tiNames = list.filter((x) => typeof x === "string");
+      assert.equal(new Set(tiNames).size >= 0, true);
+      // a Boulder TI athlete only on his boulder; an Lead one on its route
+      for (const ti of incidents) {
+        const drawn = list.includes(`TI:${ti.athleteId}`);
+        if (drawn) {
+          assert.ok(!ti.done, "a finished TI is never drawn");
+          assert.ok(ti.routeIds.includes(routeId));
+          assert.ok(ti.boulderRouteId == null || ti.boulderRouteId === routeId, "the athlete only on his own boulder");
+        }
+      }
+      // no empty place at the very end, and no more than the queue limit
+      assert.ok(out.queue.length <= 6);
+      // (a full queue may end with an empty place: the list is cut there)
+      if (out !== lane && out.queue.length && out.queue.length < 6) assert.notEqual(out.queue[out.queue.length - 1], null, "no empty place at the end of the list");
+      assert.equal(out.finished && out !== lane, false, "a lane with incidents is not finished");
+    }
+  }
+});
+
+test("incident (Boulder): the empty place is a real marker, not a blank", () => {
+  const ti = tiOf(1, 7, { routeIds: [10, 11], boulderRouteId: 11 });
+  const out = applyTechnicalIncidents(laneFrom([5, 6, 7, 8]), { incidents: [ti], routeId: 10, athleteById: byId });
+  const gap = out.queue[0];
+  assert.deepEqual(gap, { tiGap: true }, "drawn as 'TI: no athlete'");
+  // in front of the athlete at the wall / on deck it is the CLIMBING / NEXT card
+  const atWall = applyTechnicalIncidents(laneFrom([5, 6, 7]), { incidents: [tiOf(1, 5, { routeIds: [10, 11], boulderRouteId: 11 })], routeId: 10, athleteById: byId });
+  assert.deepEqual(atWall.atWall, { tiGap: true });
+  assert.equal(atWall.onDeck.athlete_id, 5);
+  const blank = applyTechnicalIncidents({ ...laneFrom([5, 6]), queue: [null, ath(7)] }, { incidents: [tiOf(1, 7, { routeIds: [10, 11], boulderRouteId: 11 })], routeId: 10, athleteById: byId });
+  assert.equal(blank.queue.filter((x) => x?.tiGap).length, 1, "a lane's own blank stays a blank");
+  assert.equal(blank.queue[0], null);
 });

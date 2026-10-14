@@ -642,6 +642,14 @@ button.ghost {
   border-radius: 0.4rem;
   padding: 0.2rem 3.2rem 0.2rem 0.5rem;
 }
+.queue-list li.is-ti-gap {
+  font-style: italic;
+  background: transparent;
+  color: var(--ti-text, #9ec1ff);
+  border-left-style: dashed;
+  padding-right: 0.5rem;
+}
+.card.is-ti-gap .card-athlete { font-style: italic; }
 .ti-badge {
   position: absolute;
   top: 0.35rem;

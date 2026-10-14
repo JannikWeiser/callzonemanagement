@@ -2615,6 +2615,12 @@ function athleteLine(athlete) {
 // A technical-incident re-start (6.48) is drawn highlighted with a "TI"
 // badge in the corner: the lane only passes the flag (`tiRestart`) on.
 function markTechnicalIncident(element, athlete) {
+  // the slot of a TI that stays empty on this boulder (6.51): a frame, no badge
+  // (the text already says "TI")
+  if (athlete?.tiGap) {
+    element.classList.add("is-ti", "is-ti-gap");
+    return;
+  }
   if (!athlete?.tiRestart) return;
   element.classList.add("is-ti");
   const badge = document.createElement("span");
@@ -2670,6 +2676,12 @@ function collectRouteGroups(round) {
   return [];
 }
 
+// What a lane entry says: the athlete, or - for the slot a technical incident
+// keeps free on this boulder (6.51) - "TI: no athlete", so nobody mistakes it
+// for a blank that is still loading.
+const TI_GAP_TEXT = "TI: no athlete";
+const laneEntryText = (entry) => (entry?.tiGap ? TI_GAP_TEXT : athleteLine(entry));
+
 // Renders the climbing/next/queue cards (or a "finished" placeholder) into
 // an already-headed lane section - shared by the live inference (buildLane)
 // and Training mode's manual position (buildTrainingLane), which differ
@@ -2682,10 +2694,10 @@ function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
     laneEl.appendChild(done);
     return;
   }
-  const climbingCard = makeCard("climbing", athleteLine(atWall), "at-wall");
+  const climbingCard = makeCard("climbing", laneEntryText(atWall), "at-wall");
   markTechnicalIncident(climbingCard, atWall);
   laneEl.appendChild(climbingCard);
-  const nextCard = makeCard("next", athleteLine(onDeck), "on-deck");
+  const nextCard = makeCard("next", laneEntryText(onDeck), "on-deck");
   markTechnicalIncident(nextCard, onDeck);
   laneEl.appendChild(nextCard);
   if (queue.length) {
@@ -2704,7 +2716,7 @@ function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
         li.textContent = athleteLine(item.preview) || "—";
         li.classList.add("queue-item--preview");
       } else {
-        li.textContent = athleteLine(item) || "—";
+        li.textContent = laneEntryText(item) || "—";
         markTechnicalIncident(li, item);
       }
       list.appendChild(li);
@@ -5258,7 +5270,10 @@ function updateJuryForm() {
       posMsg = `Behind the last athlete (position ${anchor.last}) - the end of the start list.`;
     } else if (anchor) {
       posMsg = `= ${juryAthleteLabel(anchor.athlete)}${anchor.exact ? "" : ` (nobody at position ${anchor.asked}, the next one is ${anchor.position})`}`;
-      if (route && !juryNotStartedOn(round, anchor.athlete, route.id)) {
+      if (athleteId && String(anchor.athlete.athlete_id) === athleteId) {
+        posMsg += " - that is the athlete himself, check the start position.";
+        posWarn = true;
+      } else if (route && !juryNotStartedOn(round, anchor.athlete, route.id)) {
         posMsg += ` - has already started on ${prefix} ${route.name}, the TI would not show there.`;
         posWarn = true;
       }
@@ -5303,7 +5318,7 @@ function updateJuryForm() {
       ready = !!owner;
       if (owner) preview = `${who} climbs again ${where} in the slot of TI ${owner.no}`;
     } else {
-      ready = mode === "end" || !!anchor;
+      ready = mode === "end" || (!!anchor && !(anchor.athlete && String(anchor.athlete.athlete_id) === athleteId));
       if (ready) {
         preview = boulder
           ? mode === "end"
@@ -5411,7 +5426,7 @@ async function addJuryIncident() {
       return setJuryMsg("The form changed while saving - check it and try again.");
     }
     if (anchor?.athlete && !juryScopeStatuses(fresh, scope, anchor.athlete.athlete_id).some((st) => st !== "active" && !DONE_STATUSES.has(st))) {
-      return setJuryMsg(`${juryAthleteLabel(anchor.athlete)} has already started on every boulder of this block - the TI would not show.`);
+      return setJuryMsg(`${juryAthleteLabel(anchor.athlete)} has already started on every ${fresh.discipline === "Boulder" ? "boulder" : "route"} of this block - the TI would not show.`);
     }
     const owner = wantedMode === "reuse" ? j.ti.find((t) => t.id === wantedOwner) : null;
     const body = {

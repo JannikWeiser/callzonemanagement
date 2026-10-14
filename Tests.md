@@ -282,6 +282,18 @@ siehe AGENTS.md §3/§4) und Boulder mit Gruppen `13709` (Event 1594).
 | TI-31 | Athlet ohne Ergebnis (`pending`) / gerade am Klettern (`active`) eintippen | `pending`: Warnung „has no result yet - only add this if the attempt is over…“ aber wählbar; `active`: „is climbing now“ | ✔ |
 | TI-32 | Server: Boulder ohne `boulderRouteId`, Boulder außerhalb des Blocks, `reuseOf` ungültig (unbekannt, gleicher Boulder, anderer Block, selbst ein Mitnutzer), Lead mit Boulder-Feldern; `PUT` ohne Host-Key, Runde/Block ändern | `400` bzw. `403`/`404`; TI-Nummern werden nie neu vergeben | ✔ (Server-Test) |
 | TI-34 | Overlay: `reuseOf` – Reihenfolge zwischen mehreren Slots, Eigentümer erledigt/entfernt, Position folgt dem Eigentümer | `npm test` | ✔ (Unit-Test) |
+| TI-40 | Boulder-TI am Ende der Liste („No gap needed“), Runde komplett fertig (Rotation simuliert) | die Sequenz bleibt auf der Runde, der TI-Athlet ist CLIMBING (blau, „TI“) nur auf seinem Boulder; nach „TI done“ geht das Tablet zur nächsten Runde | ✔ |
+| TI-41 | Zwei TIs vor demselben Athleten (#201 an Boulder 5, #203 an Boulder 2, beide „vor #209“) | Boulder 1: zwei leere Plätze; Boulder 2: leerer Platz des ersten TI, dann #203 (TI) in Anlegereihenfolge; Boulder 3: beide leeren Plätze | ✔ |
+| TI-42 | Route-Tab „Boulder 2“ (eine einzelne Lane) | TI-Athlet wird auch dort gezeigt | ✔ |
+| TI-43 | TI-Athlet ist auf seinem Boulder gerade `active` | sein Eintrag ist ausgeblendet (die echte Lane zeigt ihn), die leeren Plätze anderer TIs bleiben; danach erscheint er wieder | ✔ |
+| TI-44 | Der Athlet vor dem Slot startet nur auf Boulder 2 | auf Boulder 2 verschwinden der leere Platz und der TI-Athlet, auf den anderen Bouldern bleiben sie | ✔ |
+| TI-45 | Sitzung mit Split-View-Eintrag, TI in beiden Spalten (Boulder und Lead) | jeder TI erscheint nur in seiner Spalte (Boulder: Athlet nur auf seinem Boulder, Lead auf der Route) | ✔ |
+| TI-46 | Lead-Runde fertig, TI am Ende auf beiden Routen, nächste Runde hat Vorschau | TI-Athleten sind CLIMBING, danach die Vorschau der nächsten Kategorie (Vorschau kommt nach dem TI) | ✔ |
+| TI-47 | Plan ändern: Runde mit TI entfernen | TIs dieser Runde werden gelöscht, die der anderen Runde bleiben; Speed und Runde außerhalb des Plans werden vom Server abgelehnt | ✔ |
+| TI-48 | JP-Formular bei Runden mit Gruppen/Kursen (`13709` Gruppe A/B, `13711` Kurs A/B) | Block-Auswahl; Boulderzahl je Block; die Position zählt auf dem ersten Boulder des Blocks; ein Athlet ohne Bib wird über den Namen gefunden | ✔ |
+| TI-49 | Startposition des TI-Athleten selbst eintippen | Warnung „that is the athlete himself, check the start position.“, „Add TI“ gesperrt | ✔ |
+| TI-50 | Overlay-Zufallstest (3000 Läufe: Lead/Boulder, reuse, erledigt, überholt) | echte Athleten bleiben vollständig und in Reihenfolge, TI-Athlet nur auf seinem Boulder, nie ein erledigter TI, kein leerer Platz am Listenende | ✔ (Unit-Test) |
+| TI-51 | Slot, den ein TI frei hält, auf der Wand (`13712`: #201 an Boulder 5 vor #208, #202 an Boulder 4 vor #212) | auf Boulder 1–3 steht an der Stelle „TI: no athlete“ (kursiv, blau umrandet); vor dem Athleten auf der NEXT-Karte wird die Karte selbst zum Hinweis, sonst eine Zeile in der Warteliste; ein leeres Feld der Lane bleibt „—“ | ✔ |
 | TI-21 | Echter Ablauf in results.info (Wiederholung wirklich eintragen) | Verhalten von `active`/`restarted` beobachten; ggf. automatisches Ende nachrüsten (siehe ARCHITECTURE §6.48) | ○ |
 
 ### 2.6 Sicherheit und Robustheit

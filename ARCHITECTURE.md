@@ -3785,9 +3785,13 @@ behind the last athlete means the end of the list.
 **Model:** a TI is a SLOT that travels through the block like a ghost athlete.
 **Wall (decided with the user):** in front of the athlete the slot stands in front
 of, on the boulder the athlete climbs again on (`boulderRouteId`) the athlete
-(blue frame, "TI" badge), on EVERY other boulder of the block an EMPTY place
-("-": nobody is called there in that interval; it is never drawn at the end of the
-list). A TI that uses another one's slot (`reuseOf`) has no gap of its own: on its
+(blue frame, "TI" badge), on EVERY other boulder of the block an EMPTY place -
+drawn as the entry **"TI: no athlete"** (italic, blue frame, no badge; a card
+when it is CLIMBING/NEXT, a row in the queue), so it can't be mistaken for any
+other blank: nobody is called there in that interval; it is never drawn at the
+end of the list. In the lane data it is `{ tiGap: true }` (`laneEntryText()`), a
+plain `null` stays what it was (padding of a not-yet-reached boulder, the
+boundary of the next-category preview). A TI that uses another one's slot (`reuseOf`) has no gap of its own: on its
 own boulder it takes the place of the owner's empty place, elsewhere it draws
 nothing, it stands where its owner stands (the owner's position is followed live,
 also after an "Edit") and sorts by the owner's creation time. The athlete in front

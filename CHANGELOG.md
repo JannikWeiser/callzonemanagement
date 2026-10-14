@@ -8,6 +8,11 @@ section number); this file is the *what happened, when* log.
 ## Unreleased
 
 ### Fixed
+- **A slot a TI keeps free is shown as "TI: no athlete".** The empty place on the
+  other boulders was a bare "—", easy to mistake for a blank that is still
+  loading. It is now a clear entry (italic, blue frame; a card when it is
+  CLIMBING/NEXT, a row in the queue). See
+  [ARCHITECTURE.md §6.51](ARCHITECTURE.md#651-boulder-ti--a-rotation-slot-with-a-gap-at-boulder-1-the-position-comes-from-the-ti-rechner).
 - **Boulder TI: a slot with a gap, not "the athlete on every boulder"; the
   position comes from the TI-Rechner.** An athlete with a TI at boulder 2 climbs
   the rest of the round and only then comes back to boulder 2; a gap is left at
@@ -23,6 +28,10 @@ section number); this file is the *what happened, when* log.
   The first list-based rule and the "TI on every boulder" display were my own
   readings of ambiguous answers. See
   [ARCHITECTURE.md §6.51](ARCHITECTURE.md#651-boulder-ti--a-rotation-slot-with-a-gap-at-boulder-1-the-position-comes-from-the-ti-rechner).
+
+- **JP form: an athlete can't be put in front of himself.** Typing the TI athlete's
+  own start position was accepted by the form and refused by the server; the form
+  now warns and keeps "Add TI" disabled.
 
 ### Changed
 - **JP page: the athlete who climbs again is typed as a bib number.** The
