@@ -14,17 +14,32 @@ const watchPlan = (ids = ["13682"], extra = {}) => ({
   showNextPreview: true,
   ...extra,
 });
-const multiPlan = () => ({
-  kind: "multi",
+const splitPlan = () => ({
+  kind: "watch",
   host: "stage",
   eventId: "1594",
-  entries: [{ sequence: [round("1")], group: "Group A", route: ["A1"] }, { sequence: [], group: null, route: null }],
+  sequence: [
+    round("9"),
+    { type: "split", columns: [{ sequence: [round("1")], group: "Group A", route: ["A1"] }, { sequence: [], group: null, route: null }] },
+  ],
+  showNextPreview: true,
 });
 
 // Boots the router on an ephemeral port with an injectable clock.
-async function boot({ secret, limits, clock } = {}) {
+// `disciplines` stubs the round lookup technical incidents use ("Speed" for
+// anything not listed).
+async function boot({ secret, limits, clock, disciplines = { 13682: "Lead", 13709: "Boulder" } } = {}) {
   const state = { t: clock ?? 1_000_000 };
-  const router = createSessionRouter({ hostNames: HOSTS, secret, now: () => state.t, limits: { loginLockMs: 60_000, ...limits } });
+  const router = createSessionRouter({
+    hostNames: HOSTS,
+    secret,
+    now: () => state.t,
+    limits: { loginLockMs: 60_000, ...limits },
+    roundDiscipline: async (host, roundId) => {
+      if (roundId === "99999") throw new Error("upstream down");
+      return disciplines[roundId] ?? "Speed";
+    },
+  });
   const app = express();
   app.use("/api/session", router);
   const server = await new Promise((resolve) => {
@@ -97,7 +112,9 @@ test("viewer GET: full plan, 'unchanged' for the current version, 404 for unknow
     assert.equal(full.json.version, 1);
     assert.deepEqual(full.json.plan, watchPlan());
     assert.ok(!("record" in full.json) && !("hostKey" in full.json), "viewers never see credentials");
-    assert.deepEqual((await s.call("GET", `/${id}?v=1`)).json, { version: 1, unchanged: true });
+    const tv = full.json.tiVersion;
+    assert.deepEqual((await s.call("GET", `/${id}?v=1&tv=${tv}`)).json, { version: 1, tiVersion: tv, unchanged: true });
+    assert.equal((await s.call("GET", `/${id}?v=1`)).json.plan.kind, "watch", "without the incident version the full state is sent");
     assert.equal((await s.call("GET", `/${id}?v=0`)).json.plan.kind, "watch", "an older version gets the plan");
     for (const bad of ["zzzzzzzz", "ABCDEFGH", "short", "abcdefg0", "..%2F..%2Fx"]) {
       assert.equal((await s.call("GET", `/${bad}`)).status, 404, bad);
@@ -184,13 +201,16 @@ test("publish: stale baseVersion is a conflict that returns the current plan; in
   }
 });
 
-test("publish can switch a session between a watch plan and a split view", async () => {
+test("publish accepts a plan with a split-view entry, and a session is one kind of plan only", async () => {
   const s = await boot();
   try {
     const { id, hostKey } = await s.create();
-    const r = await s.call("PUT", `/${id}`, { key: hostKey, body: { baseVersion: 1, plan: multiPlan() } });
-    assert.equal(r.status, 200);
-    assert.deepEqual((await s.call("GET", `/${id}?v=1`)).json.plan, multiPlan());
+    const r = await s.call("PUT", `/${id}`, { key: hostKey, body: { baseVersion: 1, plan: splitPlan() } });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual((await s.call("GET", `/${id}?v=1`)).json.plan, splitPlan());
+    const old = { kind: "multi", host: "stage", eventId: "1594", entries: [{ sequence: [round("1")], group: null, route: null }] };
+    assert.equal((await s.call("PUT", `/${id}`, { key: hostKey, body: { baseVersion: 2, plan: old } })).status, 400, "the old Split View plan kind is refused");
+    assert.equal((await s.call("POST", "", { body: { password: "pocket", plan: old } })).status, 400, "and can't be created either");
   } finally {
     await s.close();
   }
@@ -468,5 +488,235 @@ test("training counter is lost on a restart (like the stand-alone training count
     assert.deepEqual((await b.call("POST", `/${created.id}/training/13719`, { key: created.hostKey, body: { delta: 1 } })).json, { index: 1 }, "the old host key still controls it");
   } finally {
     await b.close();
+  }
+});
+
+
+// ---- technical incidents (6.48) ------------------------------------------------
+const tiBody = (extra = {}) => ({ roundId: "13682", routeIds: [21961], athleteId: 9346, beforeAthleteId: 9350, ...extra });
+
+test("technical incident: only a host can add one, viewers see it in the poll, the incident version moves", async () => {
+  const s = await boot();
+  try {
+    const { id, hostKey } = await s.create("secret1", watchPlan(["13682", "13709"]));
+    const before = (await s.call("GET", `/${id}`)).json;
+    assert.deepEqual(before.ti, []);
+    assert.equal((await s.call("POST", `/${id}/ti`, { body: tiBody() })).status, 403, "no key");
+    assert.equal((await s.call("POST", `/${id}/ti`, { key: "0".repeat(64), body: tiBody() })).status, 403, "wrong key");
+    const r = await s.call("POST", `/${id}/ti`, { key: hostKey, body: tiBody() });
+    assert.equal(r.status, 201, r.text);
+    assert.equal(r.json.ti.athleteId, 9346);
+    assert.equal(r.json.ti.done, false);
+    assert.deepEqual(r.json.ti.routeIds, [21961]);
+    const after = (await s.call("GET", `/${id}?v=1&tv=${before.tiVersion}`)).json;
+    assert.ok(!after.unchanged, "an incident change reaches a tablet that already has the plan");
+    assert.equal(after.version, 1, "the plan version is untouched");
+    assert.equal(after.ti.length, 1);
+    assert.ok(after.tiVersion > before.tiVersion);
+    assert.ok(!("hostKey" in after) && !("record" in after));
+  } finally {
+    await s.close();
+  }
+});
+
+test("technical incident: Lead and Boulder only, round must be in the plan, ids are validated", async () => {
+  const s = await boot();
+  try {
+    const { id, hostKey } = await s.create("secret1", watchPlan(["13682", "13709", "13719"]));
+    const post = (body) => s.call("POST", `/${id}/ti`, { key: hostKey, body });
+    assert.equal((await post(tiBody({ roundId: "13719" }))).status, 400, "Speed is refused");
+    assert.match((await post(tiBody({ roundId: "13719" }))).json.error, /Lead and Boulder/);
+    assert.equal((await post(tiBody({ roundId: "13709", routeIds: [1, 2, 3], boulderRouteId: 2 }))).status, 201, "Boulder: a block of routes and the boulder he climbs again on");
+    assert.equal((await post(tiBody({ roundId: "13709", routeIds: [1, 2, 3] }))).status, 400, "Boulder needs its boulder");
+    assert.equal((await post(tiBody({ roundId: "13709", routeIds: [1, 2, 3], boulderRouteId: 9 }))).status, 400, "the boulder must be one of the block's routes");
+    assert.equal((await post(tiBody({ roundId: "13709", routeIds: [1, 2, 3], boulderRouteId: "x" }))).status, 400);
+    assert.equal((await post(tiBody({ boulderRouteId: 21961 }))).status, 400, "a Lead incident has no boulder");
+    assert.equal((await post(tiBody({ reuseOf: "abc" }))).status, 400, "nor a slot to use");
+    assert.equal((await post(tiBody({ roundId: "555" }))).status, 400, "round not in the plan");
+    assert.equal((await post(tiBody({ athleteId: "x" }))).status, 400);
+    assert.equal((await post(tiBody({ beforeAthleteId: "x" }))).status, 400);
+    assert.equal((await post(tiBody({ athleteId: 5, beforeAthleteId: 5 }))).status, 400, "before themselves");
+    assert.equal((await post(tiBody({ routeIds: [] }))).status, 400);
+    assert.equal((await post(tiBody({ routeIds: [1, 1] }))).status, 400, "duplicate routes");
+    assert.equal((await post(tiBody({ routeIds: ["a"] }))).status, 400);
+    assert.equal((await post(tiBody({ routeIds: Array.from({ length: 21 }, (_, i) => i + 1) }))).status, 400);
+    assert.equal((await post(tiBody({ beforeAthleteId: null }))).status, 201, "at the end of the startlist");
+    assert.equal(s.router.sessions.get(id).ti.length, 2, "refused requests store nothing");
+    assert.equal(s.router.sessions.get(id).ti[0].boulderRouteId, 2);
+  } finally {
+    await s.close();
+  }
+});
+
+test("technical incident: a failing round lookup is a 502, and without a lookup nothing is accepted", async () => {
+  const s = await boot({ disciplines: { 99999: "Lead" } });
+  try {
+    const { id, hostKey } = await s.create("secret1", watchPlan(["99999"]));
+    assert.equal((await s.call("POST", `/${id}/ti`, { key: hostKey, body: tiBody({ roundId: "99999" }) })).status, 502);
+  } finally {
+    await s.close();
+  }
+  const router = createSessionRouter({ hostNames: HOSTS });
+  const app = express();
+  app.use("/api/session", router);
+  const server = await new Promise((resolve) => {
+    const x = app.listen(0, "127.0.0.1", () => resolve(x));
+  });
+  try {
+    const base = `http://127.0.0.1:${server.address().port}/api/session`;
+    const c = await (await fetch(base, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: "secret1", plan: watchPlan() }) })).json();
+    const r = await fetch(`${base}/${c.id}/ti`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${c.hostKey}` }, body: JSON.stringify(tiBody()) });
+    assert.equal(r.status, 400);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test("technical incident: done keeps a short history, remove deletes, both need the host key", async () => {
+  const s = await boot();
+  try {
+    const { id, hostKey } = await s.create("secret1", watchPlan());
+    const add = async () => (await s.call("POST", `/${id}/ti`, { key: hostKey, body: tiBody() })).json.ti;
+    const a = await add();
+    const b = await add();
+    assert.equal((await s.call("POST", `/${id}/ti/${a.id}/done`)).status, 403);
+    assert.equal((await s.call("DELETE", `/${id}/ti/${a.id}`)).status, 403);
+    const done = await s.call("POST", `/${id}/ti/${a.id}/done`, { key: hostKey });
+    assert.equal(done.status, 200);
+    assert.equal(done.json.ti.done, true);
+    const stored = s.router.sessions.get(id).ti;
+    assert.deepEqual(stored.map((x) => [x.id, x.done]), [[a.id, true], [b.id, false]]);
+    const v = s.router.sessions.get(id).tiVersion;
+    await s.call("POST", `/${id}/ti/${a.id}/done`, { key: hostKey });
+    assert.equal(s.router.sessions.get(id).tiVersion, v, "done twice changes nothing");
+    assert.equal((await s.call("DELETE", `/${id}/ti/${b.id}`, { key: hostKey })).status, 200);
+    assert.equal((await s.call("DELETE", `/${id}/ti/${b.id}`, { key: hostKey })).status, 404);
+    assert.equal((await s.call("POST", `/${id}/ti/zzzz/done`, { key: hostKey })).status, 404);
+    assert.deepEqual(s.router.sessions.get(id).ti.map((x) => x.id), [a.id]);
+    // The history of finished incidents stays short.
+    for (let i = 0; i < 15; i++) {
+      const t = await add();
+      await s.call("POST", `/${id}/ti/${t.id}/done`, { key: hostKey });
+    }
+    assert.ok(s.router.sessions.get(id).ti.length <= 10, "at most 10 finished incidents are kept");
+  } finally {
+    await s.close();
+  }
+});
+
+test("technical incident: the per-session cap drops the oldest finished one, never an open one", async () => {
+  const s = await boot({ limits: { maxTi: 3 } });
+  try {
+    const { id, hostKey } = await s.create("secret1", watchPlan());
+    const add = () => s.call("POST", `/${id}/ti`, { key: hostKey, body: tiBody() });
+    const first = (await add()).json.ti;
+    await add();
+    await add();
+    assert.equal((await add()).status, 400, "three open incidents fill the session");
+    await s.call("POST", `/${id}/ti/${first.id}/done`, { key: hostKey });
+    assert.equal((await add()).status, 201, "a finished one makes room");
+    assert.ok(!s.router.sessions.get(id).ti.some((x) => x.id === first.id));
+  } finally {
+    await s.close();
+  }
+});
+
+test("technical incident: removed with its round when a new plan drops it, untouched by an unrelated plan change", async () => {
+  const s = await boot();
+  try {
+    const { id, hostKey } = await s.create("secret1", watchPlan(["13682", "13709"]));
+    await s.call("POST", `/${id}/ti`, { key: hostKey, body: tiBody() });
+    await s.call("POST", `/${id}/ti`, { key: hostKey, body: tiBody({ roundId: "13709", routeIds: [7], boulderRouteId: 7 }) });
+    const publish = (plan, baseVersion) => s.call("PUT", `/${id}`, { key: hostKey, body: { plan, baseVersion } });
+    const v1 = s.router.sessions.get(id).tiVersion;
+    assert.equal((await publish(watchPlan(["13709", "13682"]), 1)).status, 200);
+    assert.equal(s.router.sessions.get(id).ti.length, 2, "reordering keeps both");
+    assert.equal(s.router.sessions.get(id).tiVersion, v1);
+    assert.equal((await publish(watchPlan(["13709"]), 2)).status, 200);
+    assert.deepEqual(s.router.sessions.get(id).ti.map((x) => x.roundId), ["13709"]);
+    assert.ok(s.router.sessions.get(id).tiVersion > v1);
+  } finally {
+    await s.close();
+  }
+});
+
+test("technical incident: works for the rounds of a split-view entry and is lost on a restart (restored session starts empty)", async () => {
+  const a = await boot({ secret: "fixed-secret" });
+  const plan = { kind: "watch", host: "stage", eventId: "1594", sequence: [{ type: "split", columns: [{ sequence: [round("13709")], group: null, route: null }, { sequence: [round("13682")], group: null, route: null }] }], showNextPreview: true };
+  const created = await a.create("secret1", plan);
+  assert.equal((await a.call("POST", `/${created.id}/ti`, { key: created.hostKey, body: tiBody({ roundId: "13709", routeIds: [7, 8], boulderRouteId: 8 }) })).status, 201);
+  assert.equal((await a.call("POST", `/${created.id}/ti`, { key: created.hostKey, body: tiBody({ roundId: "13682" }) })).status, 201, "second column's round too");
+  await a.close();
+  const b = await boot({ secret: "fixed-secret" });
+  try {
+    const restore = await b.call("POST", "", { body: { id: created.id, record: created.record, hostKey: created.hostKey, plan, version: 1 } });
+    assert.equal(restore.status, 201, restore.text);
+    assert.deepEqual(restore.json.ti, []);
+  } finally {
+    await b.close();
+  }
+});
+
+test("technical incident (Boulder): a TI can use the free slot of another one, be edited, and a removed owner hands its position on", async () => {
+  const s = await boot();
+  try {
+    const { id, hostKey } = await s.create("secret1", watchPlan(["13709", "13682"]));
+    const post = (extra) => s.call("POST", `/${id}/ti`, { key: hostKey, body: tiBody({ roundId: "13709", routeIds: [1, 2, 3], boulderRouteId: 1, ...extra }) });
+    const owner = await post({ athleteId: 11, beforeAthleteId: 30 });
+    assert.equal(owner.status, 201, owner.text);
+    assert.equal(owner.json.ti.boulderRouteId, 1);
+    assert.equal(owner.json.ti.no, 1);
+    // reuse: another boulder of the same block, an existing other TI, not itself, not a reuser
+    const bad = async (extra) => (await post({ athleteId: 12, beforeAthleteId: 30, boulderRouteId: 3, ...extra })).status;
+    assert.equal(await bad({ reuseOf: "nope" }), 400, "unknown TI");
+    assert.equal(await bad({ reuseOf: owner.json.ti.id, boulderRouteId: 1 }), 400, "the owner already climbs that boulder");
+    assert.equal(await bad({ reuseOf: owner.json.ti.id, routeIds: [1, 2] }), 400, "another block");
+    const user = await post({ athleteId: 12, beforeAthleteId: 30, boulderRouteId: 3, reuseOf: owner.json.ti.id });
+    assert.equal(user.status, 201, user.text);
+    assert.equal(user.json.ti.reuseOf, owner.json.ti.id);
+    assert.equal(user.json.ti.no, 2);
+    assert.equal(await bad({ athleteId: 13, boulderRouteId: 2, reuseOf: user.json.ti.id }), 400, "a user is no owner");
+    assert.equal((await s.call("POST", `/${id}/ti`, { key: hostKey, body: tiBody({ reuseOf: owner.json.ti.id }) })).status, 400, "Lead has no slot to use");
+    // edit: the host key is needed, same checks, the round and block stay
+    const put = (tiId, body, key = hostKey) => s.call("PUT", `/${id}/ti/${tiId}`, { key, body: tiBody({ roundId: "13709", routeIds: [1, 2, 3], boulderRouteId: 1, athleteId: 11, ...body }) });
+    assert.equal((await put(owner.json.ti.id, { beforeAthleteId: 31 }, null)).status, 403, "no key");
+    const moved = await put(owner.json.ti.id, { beforeAthleteId: 31 });
+    assert.equal(moved.status, 200, moved.text);
+    assert.equal(moved.json.ti.beforeAthleteId, 31);
+    assert.equal(moved.json.ti.no, 1, "the number stays");
+    assert.equal((await put(owner.json.ti.id, { boulderRouteId: 3, beforeAthleteId: 31 })).status, 400, "he can't move onto the boulder the user climbs");
+    assert.equal((await put(owner.json.ti.id, { routeIds: [1, 2], beforeAthleteId: 31 })).status, 400, "the block can't change");
+    assert.equal((await put(owner.json.ti.id, { roundId: "13682", routeIds: [21961], boulderRouteId: undefined })).status, 400, "nor the round");
+    assert.equal((await put("nope", {})).status, 404);
+    const before = s.router.sessions.get(id).tiVersion;
+    assert.ok(before > 1);
+    // removing the owner: the user keeps the position the owner had
+    assert.equal((await s.call("DELETE", `/${id}/ti/${owner.json.ti.id}`, { key: hostKey })).status, 200);
+    const kept = s.router.sessions.get(id).ti;
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0].reuseOf, undefined);
+    assert.equal(kept[0].beforeAthleteId, 31);
+  } finally {
+    await s.close();
+  }
+});
+
+test("heartbeat: the key of a big split view fits what the server keeps, so the host's impact count is exact", async () => {
+  const s = await boot();
+  try {
+    const { entryKey } = globalThis.SessionPlan;
+    const columns = Array.from({ length: 5 }, (_, c) => ({ sequence: Array.from({ length: 10 }, (_, i) => round(String(200000 + c * 10 + i))), group: null, route: null }));
+    const entry = { type: "split", columns };
+    const plan = { kind: "watch", host: "stage", eventId: "1594", sequence: [entry], showNextPreview: true };
+    const { id, hostKey } = await s.create("secret1", plan);
+    const key = entryKey(entry);
+    assert.ok(key.length <= 60);
+    await s.call("GET", `/${id}?c=${"a".repeat(16)}&k=${encodeURIComponent(key)}`);
+    const clients = await s.call("GET", `/${id}/clients`, { key: hostKey });
+    assert.deepEqual(clients.json.clients, [{ keys: [key] }], "the key arrives untruncated");
+    const { affectedClients } = globalThis.SessionPlan;
+    assert.equal(affectedClients(plan, plan, clients.json.clients), 0, "an unchanged plan affects nobody");
+  } finally {
+    await s.close();
   }
 });

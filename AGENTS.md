@@ -365,7 +365,8 @@ previously-reported problems:
   updating, don't assume it's still accurate. A "Gemeinsame Sitzungen" paragraph was added with
   shared sessions (6.46) - it must stay in sync with what `sessions.js`
   actually stores (plan, password hash, short-lived client heartbeat, IPs for
-  rate limiting, 24 h idle expiry). None of this text is
+  rate limiting, 24 h idle expiry, manual training position, technical
+  incidents). None of this text is
   lawyer-reviewed - the user was told this explicitly and plans to have it
   checked; don't treat it as verified-correct in a future session. Summary
   label is "Legal Information" (matching `dav.results.info`'s own footer
@@ -648,6 +649,12 @@ previously-reported problems:
   fix uses `currentSelection` reference equality) rather than a
   general-purpose tick counter. See
   [ARCHITECTURE.md §6.38](ARCHITECTURE.md#638-double-click-protection-trainings-nextback-and-sequences-skip-to-next).
+- **(Since 6.50 the Split View is NOT a setup mode or a selection kind any more
+  - it is the `{type:"split"}` entry of a Sequence; `kind: "multi"` only
+  survives as a legacy input converted by `legacyMultiToWatch()`/
+  `readUrlSelection()`. The Multimode notes below still describe the board and
+  the column editor, which are shared with the split entry - read "Multimode
+  mode/tab" as "the split entry").**
 - **Multimode - displayed as "Split View" in the UI, code/docs still say
   "Multimode"/"multi" throughout.** The mode tab, "Show Split View"
   button, and board heading text are the only things that changed; the
@@ -915,7 +922,11 @@ previously-reported problems:
   host key - no last-writer-wins, no silent overwrite (`409`); (5)
   `hostEditorBound` must stay false until the editor holds the session's plan
   - otherwise one click on "Apply to all tablets" overwrites the live plan
-  with setup-screen defaults; (6) the confirmation before applying is decided
+  with setup-screen defaults; the editor is bound to the live plan automatically when the hosted
+  session's event is loaded (`bindEditorToHostedPlan()` ->
+  `fillEditorFromPlan()`, always into the Sequence editor); a plan is built ONLY
+  from the Sequence builder (`planFromSetup()` refuses every other tab) - the
+  open tab must never decide what gets applied; (6) the confirmation before applying is decided
   by `affectedClients()`/`removesOrReplaces()` (moving/adding entries never
   asks); (7) never log, echo, store or send the password or the `hostKey` to
   other viewers - `record`/`hostKey` live only in the host device's
@@ -935,14 +946,81 @@ previously-reported problems:
   purpose; (12) a training does NOT claim its round in `validatePlan()` and in
   the builder (the same Speed round is normally also a real entry) and an
   EMPTY roster is not "done" (or the entry would be skipped before the
-  startlist exists); (13) Training is not available in Split View plans and
-  the panel is hidden in the stand-alone Training mode. Don't add `localStorage` writes outside the
+  startlist exists); (13) Training can't be inside a split view; **a session is
+  ONE plan shape, a Sequence (6.50) - a split view is an ENTRY of it** (the old
+  `multi` plan kind is gone: don't bring a second session type back, the
+  mix-up between a session made in one tab and edited in another is exactly
+  what this removed), shared sessions are created/edited in the Sequence mode
+  (marked "Advanced") only, the other tabs show at most a status view while this
+  device hosts, and a round may appear once in the whole plan including the
+  split columns; (14) the session panel is shown in Sequence mode only
+  (`updateSessionPanelForMode()`) - not in Single round, not in Training, and
+  there is no Split View tab; (15) a split entry has 1-5 columns and a compact
+  `digest()` key - don't go back to a readable key built from the round ids
+  (it overflows the server's 60-character heartbeat key). Don't add `localStorage` writes outside the
   `lsGet/lsSet` wrappers in that section. Run `npm test` before touching
   `sessions.js`/`session-plan.js` and walk through Tests.md for anything in
   the browser part. See
   [ARCHITECTURE.md §6.46](ARCHITECTURE.md#646-shared-sessions-one-published-plan-many-tablets-a-host-password)
   and, for training entries,
   [§6.47](ARCHITECTURE.md#647-speed-training-as-a-sequence-entry-controlled-with-the-host-password).
+
+- **Split view as a sequence entry (6.50)** - `{type:"split", columns}`: the
+  column editor is `renderColumnCards()` (shared with the standalone Split View
+  mode - change one, you change both), playback reuses
+  `pollOneMultiColumn()`/`renderMultiBoard()` from `pollCurrent()` through
+  `splitState` (reset wherever `pairedState` is). The entry is done only when
+  EVERY column is on its last round and that is finished; don't make it advance
+  on the first finished column. The entry key is its columns' round lists, so
+  editing a column's rounds replaces the entry while a group/route change is
+  applied in place (`viewSignature()`); keep both. Consecutive split rows are joined by the builder's "Continue the
+  columns above" (`mergeSplitIntoPrevious()`), never by merging entries while
+  playing (per-column filters, plan = what is drawn, stable keys). See
+  [ARCHITECTURE.md §6.50](ARCHITECTURE.md#650-sessions-live-in-the-sequence-mode-advanced-a-split-view-is-a-sequence-entry).
+
+- **Technical incidents (6.48, Boulder 6.51)** - the JP re-starts an athlete: an
+  OVERLAY on an already-computed lane (`withTechnicalIncidents()` in
+  `buildLane()`, `SessionPlan.applyTechnicalIncidents()`), never a change to
+  `computeLane()`/`computeBoulderLane()`/`computeSpeedQualificationLane()` -
+  don't feed incidents into the inference or make it "smarter". **Decided with
+  the user:** Lead and Boulder ONLY (the server refuses Speed through
+  `roundDiscipline()`) - don't add Speed; the JP uses the HOST password, no
+  second password; writes are host-key only (an open write endpoint would let
+  anybody put names on the wall); the TI ends with a manual "TI done" **plus the
+  safety net** (the athlete it stands in front of has started ON THAT ROUTE,
+  `incidentSupersededOnRoute()`, per route - confirmed on 10 Oct 2026); the
+  athlete is drawn as a blue-framed CLIMBING/NEXT card with a "TI" badge, the
+  card colours stay (6.45); a Lead TI = the athlete on its route in front of a
+  chosen position, the JP decides when.
+  **The Callzone does NOT calculate a TI position (decided 14 Oct 2026) - don't
+  rebuild a solver.** The owner's TI-Rechner (repo `ti-rechner`, local
+  `Desktop/Claude/TI Rechner`, `AGENTS.md` there = his decisions) is the
+  calculator; the JP takes over its result: bib, boulder and "Boulder 1: in front
+  of start position X" / "no gap needed (end of the start list)" / "uses the slot
+  of TI n". Two earlier attempts here (a list rule from the Judge Guide, then a
+  port of `computeTI()`) went wrong: the tool kept gaining rules (slot re-use,
+  ghost slots, clock shift, late decision, end of list) and the port was
+  different in 18 % of the calculations four days later. **Boulder is a rotation
+  SLOT, not "the athlete on every boulder"** (that was built wrong once): the
+  wall draws the athlete on the boulder he climbs again on and an EMPTY place
+  ("-") on every other boulder of the block, in front of the athlete the position
+  names; a TI that uses another one's slot (`reuseOf`) has no gap of its own and
+  takes the owner's place on its boulder. Start position = the position column of
+  results.info on the block's first boulder, the form shows who it means.
+  **Don't invent:** the earlier "TI on every boulder", the list rule and the port
+  were my own readings, never confirmed - anything about how a TI looks, ends or
+  is entered that the user did not say gets ASKED, and the TI-Rechner's own rules
+  (short hints, no paragraph references, every field of a new TI empty, results
+  only) are the style to follow. Open: a "gap only" entry for the ghost slot of a
+  TI deleted in the TI-Rechner (ask before building). The TI list is also
+  mentioned in the Datenschutz paragraph (keep it in sync). `tiVersion` starts at
+  the creation time and only grows - the viewer poll is "unchanged" only when BOTH
+  `v` and `tv` match. An open TI at the END of the start list holds the sequence
+  (`incidentHoldsRound()`), a TI is drawn BEFORE the next-category preview
+  (`withNextCategoryPreview()` stays last). The JP form always belongs to the
+  displayed round. See
+  [ARCHITECTURE.md §6.48](ARCHITECTURE.md#648-technical-incidents-ti-the-jury-president-re-starts-an-athlete)
+  and [§6.51](ARCHITECTURE.md#651-boulder-ti--a-rotation-slot-with-a-gap-at-boulder-1-the-position-comes-from-the-ti-rechner).
 
 - **`upstreamJson()`'s optional API key (6.44) - send the key WITHOUT the
   `Referer`, never both.** Verified against the real API: a valid Referer

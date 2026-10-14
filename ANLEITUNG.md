@@ -58,9 +58,9 @@ ist einfach immer erreichbar.
    IFSC-/Weltcup-Wettkämpfe (die Test-Option braucht ihr normalerweise
    nicht).
 3. Auf **„Load event"** klicken.
-4. Oben erscheinen drei Reiter: **„Single round"**, **„Sequence"**,
-   **„Training"**. Für eine einzelne Runde bleibt ihr bei „Single round"
-   (voreingestellt).
+4. Oben erscheinen drei Reiter: **„Single round"**, **„Training"** und
+   **„Sequence – Advanced"**. Für eine einzelne Runde bleibt ihr bei „Single
+   round" (voreingestellt).
 5. Im Dropdown die passende **Altersklasse und Runde** auswählen
    (z. B. „LEAD U13 m — Qualifikation").
 6. Auf **„Show"** klicken.
@@ -68,9 +68,10 @@ ist einfach immer erreichbar.
 Die Anzeige aktualisiert sich danach von selbst alle paar Sekunden – ihr
 müsst nichts mehr tun.
 
-Die beiden anderen Reiter — **„Sequence"** (mehrere Runden nacheinander,
-inkl. Speed-Verschränken) und **„Training"** (Speed-Training ohne
-Live-Ergebnisse) — sind in den Schritten 5 und 6 unten beschrieben.
+Die anderen Reiter — **„Training"** (Speed-Training ohne Live-Ergebnisse) und
+**„Sequence – Advanced"** (mehrere Runden nacheinander, inkl.
+Speed-Verschränken, **mehreren Kategorien nebeneinander** und **gemeinsamen
+Sitzungen**) — sind in den Schritten 5 bis 7a unten beschrieben.
 
 ## 4. Anzeige lesen
 
@@ -228,19 +229,51 @@ bei Boulder, seiner eigenen Gruppe).
 Statt jedes Tablet einzeln einzurichten, kannst du **einen Plan veröffentlichen**,
 dem alle Tablets folgen – und ihn später für alle gleichzeitig ändern.
 
+**Wichtig:** Gemeinsame Sitzungen gibt es **nur im Reiter „Sequence – Advanced"**.
+In „Single round" und „Training" taucht der Bereich „Shared session" gar nicht
+auf; diese beiden Reiter sind für **ein** Gerät gedacht und verändern keine
+Sitzung. Eine einzelne Runde veröffentlichst du als Sequence mit einer Runde.
+
 **Sitzung erstellen (Host):**
-1. Wie gewohnt Event laden und den Plan zusammenstellen (Single round,
-   Sequence oder Split View).
+1. Event laden, zum Reiter **Sequence (Advanced)** wechseln und die Sequenz
+   zusammenstellen: Runden, **„+ Add paired entry"**, **„+ Add training"** und
+   **„+ Add split view"** (mehrere Kategorien nebeneinander, siehe unten).
 2. Unten **„Shared session (optional)"** aufklappen, ein **Host-Passwort**
    (mind. 4 Zeichen) eingeben und **„Create shared session…"** drücken.
 3. Es erscheint ein **Link und ein QR-Code**. Auf jedem Tablet diesen Link
    öffnen (QR-Code scannen) – fertig. Das Tablet braucht kein Passwort.
-4. Bei Split View legst du pro Spalte auch **Gruppe und Routen/Boulder**
-   fest (Auswahl unter der Spalte). Bei normalen Sitzungen wählt jedes Tablet
-   seine Route weiter selbst über die Tabs.
+   Im Host-Bereich steht außerdem **„Live on the tablets: …"** – dort siehst
+   du sofort, welche Runden gerade veröffentlicht sind.
+
+**Mehrere Kategorien nebeneinander („+ Add split view"):** Ein solcher Eintrag
+der Sequence zeigt **1 bis 5 Kategorien nebeneinander** (Auswahl „Categories
+side by side"). Das ist der frühere Reiter „Split View" – alle Funktionen sind
+jetzt hier:
+- Jede Spalte hat ihre **eigene Rundenfolge** (z. B. Quali → Finale; mit
+  „+ Add Sequence" ergänzen, mit ▲▼ umsortieren, mit × entfernen), die
+  unabhängig von den anderen Spalten durchläuft.
+- Pro Spalte legst du **Gruppe und Routen/Boulder** fest. In einer Sitzung
+  bestimmt der Host das; auf einem einzelnen Gerät (ohne Sitzung) gibt es
+  zusätzlich die Tabs auf dem Board.
+- Eine Spalte darf auch leer bleiben (zeigt „Round finished").
+- Der Eintrag ist **fertig, wenn alle Spalten fertig sind** – dann geht die
+  Sequenz zum nächsten Eintrag.
+- **Jede Spalte soll einzeln weiterschalten** (z. B. Quali → Finale, ohne auf
+  die andere Spalte zu warten)? Trage die Runden **pro Spalte hintereinander**
+  ein („+ Add Sequence" in der Spalte). Hast du schon zwei Split-View-Einträge
+  hintereinander angelegt, klicke beim unteren auf **„Continue the columns
+  above"**: Seine Runden werden spaltenweise an den oberen Eintrag angehängt.
+  Das geht nur bei gleicher Spaltenzahl und ohne Lead/Boulder in derselben
+  Spalte zu mischen.
+- Eine Runde darf in der **ganzen Sequenz nur einmal** vorkommen, auch nicht in
+  zwei Spalten. Ein Split View kann nur Lead und Boulder enthalten, kein Speed.
+- **Technische Zwischenfälle (TI)** und der JP-Link funktionieren in jeder Spalte.
+- Alte Links mit `multi=…` und ein früher gespeicherter Split View öffnen sich
+  weiterhin und werden als Sequence mit einem Split-View-Eintrag angezeigt.
 
 **Plan später ändern:**
-1. Plan oben im Editor ändern (Reihenfolge, Runden hinzufügen/entfernen …).
+1. Im Reiter **Sequence (Advanced)** die Sequenz ändern (Reihenfolge,
+   Runden hinzufügen/entfernen …).
    Dort steht „You have changes that are not applied to the tablets yet".
 2. **„Apply to all tablets"** drücken. Betrifft die Änderung eine Runde,
    die gerade auf Tablets läuft, fragt das Programm vorher nach
@@ -275,7 +308,72 @@ Qualifikation):
 
 Gut zu wissen: Ein Training ohne veröffentlichte Startliste zeigt „No startlist
 yet“ und wird **nicht** übersprungen. Nach einem Server-Neustart beginnt ein
-Training wieder bei Athlet 1. In Split View gibt es kein Training.
+Training wieder bei Athlet 1. Ein Training kann nicht in einem Split-View-Eintrag stehen.
+
+### Technischer Zwischenfall (TI) – Jurypräsident
+
+Wenn nach einem technischen Zwischenfall ein Athlet **nochmal klettern** darf
+(nur **Lead** und **Boulder**, nicht Speed), trägt der Jurypräsident (JP) das
+auf seinem Handy ein. Voraussetzung ist eine **gemeinsame Sitzung**.
+
+**Wichtig:** Die Callzone **rechnet den Zeitpunkt nicht aus**. Das macht der
+**TI-Rechner** (ti.comptools.cloud). Der JP übernimmt sein Ergebnis hier – die
+Callzone zeigt es auf der Wand an.
+
+1. Im Host-Bereich unter „Shared session“ den Block **„Jury President (JP) –
+   technical incidents“** aufklappen. Dort stehen **Link und QR-Code** für den JP.
+2. Der JP öffnet den Link am Handy und gibt **einmal das Host-Passwort** ein.
+3. **TI eintragen** (alle Felder sind am Anfang leer):
+   - die **Kategorie/Runde** und bei Boulder die **Gruppe/den Kurs**,
+   - den **Athleten, der nochmal klettert**: die **Startnummer (Bib)** eintippen
+     (auch „#12“ oder ein Namensteil geht). Es ist **jeder Athlet des Blocks**
+     wählbar, auch einer, der gerade nicht mehr klettert oder dessen Ergebnis noch
+     nicht eingetragen ist. Die Zeile darunter sagt, ob er ein Ergebnis hat, gerade
+     klettert oder noch keines hat (rote Warnung – wählbar bleibt er trotzdem). Hat
+     der nächste planmäßige Athlet schon gestartet, steht dort eine Fristwarnung,
+   - bei Boulder: **auf welchem Boulder** der Athlet nochmal klettert,
+   - dann das Ergebnis aus dem **TI-Rechner**, eine von drei Möglichkeiten:
+     - **„Boulder 1 stays free in front of a start position“**: die Startposition
+       eintippen, die der TI-Rechner bei „Lücke Boulder 1“ nennt („Call Zone B1:
+       **vor Startposition X** niemanden aufrufen“). Darunter steht, welcher Athlet
+       das ist – so fällt ein Tippfehler auf. Bei Szenario 1 („vor dem nächsten
+       Athleten“) ebenfalls die Position des nächsten Athleten,
+     - **„No gap needed (end of the start list)“**: der TI-Rechner sagt „keine nötig
+       – Ende der Startliste“,
+     - **„No new gap: uses the slot of another TI“**: der TI-Rechner sagt „nutzt den
+       Slot von …“; den anderen TI aus der Liste wählen,
+   - bei **Lead** gibt es nur „in front of a start position“ und „at the end of the
+     start list“,
+   - **„Add TI“**. Die Zeile darüber zeigt noch einmal, was gespeichert wird.
+4. **Auf der Wand:** Bei Boulder steht der TI-Athlet (blau, „TI“) **nur auf seinem
+   Boulder**, an der Stelle des Slots. Auf **allen anderen Bouldern der Gruppe**
+   steht an dieser Stelle ein **leerer Platz „—“**: dort wird in diesem Intervall
+   niemand aufgerufen. Nutzt ein TI den Slot eines anderen, steht er auf seinem
+   Boulder an dessen Stelle (kein zweiter leerer Platz). Bei Lead steht der Athlet
+   auf seiner Route vor dem gewählten Athleten.
+5. **Ändert der TI-Rechner eine Position** (neuer TI, gelöschter TI, Warnung „neuen
+   Slot durchgeben!“), beim TI auf **„Edit“** tippen, die Startposition anpassen und
+   **„Save changes“**. Wer den Slot eines anderen mitnutzt, wandert mit.
+6. Wenn der Athlet geklettert ist, drückt der JP **„TI done“** – dann verschwindet
+   der Eintrag, und der reguläre Athlet rückt wieder nach. **„Remove“** nimmt
+   einen versehentlich angelegten TI zurück (hat ein anderer TI seinen Slot
+   mitgenutzt, behält der die Position).
+
+Gut zu wissen:
+- Beginnt der Athlet, **vor dem** der TI steht, in results.info zu klettern,
+  endet der TI **auf dieser Route von selbst** (in der JP-Liste steht dann
+  „over“). Sonst würde die Wand weiter den TI-Athleten als CLIMBING zeigen.
+- results.info erfasst die Wiederholung nicht. Bei Boulder bleibt deshalb der
+  vorherige Athlet CLIMBING und der TI-Athlet steht als NEXT dahinter, bis seine
+  Wertung wieder auf „active“ geht oder der JP „TI done“ drückt.
+- Löscht du im **TI-Rechner** einen TI, dessen Lücke noch gebraucht wird (er bleibt
+  dort als „Slot … (gelöscht)“ stehen), lass ihn hier **offen**, bis die Lücke
+  vorbei ist. Einen eigenen Eintrag „nur Lücke“ gibt es noch nicht.
+- Ein TI **„am Ende der Startliste“** hält die Sequenz auf dieser Runde, bis
+  er mit „TI done“ beendet ist – die Tablets gehen nicht schon zur nächsten Runde.
+- Nach einem **Server-Neustart** sind alle TIs weg (wie die Trainingsposition);
+  die Tablets zeigen bis dahin den letzten Stand. Dann den TI neu eintragen.
+- Der Link zeigt ohne Passwort nur die Liste; **ändern** geht nur mit Host-Passwort.
 
 **Gut zu wissen:**
 - Oben rechts am Tablet steht die Sitzungs-ID. Steht dort „offline" oder

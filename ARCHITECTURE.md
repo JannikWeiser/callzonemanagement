@@ -3362,16 +3362,18 @@ tablet. A *session* lets a host publish ONE plan; tablets open `?s=<id>`
 **What a plan is** (`public/session-plan.js`, shared by browser, server and
 tests - it registers on `globalThis.SessionPlan` so the same validation runs
 on both sides):
-- `watch`: `{ kind, host, eventId, sequence, showNextPreview }`, sequence
-  entries `{type:"round",id}` / `{type:"paired",a,b}` (a Single round is a
-  sequence of one).
-- `multi` (Split View): `{ kind, host, eventId, entries }`, 1-5 columns
-  `{ sequence, group, route }`. **The host's plan decides each column's
-  group and routes**; in a Split View session the board's own group/route
-  tabs are hidden (a local override would be thrown away by the next plan
-  update). In a normal (watch) session the route/group tabs, the lane swap
-  (6.45) and the Boulder final mode stay per tablet (URL `route`/`group`/
-  `swap`, `localStorage`) - they are not part of the plan.
+- ONE plan shape since 6.50: `{ kind: "watch", host, eventId, sequence,
+  showNextPreview }`, sequence entries `{type:"round",id}` /
+  `{type:"paired",a,b}` / `{type:"training",id}` (6.47) /
+  `{type:"split",columns:[{sequence,group,route}]}` (2-5 categories side by
+  side, 6.50). A Single round is a sequence of one; the old `multi` plan kind
+  (a session that was a Split View) is gone, so a session has no "type" that
+  could be mixed up. **The host's plan decides each split column's group and
+  routes**; in a session the board's own group/route tabs are hidden (a local
+  override would be thrown away by the next plan update). For plain round
+  entries the route/group tabs, the lane swap (6.45) and the Boulder final
+  mode stay per tablet (URL `route`/`group`/`swap`, `localStorage`) - they are
+  not part of the plan.
 - `validatePlan()` validates and *normalizes* (fixed key order, string ids,
   empty route list -> `null`), so equal plans serialize identically - the
   host's "unapplied changes" check and the server's version bookkeeping both
@@ -3408,7 +3410,7 @@ Viewers can watch with the id alone; every write needs the host credentials.
   wins over a restore.
 
 **Tablet side** (`joinSession()`, `pollSession()`, `applySessionPlan()`):
-- A session selection becomes the same `{kind:"watch"|"multi", ...}` object
+- A session selection becomes the same `{kind:"watch", ...}` object
   the board already understands (`selectionFromPlan()`) plus `sessionId`/
   `sessionVersion`/`sessionPlan`; nothing downstream knows about sessions.
   `saveSelection()` stores only a pointer + the tablet's own preferences
@@ -3429,8 +3431,8 @@ Viewers can watch with the id alone; every write needs the host credentials.
   session exists to avoid. A round that never resolves as finished is fixed
   centrally: the host removes or replaces it in the plan (confirmation shows
   how many tablets move). Without a session the button is unchanged (6.32).
-- A plan that changes kind (watch <-> Split View) or event restarts the board
-  cleanly (`startWatching()`), like reopening the link.
+- A plan for another event restarts the board cleanly (`startWatching()`),
+  like reopening the link.
 - Every poll doubles as a heartbeat: an anonymous per-page-load id (not
   persisted) plus the key(s) the tablet is on; the server only keeps them
   15 s. This is what lets the host see "N tablets online" and how many a
@@ -3446,18 +3448,18 @@ in from ANY device and loads the plan into the same builders
 (`loadPlanIntoSetup()`). Edits are a **draft**: nothing reaches the tablets
 until *Apply to all tablets*, and the panel shows "unapplied changes". Apply
 asks the server who is online (`/clients`) and `affectedClients()` counts the
-tablets whose current entry would be removed/replaced (or whose column's
-group/route changes, or everyone on a kind change); only then does it ask
+tablets whose current entry would be removed/replaced (or whose split view's
+column filters change); only then does it ask
 for a confirmation (`window.confirm`) - moving/adding entries never does.
 If the clients lookup fails, `removesOrReplaces()` decides instead. A `409`
 (someone else published) applies nothing and tells the host to reload.
 `hostEditorBound` is false after every page load and every event load: the
 editor then holds defaults and must NOT be applied over the live plan, so
 Apply refuses until the plan was loaded into it ("Reload plan from server")
-or the session was created from it. The Split View builder gained per-column
-Group/Route controls (`renderColumnViewControls()`, populated from the
-column's first round) - they also work in plain Split View (they end up in
-the `multi=` link).
+or the session was created from it. The split-view column editor has
+per-column Group/Route controls (`renderColumnViewControls()`, populated from
+the column's first round) - they also work in plain Split View (they end up in
+the `m…` link token) in a split-view sequence entry.
 
 **Privacy/security notes:** the legal text (Datenschutz) mentions the
 session data. Only `textContent` renders plan strings (a group name like
@@ -3471,6 +3473,17 @@ passwords can lock the host out for 60 s at a time.
 `test/sessions.test.js` (API, auth, conflict, rate limits, restore). The
 browser behaviour is covered by the manual checklist in
 [Tests.md](Tests.md).
+
+**Editor binding (added later).** Reported live: after a reload the host could
+not apply a new round (the editor held defaults, "Reload plan" opened the old
+single round as a Sequence and dropped the dropdown choice). Now
+`bindEditorToHostedPlan()` fills the editor from the live plan whenever the
+hosted session's event is (re)loaded (and once the plan is known after a page
+load), `fillEditorFromPlan()` fills the Sequence editor (6.50 - an earlier version
+reopened a one-round plan in Single round mode, which sessions no longer
+have) and the
+host panel prints the live plan (`renderSessionSummary()`, labels from the
+round data). The applied plan is always what the editor shows.
 
 ### 6.47 Speed training as a sequence entry, controlled with the host password
 
@@ -3535,6 +3548,281 @@ entry - tablets that already moved on don't go back (they only move forward);
 to re-run a finished training the host removes and re-adds it. A server
 restart resets the position. Training is Speed only.
 
+### 6.48 Technical incidents (TI): the jury president re-starts an athlete
+
+**Why:** after a technical incident the jury president lets an athlete climb
+again. results.info does not record that repetition in a usable way (the old
+result stays; the only hint is a `restarted` flag on the ascent, not yet
+analysed), so the wall tablets cannot infer it. Decided with the user:
+**Lead and Boulder only (never Speed)**, sessions only, the **host password**
+is the JP's credential (no second password), the TI ends with a manual
+**"TI done"**, plus one automatic safety net (below). **Boulder: see 6.51 - a TI
+is a rotation SLOT, the athlete is drawn on his boulder only (an earlier
+version drew him on every boulder of the block - that was wrong).**
+
+**Data:** `session.ti` (server memory, like the training counter): `{ id, no,
+roundId, routeIds[], athleteId, beforeAthleteId|null, createdAt, done }` (Boulder
+adds `boulderRouteId` and, for a fixed rotation, `slot`, see 6.51) plus
+`session.tiVersion` (starts at the creation time in ms and only ever grows, so
+a restarted/restored server can never hand out a version a tablet already
+holds). Viewers get both in the normal poll (`GET /:id?v=&tv=`, "unchanged"
+only when BOTH versions match); writes are `POST /:id/ti`, `POST
+/:id/ti/:tiId/done`, `DELETE /:id/ti/:tiId`, all host-key only. The server
+checks: ids numeric, `athleteId !== beforeAthleteId`, 1-20 distinct routes,
+the round is in the session's plan, and - through the injected
+`roundDiscipline()` (a cached round fetch in `server.js`) - that the round is
+Lead or Boulder. Max 30 per session (open + finished; a full session drops the
+oldest FINISHED one, never an open one), at most 10 finished are kept, a TI is
+dropped when its round leaves the plan, everything is lost on a restart
+(restored sessions start empty - the JP page still shows the list, so it can
+be re-entered).
+
+**Overlay, not inference:** `SessionPlan.applyTechnicalIncidents()` (shared,
+pure, unit-tested) takes a lane that `computeLane()`/`computeBoulderLane()`/
+`computeSpeedQualificationLane()` already built from the real results and
+inserts the re-starting athlete (a copy flagged `tiRestart`, drawn by
+`markTechnicalIncident()`: a blue frame/row and a "TI" badge in the corner, name
+and bib as for everybody) in front of `beforeAthleteId` in the
+list `[atWall, onDeck, ...queue]`; in front of the athlete at the wall it
+becomes CLIMBING, in front of NEXT it becomes NEXT, otherwise it sits in the
+queue; `beforeAthleteId === null` appends it at the end once the end of the
+start list is in view (also after the round finished - then it is CLIMBING).
+Several TIs keep their creation order. `buildLane()` calls it through
+`withTechnicalIncidents()` BEFORE `withNextCategoryPreview()` (so the preview
+padding counts the TI), and the inference functions never see an incident.
+Colours/labels stay (6.45): the card is still CLIMBING/NEXT in green/red;
+the TI is carried by the blue frame (`--ti`, blue so it stays distinct for
+red-green colour blindness) and the badge, in the queue by a blue row.
+
+**When a TI stops showing, per route:** (1) `done` (JP pressed "TI done");
+(2) **safety net** - the athlete it stands in front of is `active` or done on
+THAT route (`incidentSupersededOnRoute()`): otherwise the wall would keep
+naming the TI athlete as CLIMBING while the next athlete is already
+climbing. In Boulder this is evaluated per boulder (the empty place of the slot
+and the athlete each disappear on a boulder when the athlete in front has
+started there); (3) the
+re-starting athlete is `active` on the route (`isUnderway`) - the real lane
+already shows them, never twice. After (3) the re-climb ends with the athlete
+confirmed again, so the TI shows up once more until the JP presses "TI done"
+- manual by design (the automatic detection was explicitly postponed).
+
+**Sequence hold:** an open TI "at the end of the start list" makes
+`isRoundFullyFinished()` false (`incidentHoldsRound()`), otherwise the
+sequence would move on before the re-start. A forgotten end-TI therefore holds
+the tablets on that round until it is finished or removed - the JP list shows
+it.
+
+**JP page:** `?s=<id>&jp=1` (link + QR in the host panel, a collapsed
+"Jury President (JP)" block; the host panel lives on the setup screen only, so
+the fullscreen QR concern of 6.7 doesn't apply). It asks for the host password
+once (stored host credentials are reused, same as the training controller).
+**One step, nothing is calculated (6.51):** round, route/block, the athlete who
+climbs again (**typed as a bib number**, a datalist suggests the block's start
+list; ANY athlete of that route/block can be picked - also one who is no longer
+on the wall or whose result isn't entered yet, because the attempt may be over
+without the data saying so; a line under the field says whether the athlete has
+a result / is climbing / has none yet - a warning, not a block;
+`juryAthleteId()` resolves bib, "#bib", the full line or a unique name part),
+for Boulder the boulder he climbs again on, and the answer of the TI-Rechner as
+one of three choices: *in front of start position X* (typed; the athlete at that
+position is shown for checking), *no gap needed (end of the start list)*, or
+*uses the slot of another TI* (Boulder only). The preview sentence says what is
+saved, "Add TI" saves, every field of a new TI starts empty (the TI-Rechner's
+rule). The round is re-read right before saving and the request is refused if the
+athlete in front has already started on every boulder. The list shows open / over
+(the athlete in front has started) / done TIs with "Edit", "TI done" and "Remove";
+"Edit" loads a TI into the form (round and block stay) to pass on a position that
+the TI-Rechner has moved. Speed rounds show "not available". The page polls every
+3 s; the live state of the TIs (the "over" label) comes from a round refresh
+every 6 s. **The form always belongs to the round the dropdown shows:**
+`fillJuryRounds()` (called again on every plan change) reloads the form when
+the dropdown ended on a round other than the loaded one, `resetJuryForm()`
+empties the form before a round loads, and "Add TI" refuses to run when the
+loaded round differs from the displayed one - a TI must never be filed for the
+round named at the top with the athletes/routes of another. A deadline hint
+(the next planned athlete has already started on that route/boulder, a TI can
+only be claimed until then) is a warning only.
+
+**Tablets:** `selectionFromPlan()` carries `sessionTi/sessionTiVersion`;
+`pollSession()` sends `tv=` and, when the incident version changed, replaces
+the list and redraws immediately (`pollToken++` + `pollCurrent()`/
+`pollMulti()` - same mechanism as a plan change). Works in watch sessions and
+Split View columns (both go through `buildLane()`). The next TI display is
+therefore at most one session poll (5 s) behind the JP's tap.
+
+**Known, accepted limits:** a tablet that lost the server keeps the last TI list
+until it reconnects. Nothing is written to results.info.
+
+### 6.49 TI position: the Judge Guide's rotation-slot rule (superseded by 6.51)
+
+The Judge Guide 2026 rotation-slot rule (Annex 5.2: `N = max(2k, 2B - 2k + 2)`
+places after the athlete, counting earlier slots) was built here first as a list
+rule, then as a port of the owner's `computeTI()`. **Both are gone: 6.51.** The
+Callzone does not calculate a TI position any more, the owner's TI-Rechner does.
+Source of the rule: World Climbing Competition Operations Playbook, Judge Guide
+(V0.1, June 2026), Lead 2.16, Boulder 4.14, Annex 5.2 (tables 2 and 3, example
+5.2.3). The source PDF is the user's own, not in the repo.
+
+### 6.50 Sessions live in the Sequence mode (Advanced); the Split View is a sequence entry
+
+**Why:** reported live: with a session already hosted, switching the setup tab
+(Single round -> Sequence, or to Split View) left the session on the old
+plan, or changed its type - the setup screen had several editors for what the
+server sees as one plan. Decided with the user (in two steps): shared sessions
+exist **only in the Sequence mode** (tab marked "Advanced"); Single round and
+Training don't show the session panel at all; and the **Split View mode is gone
+- it is an entry type of the Sequence**, with 1 to 5 categories side by side.
+A plan therefore has exactly one shape, and a session can't be "made in one tab
+and edited in another". More Advanced features come later.
+
+**Rules** (don't undo them): (1) `planFromSetup()` builds a plan ONLY from the
+Sequence builder (`currentMode === "sequence"`) and refuses otherwise, so the
+open tab can never decide what gets applied; (2) `updateSessionPanelForMode()`:
+the session panel is visible in Sequence mode only (a hosted session stays
+hosted and comes back with that tab); (3) the modes are `single | training |
+sequence` - there is no `kind: "multi"` selection, plan or tab any more; (4)
+`fillEditorFromPlan()` always fills the Sequence editor and
+`bindEditorToHostedPlan()` does so when the hosted session's event is loaded
+without switching the tab the user is on; (5) the server only knows
+`kind: "watch"` (`validatePlan()` refuses the old `multi` plans, tablets ignore
+a cached legacy plan).
+
+**Old Split View links and saved selections still open:** `readUrlSelection()`
+turns a `multi=` link (and `loadSelection()` a stored `{kind:"multi"}` via
+`legacyMultiToWatch()`) into a watch selection with ONE split entry (columns
+capped at 5), so bookmarked Split View tablets keep working and everything
+downstream only has the one code path. Don't reintroduce `pollMulti()`.
+
+**The split entry** (`{type:"split", columns}`): **1-5 columns**, each a list of
+Lead/Boulder rounds (no Speed, the rule from 6.23) with its own group/route
+filter; a column may be empty, an entry needs at least one round overall; a
+round can appear **once in the whole plan** (the validator claims every id,
+the builder excludes the other rows and columns). With one column the board
+title is that round's name instead of "Split View". Key `split:<fingerprint>`
+(`digest()` of all columns' round lists, two 32-bit hashes - a readable key
+would not fit the 60 characters the server keeps of a heartbeat key, and a
+truncated one would count every tablet as affected): editing which rounds a
+column holds makes it another entry (tablets on it move to the first unfinished
+entry, the confirmation counts them); changing only a column's group/route
+keeps the key and is applied in place with each column's progress kept
+(`viewSignature()`, `applySessionPlan()` updating `splitState`). Local link
+token `m<col>*<col>` with `col = ids~group~routes` (`+` joins ids and routes,
+exactly like the former `multi=`). A one-entry sequence that is not a plain
+round (split, training, paired) is written as `rounds=` (the singular `round=`
+is only for a plain round), and `round=` is read through the token parser.
+
+**Playback:** `pollCurrent()` has a `split` branch that reuses the former
+Split View machinery: `ensureSplitState()` builds one `{sequence, sequenceIndex,
+group, route}` per column (`splitState`, reset like `pairedState` on every entry
+change), `pollOneMultiColumn()` runs each column through its own rounds in
+parallel, `renderMultiBoard()` draws them (per-column group/route tabs, Boulder
+final mode toggle, "Next:" line, "Skip to next" outside sessions). **The entry
+is done when every column has finished its last round** (empty columns count
+as done) and the Sequence moves on. `isRoundFullyFinished()` still holds for an
+open end-of-list technical incident (6.48), so such a column doesn't advance;
+`withNextCategoryPreview()` is off while a split view is current or next.
+Technical incidents and the JP page work in every column (the JP page lists
+every round of every column; a TI is dropped with its round).
+
+**Builder:** "+ Add split view" adds a row with the column editor nested
+(`renderColumnCards()`: container, drafts, re-render callback and an
+`excludedFor()` set), a "Categories side by side" count (1-5, default 2) and
+the usual up/down/remove; the row isn't draggable. **Accepted limits:** a
+split view can't contain Speed rounds, a training or a paired entry; reducing
+the column count drops the removed columns' rounds; the local group/route tab
+choice of a split column is not persisted in the link (it never was).
+
+**Consecutive split views are joined in the builder, not at playback
+(added after a live report).** Two split entries in a row make a column wait
+for the slowest column of the first one (an entry is done only when every
+column is done). The wanted behaviour - each column moves on to its own next
+round - is exactly what a column's own round list already does, so the fix is
+an editor convenience, not a playback change: a split row directly under
+another split row gets **"Continue the columns above"**
+(`mergeSplitIntoPrevious()`), which appends each column's rounds to the same
+column of the row above and removes the row. The result is an ordinary split
+entry, so sessions, entry keys, `viewSignature()` and technical incidents need
+no special case. Refused/asked in `splitMergeProblem()`: different column
+counts (button disabled), a column that would mix Lead and Boulder (message),
+different group/route tabs in the same column (confirm; the upper split's tabs
+win, an empty upper column takes the lower one's). **Don't** "merge" consecutive
+split entries while playing instead - the filters are per column (not per
+round), the plan the JP/host sees would differ from what is drawn, and a
+runtime-built entry has no stable key for the tablets to follow. The split row
+also carries a standing hint that a column moves on without waiting.
+
+### 6.51 Boulder TI = a rotation slot with a gap at Boulder 1; the position comes from the TI-Rechner
+
+**Why:** reported live: "if the athlete has a TI at boulder 2 he first climbs the
+whole round to the end and only then comes back to boulder 2 - a gap has to be
+left at boulder 1 before". The first Boulder TI stored no boulder and drew the
+athlete on EVERY boulder of the block right away. That was my reading of an
+ambiguous answer ("yes, before boulder 1"); I wrote "on every boulder" into the
+plan and it was approved without that detail being confirmed. Then I built a
+list rule for the position and, after the owner pointed to his own tool, a port
+of its `computeTI()` (commit `7b42498` of the repo `ti-rechner`, identical in
+9021 random sequences) - and four days later the tool had moved on: re-run
+against commit `24a5c75` the port was different in 18 % of the TI calculations
+(all of them the new "free slot re-use", 54 % of the sequences with two or more
+TIs). The tool keeps gaining rules decided with the owner (slot re-use, ghost
+slots that keep a deleted TI's gap, "no gap in the past", the clock as the truth
+for the start list, a manual "late decision", the end of the start list, 120,000
+random operating steps of tests there). **Decided with the user (14 Oct 2026):
+the Callzone does NOT calculate. The TI-Rechner (Desktop/Claude/TI Rechner, live
+ti.comptools.cloud) is the calculator; the JP takes over its result.** Don't
+rebuild a solver here - a second implementation drifts, that is exactly how this
+went wrong twice.
+
+**What the JP takes over** (the three answers of the TI-Rechner's result box):
+*Boulder 1: "in front of start position X"* (or, for "resolved before the interval
+ended", "in front of the next athlete (position X)"), *"no gap needed - end of the
+start list"*, *"no new gap - uses the slot of TI n"*. Plus the athlete (bib) and
+the boulder he comes back on. Start position = the position column of
+results.info on the first boulder of the block (the tool's "Order"); the athlete
+at that position is shown in the form so a typing error is visible. A position
+behind the last athlete means the end of the list.
+
+**Model:** a TI is a SLOT that travels through the block like a ghost athlete.
+**Wall (decided with the user):** in front of the athlete the slot stands in front
+of, on the boulder the athlete climbs again on (`boulderRouteId`) the athlete
+(blue frame, "TI" badge), on EVERY other boulder of the block an EMPTY place
+("-": nobody is called there in that interval; it is never drawn at the end of the
+list). A TI that uses another one's slot (`reuseOf`) has no gap of its own: on its
+own boulder it takes the place of the owner's empty place, elsewhere it draws
+nothing, it stands where its owner stands (the owner's position is followed live,
+also after an "Edit") and sorts by the owner's creation time. The athlete in front
+having started on a route ends the entry on that route (safety net, per route);
+the athlete's own `active` status only hides HIS entry. When an owner is removed
+or trimmed the server hands its position on (`releaseUsers()`): the user becomes a
+TI with a gap of its own (the tool keeps such a gap as a ghost). Lead is
+unchanged: the athlete on the incident's route in front of the chosen position,
+the JP decides when (no calculation, no time input). World Series / finals
+without a slot rule: the TI-Rechner only says "after the current rotation ends,
+alone", the JP enters the position the same way; drawn like any Boulder TI
+(my reading of "shown at the end of the rotation" - confirm).
+
+**Stored:** `{ id, no, roundId, routeIds[], athleteId, beforeAthleteId|null,
+boulderRouteId (Boulder), reuseOf (id, Boulder), createdAt, done }`. The server
+validates (6.48) and, for Boulder, that `boulderRouteId` is one of the block's
+routes and `reuseOf` is another, open-or-finished, non-reusing TI of the same
+round and block on another boulder; `PUT /:id/ti/:tiId` edits the same fields
+(round and block can't change, an owner stays a valid owner). Lead has none of
+the Boulder fields. `no` is stable (never renumbered), the list shows "TI n".
+
+**Not built (asked, to be decided):** a "gap only" entry for a TI that was deleted
+in the TI-Rechner but whose gap still counts (its ghost slot) - until the gap has
+passed keep the TI open here, or ask for it. Display of "resolved before the
+interval ended" (Boulder 1): the athlete on Boulder 1 and empty places on the
+other boulders in front of the same athlete, like any slot - the tool's schedule
+puts the athlete's own later climbs into that slot, so on the other boulders the
+empty place is a simplification. No times are shown here.
+
+**Limits:** results.info records no re-climb, so on a boulder with the sticky
+frontier (5.6) the slot's athlete shows as NEXT behind the previous athlete and is
+CLIMBING only if his ascent goes `active` again; "TI done" ends it. If the
+organisers change the start order outside results.info the positions in the
+TI-Rechner and here no longer match - the form shows who a position means.
+
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
 - **A visual bracket tree** for Speed elimination (like the PDF heat sheet
@@ -3595,8 +3883,11 @@ restart resets the position. Training is Speed only.
   and the in-memory shared sessions (6.46), all ephemeral by design. Making
   sessions survive a restart would need an external store and was
   deliberately not built (restore from a host device covers it).
-- **Training in a Split View session** — Training entries exist only in
-  Sequence/Single plans (6.47), not in Split View columns.
+- **Training (or Speed, or a paired entry) inside a split view** — a split
+  view's columns hold plain Lead/Boulder rounds only (6.23/6.50).
+- **Technical incidents for Speed, or detecting a finished TI automatically**
+  — TIs are Lead/Boulder only and end with "TI done" (6.48); the `restarted`
+  flag on an ascent is a lead for a later automatic end, not analysed yet.
 - **Editing/writing to results.info** — this app is read-only against the
   API; it has no code path that could modify competition data.
 

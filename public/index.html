@@ -34,9 +34,8 @@
 
   <div id="modeTabs" class="mode-tabs" hidden>
     <button type="button" class="mode-tab" data-mode="single">Single round</button>
-    <button type="button" class="mode-tab" data-mode="sequence">Sequence</button>
     <button type="button" class="mode-tab" data-mode="training">Training</button>
-    <button type="button" class="mode-tab" data-mode="multi">Split View</button>
+    <button type="button" class="mode-tab mode-tab--advanced" data-mode="sequence">Sequence <span class="mode-tab-badge">Advanced</span></button>
   </div>
 
   <div id="categoryRow" class="setup-row" hidden>
@@ -63,6 +62,10 @@
       <span id="trainingEntryHint" class="paired-entry-hint" hidden>or add a Speed training (stepped manually):</span>
       <button id="addTrainingToSequence" class="ghost" hidden>+ Add training</button>
     </div>
+    <div class="setup-row">
+      <span id="splitEntryHint" class="paired-entry-hint" hidden>or show several Lead/Boulder categories side by side:</span>
+      <button id="addSplitToSequence" class="ghost" hidden>+ Add split view</button>
+    </div>
     <label id="showNextPreviewRow" class="checkbox-row">
       <input type="checkbox" id="showNextPreview" checked />
       Show next category's startlist near the end
@@ -70,30 +73,13 @@
     <button id="watchSequence">Show sequence</button>
   </div>
 
-  <div id="multiSetup" hidden>
-    <div class="training-hint">Split View supports Lead and Boulder only - Speed rounds aren't available here. Use Single round, Sequence, or Training mode for Speed.</div>
-    <div class="setup-row">
-      <label>
-        Categories side by side
-        <div id="multiCountTabs" class="mode-tabs">
-          <button type="button" class="mode-tab active" data-count="2">2</button>
-          <button type="button" class="mode-tab" data-count="3">3</button>
-          <button type="button" class="mode-tab" data-count="4">4</button>
-          <button type="button" class="mode-tab" data-count="5">5</button>
-        </div>
-      </label>
-    </div>
-    <div id="multiColumnsConfig" class="multi-columns-config"></div>
-    <button id="watchMulti">Show Split View</button>
-  </div>
-
   <details id="sessionPanel" class="session-panel">
     <summary>Shared session (optional)</summary>
     <div class="session-body">
       <p class="session-hint">
-        Publish your plan so several tablets follow it: they open one link or QR code, and whenever you change the
-        plan here and press "Apply to all tablets" they all follow. Anyone with the link can watch; changing the plan
-        needs the host password.
+        Publish the sequence above so several tablets follow it: they open one link or QR code, and whenever you change
+        the sequence here and press "Apply to all tablets" they all follow. Anyone with the link can watch; changing the
+        plan needs the host password.
       </p>
 
       <div id="sessionHostState" hidden>
@@ -101,6 +87,7 @@
           Hosting session <strong id="sessionHostId"></strong> &middot; version <span id="sessionHostVersion"></span>
           &middot; <span id="sessionOnline">checking tablets&hellip;</span>
         </div>
+        <div id="sessionPlanSummary" class="session-hint session-summary"></div>
         <div class="share-row">
           <span class="share-label">Link for tablets:</span>
           <input id="sessionLink" class="share-input" type="text" readonly />
@@ -113,6 +100,20 @@
           <button id="copySessionControlLink" type="button" class="ghost">Copy</button>
           <div id="sessionControlQr" class="qr-code" title="Scan to control the training from a phone (asks for the host password)"></div>
         </div>
+        <details id="juryPanel" class="jury-panel">
+          <summary>Jury President (JP) - technical incidents</summary>
+          <p class="session-hint">
+            The jury president opens this link on a phone and enters the host password. There they can let an athlete
+            climb again (technical incident, "TI") in front of a chosen athlete - the wall tablets of this session show
+            it in the queue and as NEXT/CLIMBING at the right moment. Lead and Boulder only.
+          </p>
+          <div class="share-row">
+            <span class="share-label">Link for the JP:</span>
+            <input id="juryLink" class="share-input" type="text" readonly />
+            <button id="copyJuryLink" type="button" class="ghost">Copy</button>
+            <div id="juryQr" class="qr-code" title="Scan to open the technical incident page (asks for the host password)"></div>
+          </div>
+        </details>
         <div id="sessionDirty" class="session-dirty" hidden>You have changes that are not applied to the tablets yet.</div>
         <div class="setup-row">
           <button id="applySession" type="button">Apply to all tablets</button>
@@ -167,7 +168,7 @@
         <h4>Datenschutzerklärung</h4>
         <p><strong>Verantwortlicher</strong> im Sinne der DSGVO ist die im Impressum oben genannte Person.</p>
         <p><strong>Keine eigenen Cookies, kein eigenes Tracking.</strong> Diese Website selbst setzt keine Cookies und keine Analyse- oder Tracking-Werkzeuge ein. Die zuletzt gewählte Runde/Einstellung wird ausschließlich im <code>localStorage</code> deines Geräts gespeichert (technisch notwendig für die Kernfunktion, verlässt dein Gerät nie) - eine Einwilligung ist dafür nach § 25 Abs. 2 Nr. 2 TDDDG nicht erforderlich. Für den eingebundenen Spenden-Button siehe unten.</p>
-        <p><strong>Gemeinsame Sitzungen (optional).</strong> Nur wenn du eine gemeinsame Sitzung erstellst oder einer beitrittst, speichert der Server im Arbeitsspeicher den veröffentlichten Ablaufplan (Event- und Runden-IDs), bei Host-Sitzungen einen Hash des Host-Passworts (nicht das Passwort selbst), die manuell gesetzte Trainingsposition (eine Zahl) sowie für wenige Sekunden pro Gerät eine zufällige, nicht dauerhaft gespeicherte Kennung samt der gerade angezeigten Runde, um die Zahl verbundener Tablets anzuzeigen. Zur Missbrauchsabwehr (Passwort-Fehlversuche, Anlegen von Sitzungen) wird die IP-Adresse kurzzeitig im Arbeitsspeicher verarbeitet. Diese Daten werden bei einem Serverneustart oder nach spätestens 24 Stunden Inaktivität gelöscht. Rechtsgrundlage ist unser berechtigtes Interesse am Betrieb der Funktion und an der Abwehr von Missbrauch (Art. 6 Abs. 1 lit. f DSGVO). Auf deinem Gerät werden im <code>localStorage</code> die Sitzungs-ID, der zuletzt erhaltene Plan und - nur auf Host-Geräten - ein Zugangsschlüssel gespeichert (technisch notwendig für diese Funktion).</p>
+        <p><strong>Gemeinsame Sitzungen (optional).</strong> Nur wenn du eine gemeinsame Sitzung erstellst oder einer beitrittst, speichert der Server im Arbeitsspeicher den veröffentlichten Ablaufplan (Event- und Runden-IDs), bei Host-Sitzungen einen Hash des Host-Passworts (nicht das Passwort selbst), die manuell gesetzte Trainingsposition (eine Zahl), vom Kampfgericht eingetragene technische Zwischenfälle (Runden-ID sowie die IDs der betroffenen, öffentlich auf results.info gelisteten Athlet:innen) sowie für wenige Sekunden pro Gerät eine zufällige, nicht dauerhaft gespeicherte Kennung samt der gerade angezeigten Runde, um die Zahl verbundener Tablets anzuzeigen. Zur Missbrauchsabwehr (Passwort-Fehlversuche, Anlegen von Sitzungen) wird die IP-Adresse kurzzeitig im Arbeitsspeicher verarbeitet. Diese Daten werden bei einem Serverneustart oder nach spätestens 24 Stunden Inaktivität gelöscht. Rechtsgrundlage ist unser berechtigtes Interesse am Betrieb der Funktion und an der Abwehr von Missbrauch (Art. 6 Abs. 1 lit. f DSGVO). Auf deinem Gerät werden im <code>localStorage</code> die Sitzungs-ID, der zuletzt erhaltene Plan und - nur auf Host-Geräten - ein Zugangsschlüssel gespeichert (technisch notwendig für diese Funktion).</p>
         <p><strong>Hosting.</strong> Diese Website wird bei Render Services, Inc. (USA) gehostet. Beim Aufruf der Seite verarbeitet Render technische Zugriffsdaten (u. a. IP-Adresse, Zeitpunkt des Zugriffs) im Rahmen des Serverbetriebs; Rechtsgrundlage ist das berechtigte Interesse an einem sicheren und funktionsfähigen Betrieb (Art. 6 Abs. 1 lit. f DSGVO). Da Render seinen Sitz in den USA hat, ist eine Datenübermittlung in ein Drittland verbunden - Grundlage hierfür sind die von Render abgeschlossenen EU-Standardvertragsklauseln sowie die Zertifizierung unter dem EU-US Data Privacy Framework. Details: <a href="https://render.com/privacy" target="_blank" rel="noopener noreferrer">render.com/privacy</a> und <a href="https://render.com/dpa" target="_blank" rel="noopener noreferrer">render.com/dpa</a>.</p>
         <p><strong>Spenden-Button (Ko-fi).</strong> Zur freiwilligen Unterstützung der Serverkosten bindet diese Seite den Spenden-Button des Anbieters Ko-fi Labs Limited (Suite 501, The Nexus Building, Broadway, Letchworth Garden City, Herts, SG6 9BL, Vereinigtes Königreich) ein. Bereits beim Laden der Seite wird dafür ein Skript von <code>storage.ko-fi.com</code> nachgeladen; dabei werden technische Daten (u. a. IP-Adresse, Browser-/Geräteinformationen, aufrufende Seite) an Ko-fi übermittelt, und Ko-fi kann eigene Cookies setzen. Rechtsgrundlage ist unser berechtigtes Interesse an der Finanzierung des Serverbetriebs (Art. 6 Abs. 1 lit. f DSGVO). Details: <a href="https://more.ko-fi.com/privacy" target="_blank" rel="noopener noreferrer">more.ko-fi.com/privacy</a>. Die eigentliche Zahlungsabwicklung übernimmt nicht Ko-fi selbst, sondern der von dir dort ausgewählte Zahlungsdienstleister (z. B. PayPal oder Stripe) auf dessen eigener Seite; wir erhalten dabei keine Zahlungsdaten.</p>
         <p><strong>Externe Links.</strong> Der Link "Request a Feature or Send a Message" führt zu einem Google-Formular. Es werden keine Daten übertragen, bevor du diesen Link anklickst; danach gilt die Datenschutzerklärung von Google.</p>
@@ -294,6 +295,51 @@
     <button id="controlRestart" type="button" class="ghost">Restart training</button>
     <button id="controlFinish" type="button" class="ghost">Finish training</button>
   </div>
+</main>
+
+<main id="jury" class="controller jury" hidden>
+  <div class="board-topbar">
+    <button id="juryBackBtn" class="ghost">&larr; switch round</button>
+    <div id="juryTitle" class="round-title">Technical incident (TI)</div>
+    <div id="juryStatus" class="status-line"></div>
+  </div>
+  <div id="juryGate" class="controller-gate" hidden>
+    <p class="session-hint">Enter the host password of this session to add technical incidents.</p>
+    <input id="juryPassword" type="password" autocomplete="current-password" placeholder="Host password" />
+    <button id="juryUnlock" type="button">Unlock</button>
+  </div>
+  <div id="juryMsg" class="session-msg session-msg--error" role="status" hidden></div>
+  <div id="juryForm" class="jury-form" hidden>
+    <label>Category / round
+      <select id="juryRound"></select>
+    </label>
+    <label id="juryScopeRow">Route / block
+      <select id="juryScope"></select>
+    </label>
+    <label>Athlete who climbs again (bib number)
+      <input id="juryAthlete" type="text" inputmode="numeric" list="juryAthleteList" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="e.g. 12" />
+      <datalist id="juryAthleteList"></datalist>
+    </label>
+    <label id="juryBoulderRow" hidden>Climbs again on
+      <select id="juryBoulder"></select>
+    </label>
+    <div id="juryStep1Msg" class="jury-preview"></div>
+    <label>From the TI-Rechner
+      <select id="juryGapMode"></select>
+    </label>
+    <label id="juryPosRow">Start position
+      <input id="juryPos" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="e.g. 9" />
+    </label>
+    <div id="juryPosInfo" class="jury-preview"></div>
+    <label id="juryReuseRow" hidden>Slot of
+      <select id="juryReuse"></select>
+    </label>
+    <div id="juryPreview" class="jury-preview"></div>
+    <button id="juryAdd" type="button">Add TI</button>
+    <button id="juryCancel" type="button" class="ghost" hidden>Cancel</button>
+  </div>
+  <h3 class="jury-heading">Technical incidents</h3>
+  <ul id="juryList" class="jury-list"></ul>
 </main>
 
 <script src="qrcode.js"></script>

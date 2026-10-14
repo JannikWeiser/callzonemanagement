@@ -17,6 +17,8 @@
   --next-text: #ffffff;
   --queue: #b7bdc9;
   --preview: #7a8294;
+  --ti: #3b82f6; /* technical incident highlight (6.48): blue, distinct from go/next for red-green colour blindness */
+  --ti-bg: #17315c;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -237,6 +239,20 @@ h1 {
   border-radius: 14px;
   padding: 1rem;
 }
+
+/* A split-view row of the Sequence builder (6.50): the column editor nested in
+   the row, full width, not draggable (the ▲▼ buttons move it). */
+.sequence-item--split { cursor: default; align-items: flex-start; }
+.sequence-split { flex: 1 1 100%; min-width: 0; }
+.sequence-split .sequence-pair { margin-bottom: 0.4rem; }
+.sequence-split-count { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--muted); }
+.sequence-split-count select { flex: none; min-width: 0; padding: 0.35rem 0.6rem; }
+.sequence-split-hint { margin: 0 0 0.5rem; font-size: 0.8rem; color: var(--muted); }
+.sequence-split .sequence-pair { flex-wrap: wrap; }
+.sequence-split .sequence-badge { white-space: nowrap; flex: none; }
+.sequence-split-merge { padding: 0.35rem 0.7rem; font-size: 0.85rem; white-space: nowrap; flex: none; }
+.sequence-split .multi-column-config { padding: 0.75rem; }
+.sequence-split .multi-columns-config { margin-bottom: 0.25rem; }
 
 .multi-column-config .sequence-list { margin-bottom: 0.75rem; }
 .multi-column-config > button { width: 100%; }
@@ -614,6 +630,33 @@ button.ghost {
 .queue-list li { color: var(--queue); overflow-wrap: anywhere; }
 .queue-list li.queue-item--preview { color: var(--preview); font-style: italic; }
 
+/* Technical incident (6.48): the re-starting athlete is a normal card/list
+   row with its own colour and a "TI" badge in the corner. The card keeps its
+   CLIMBING/NEXT colour and label; the blue frame and badge carry "TI". */
+.is-ti { position: relative; }
+.card.is-ti { box-shadow: 0 0 0 0.25rem var(--ti); }
+.queue-list li.is-ti {
+  color: #fff;
+  background: var(--ti-bg);
+  border-left: 0.3rem solid var(--ti);
+  border-radius: 0.4rem;
+  padding: 0.2rem 3.2rem 0.2rem 0.5rem;
+}
+.ti-badge {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  padding: 0.05rem 0.55rem;
+  border-radius: 0.4rem;
+  background: var(--ti);
+  color: #fff;
+  font-weight: 800;
+  font-size: max(0.7rem, calc(var(--lane-fs, 1.3rem) * 0.5));
+  letter-spacing: 0.05em;
+  line-height: 1.3;
+}
+.queue-list li.is-ti .ti-badge { top: 50%; transform: translateY(-50%); font-size: 0.8rem; }
+
 @media (max-width: 640px) {
   .lanes-grid { grid-template-columns: 1fr; }
 }
@@ -745,6 +788,8 @@ button.ghost {
 .session-body { padding: 0 1rem 1rem; }
 .session-hint { color: var(--muted); font-size: 0.85rem; margin: 0 0 1rem; }
 .session-status { margin-bottom: 0.75rem; font-size: 0.95rem; }
+.session-summary { margin: 0 0 0.75rem; color: var(--text); font-weight: 700; overflow-wrap: anywhere; }
+.session-summary:empty { display: none; }
 .session-dirty {
   margin: 0 0 0.75rem;
   padding: 0.5rem 0.75rem;
@@ -818,6 +863,37 @@ button.ghost {
 .controller-extra { margin-top: 1rem; }
 #controllerMsg { margin: 0.75rem 0; }
 
+.jury-panel { margin: 0.75rem 0; }
+.jury-panel > summary { cursor: pointer; font-weight: 700; font-size: 0.9rem; padding: 0.4rem 0; }
+.jury-form { display: flex; flex-direction: column; gap: 0.9rem; margin: 1rem 0; }
+.jury-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.jury-form select, .jury-form input[type="text"] { font-size: 1rem; padding: 0.7rem; }
+.jury-form button { font-size: 1.2rem; padding: 1rem; }
+.jury-preview { min-height: 1.4em; font-weight: 700; overflow-wrap: anywhere; }
+.jury-preview.is-warning { color: var(--danger); }
+.jury-form .jury-check { flex-direction: row; align-items: center; gap: 0.6rem; font-size: 0.95rem; color: var(--text); }
+.jury-form .jury-check input { width: 1.4rem; height: 1.4rem; }
+.jury-heading { margin: 1.5rem 0 0.5rem; font-size: 1rem; }
+.jury-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+.jury-list li {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
+  overflow-wrap: anywhere;
+}
+.jury-list li.is-done { opacity: 0.55; }
+.jury-list .jury-item-meta { color: var(--muted); font-size: 0.8rem; }
+.jury-list .jury-item-text { font-weight: 700; margin: 0.15rem 0 0.5rem; }
+.jury-list .jury-item-buttons { display: flex; gap: 0.6rem; }
+.jury-list .jury-item-buttons button { flex: 1; padding: 0.7rem; font-size: 1rem; }
+.jury-empty { color: var(--muted); font-size: 0.9rem; }
+
 .controller-buttons button {
   flex: 1;
   font-size: 1.2rem;
@@ -845,4 +921,29 @@ button.ghost {
   .multi-block .lane .card--at-wall .card-athlete { font-size: 1rem; }
   .multi-block .lane .card--on-deck .card-athlete { font-size: 0.9rem; }
   .multi-block .lane .queue-list { font-size: 0.8rem; }
+}
+
+/* "Advanced" Sequence tab and the hint in the simple modes (6.50). */
+.mode-tab-badge {
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.4rem;
+  background: var(--panel-2);
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.session-mode-hint {
+  margin: 0.25rem 0 1rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.9rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
 }

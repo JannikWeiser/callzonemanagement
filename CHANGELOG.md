@@ -7,7 +7,100 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Fixed
+- **Boulder TI: a slot with a gap, not "the athlete on every boulder"; the
+  position comes from the TI-Rechner.** An athlete with a TI at boulder 2 climbs
+  the rest of the round and only then comes back to boulder 2; a gap is left at
+  Boulder 1 before. The TI stored no boulder and drew the athlete on every boulder
+  at once. Now a TI stores its boulder, the wall draws the athlete on that boulder
+  only and an empty place on the others (in front of the athlete the position
+  names), a TI can use the free slot of another TI (`reuseOf`), TIs can be
+  edited, and the JP takes the position over from the owner's TI-Rechner (bib,
+  boulder, "in front of start position X" / "no gap needed" / "uses the slot of
+  TI n"). **The Callzone no longer calculates a position** - the rotation rule and
+  a port of the TI-Rechner's `computeTI()` built here earlier are removed (the
+  tool moved on: the port differed in 18 % of the calculations after four days).
+  The first list-based rule and the "TI on every boulder" display were my own
+  readings of ambiguous answers. See
+  [ARCHITECTURE.md §6.51](ARCHITECTURE.md#651-boulder-ti--a-rotation-slot-with-a-gap-at-boulder-1-the-position-comes-from-the-ti-rechner).
+
+### Changed
+- **JP page: the athlete who climbs again is typed as a bib number.** The
+  dropdown only offered athletes with a recorded result, so an athlete who had
+  just finished (result not entered yet, or no longer on the wall) could not be
+  picked. Now any athlete of the chosen route/block can be entered by bib
+  (also "#12", the full name line or a unique name part); a line below says
+  whether the athlete has a result, is climbing, or has none yet (warning), and
+  warns when the deadline of the incident has probably passed. (The rotation
+  suggestion and rule notes that came with this in between were removed again,
+  see the entry above.) See
+  [ARCHITECTURE.md §6.48](ARCHITECTURE.md#648-technical-incidents-ti-the-jury-president-re-starts-an-athlete).
+- **Split view: "Continue the columns above".** Two split views in a row made
+  each column wait for the slowest column of the first one. A split row under
+  another split row now offers to append its rounds column by column to the
+  row above, so every column moves on on its own (a column's own round list
+  already did that); the result is a normal split entry. Refused for different
+  column counts or Lead/Boulder mixed in a column, asks when the group/route
+  tabs differ. Playback is unchanged. See
+  [ARCHITECTURE.md §6.50](ARCHITECTURE.md#650-sessions-live-in-the-sequence-mode-advanced-a-split-view-is-a-sequence-entry).
+- **Shared sessions only in Sequence mode (Advanced); a Split View is now an
+  entry of the Sequence.** Switching the setup tab while a session was hosted
+  could leave the session on the old plan or change its type. Now there is one
+  kind of plan, a Sequence of rounds, paired entries, trainings and **split
+  views** (2-5 categories side by side, each column running through its own
+  rounds, done when every column is done), the Sequence tab is marked
+  "Advanced", and Single round / Training / Split View are for one device
+  only: the session panel appears in Sequence mode (in the other tabs only as a
+  status view while this device hosts, with "Edit in Sequence mode"), Single
+  round and Training don't show the session panel at all, and what gets
+  applied can only come from the Sequence builder. **The Split View tab is
+  gone:** a "split view" entry shows 1 to 5 categories side by side inside the
+  Sequence with everything the old mode had (per-column round lists,
+  group/route, boulder final mode, "Next:" and skip, up/down), plus shared
+  sessions and technical incidents. Old `multi=` links and a saved Split View
+  still open. A split entry's key is now a compact fingerprint (a long readable
+  key was cut off in the tablets' heartbeat and made every tablet look
+  "affected"). Single-entry links for a split view, training or paired entry now
+  use `rounds=` (the singular `round=` is for a plain round only). See
+  [ARCHITECTURE.md §6.50](ARCHITECTURE.md#650-sessions-live-in-the-sequence-mode-advanced-a-split-view-is-a-sequence-entry).
+
+### Fixed
+- **The round shown at the top is the round that goes into the session (and
+  the JP form).** Hosting devices used to start from editor defaults after a
+  reload/event load, so "Apply to all tablets" was refused until "Reload plan
+  from server" - which opened a one-round plan as a Sequence and dropped the
+  Single round selection; the dropdown also never marked the plan as changed.
+  Now the editor starts from the live plan when the hosted session's event is
+  loaded, a one-round plan reopens in Single round mode with that round
+  selected, changing the dropdown shows the "not applied yet" notice, and the
+  host panel states what is live ("Live on the tablets: ..."). On the JP page
+  the form is rebuilt for the round the dropdown shows whenever the plan
+  changes under it (before, the athletes/routes of the previous round stayed
+  below the new round's name) and nothing of a previous round can be used while
+  another one loads. See
+  [ARCHITECTURE.md §6.46](ARCHITECTURE.md#646-shared-sessions-one-published-plan-many-tablets-a-host-password)
+  and [§6.48](ARCHITECTURE.md#648-technical-incidents-ti-the-jury-president-re-starts-an-athlete).
+
 ### Added
+- **TI position suggested from the Judge Guide.** The JP now describes the
+  incident first (athlete, boulder, resolved before the next start?) and the
+  app proposes when the athlete climbs again: for fixed-rotation Boulder
+  blocks the guide's rotation-slot rule (slot `max(2k, 2B-2k+2)` places later,
+  with the waiting rotations in the secondary isolation); for Lead and every
+  other format the JP decides. Only then the "before" athlete can be changed.
+  On the wall the TI athlete is now highlighted in blue with a "TI" badge in
+  the corner instead of a "TI ·" text prefix. See
+  [ARCHITECTURE.md §6.49](ARCHITECTURE.md#649-ti-position-the-judge-guides-rotation-slot-rule).
+- **Technical incidents (TI) for the jury president.** In a shared session a
+  phone with the JP link (`?s=<id>&jp=1`, link/QR in the new "Jury President
+  (JP)" block of the host panel, host password) can let an athlete climb
+  again in front of a chosen athlete - Lead (one route) and Boulder (a whole
+  starting group/course); never Speed. The wall tablets show the re-start as
+  `TI · #bib · name` in the queue and as NEXT/CLIMBING at the right moment,
+  the JP ends it with "TI done" (it also stops by itself on a route once the
+  athlete in front has started there). The inference of who is at the wall is
+  untouched - the TI is an overlay. See
+  [ARCHITECTURE.md §6.48](ARCHITECTURE.md#648-technical-incidents-ti-the-jury-president-re-starts-an-athlete).
 - **Speed training as a step of the Sequence/session, controlled with the
   host password.** "+ Add training" in the Sequence builder adds a manual
   Speed training on a Speed round's startlist (the same round may also be a

@@ -21,10 +21,6 @@ const el = {
   addTrainingToSequence: document.getElementById("addTrainingToSequence"),
   showNextPreview: document.getElementById("showNextPreview"),
   watchSequence: document.getElementById("watchSequence"),
-  multiSetup: document.getElementById("multiSetup"),
-  multiCountTabs: document.getElementById("multiCountTabs"),
-  multiColumnsConfig: document.getElementById("multiColumnsConfig"),
-  watchMulti: document.getElementById("watchMulti"),
   setup: document.getElementById("setup"),
   board: document.getElementById("board"),
   controller: document.getElementById("controller"),
@@ -96,13 +92,46 @@ const el = {
   sessionControlQr: document.getElementById("sessionControlQr"),
   controlBack: document.getElementById("controlBack"),
   controlNext: document.getElementById("controlNext"),
+  addSplitToSequence: document.getElementById("addSplitToSequence"),
+  splitEntryHint: document.getElementById("splitEntryHint"),
+  sessionPlanSummary: document.getElementById("sessionPlanSummary"),
+  juryPanel: document.getElementById("juryPanel"),
+  juryLink: document.getElementById("juryLink"),
+  copyJuryLink: document.getElementById("copyJuryLink"),
+  juryQr: document.getElementById("juryQr"),
+  jury: document.getElementById("jury"),
+  juryBackBtn: document.getElementById("juryBackBtn"),
+  juryStatus: document.getElementById("juryStatus"),
+  juryGate: document.getElementById("juryGate"),
+  juryPassword: document.getElementById("juryPassword"),
+  juryUnlock: document.getElementById("juryUnlock"),
+  juryMsg: document.getElementById("juryMsg"),
+  juryForm: document.getElementById("juryForm"),
+  juryRound: document.getElementById("juryRound"),
+  juryScopeRow: document.getElementById("juryScopeRow"),
+  juryScope: document.getElementById("juryScope"),
+  juryAthlete: document.getElementById("juryAthlete"),
+  juryAthleteList: document.getElementById("juryAthleteList"),
+  juryBoulderRow: document.getElementById("juryBoulderRow"),
+  juryBoulder: document.getElementById("juryBoulder"),
+  juryStep1Msg: document.getElementById("juryStep1Msg"),
+  juryGapMode: document.getElementById("juryGapMode"),
+  juryPosRow: document.getElementById("juryPosRow"),
+  juryPos: document.getElementById("juryPos"),
+  juryPosInfo: document.getElementById("juryPosInfo"),
+  juryReuseRow: document.getElementById("juryReuseRow"),
+  juryReuse: document.getElementById("juryReuse"),
+  juryPreview: document.getElementById("juryPreview"),
+  juryAdd: document.getElementById("juryAdd"),
+  juryCancel: document.getElementById("juryCancel"),
+  juryList: document.getElementById("juryList"),
 };
 
 let pollTimer = null;
 let lastRoundData = null;
-// Multimode's per-column poll results (6.23), rebuilt every pollMulti()
+// A split view's per-column poll results (6.23/6.50), rebuilt every pollCurrent()
 // tick - { round } or { error } per entry, parallel to
-// currentSelection.entries. Kept so a group/route tab click inside one
+// the current split view's columns. Kept so a group/route tab click inside one
 // column can re-render without waiting for the next 3s tick, same role
 // lastRoundData plays for the normal single-round board.
 let lastMultiResults = null;
@@ -122,7 +151,9 @@ let pollToken = 0;
 // to thread these values through every function call.
 //   - watch:    { kind: "watch", host, eventId, group, route, sequence, showNextPreview }
 //   - training: { kind: "training", host, eventId, roundId, control, route }
-//   - multi:    { kind: "multi", host, eventId, entries }
+// (A Split View is no kind of its own any more - it is a `{ type: "split" }`
+// entry of a watch sequence, 6.50; old `multi=` links and saved selections are
+// converted by legacyMultiToWatch().)
 // `route`, like `group`, dedicates this tablet to one or several
 // routes/boulders instead of the full lanes grid (6.22) - `null`/absent
 // means "show all"; otherwise an array of route names (a single route is
@@ -155,36 +186,17 @@ const roundLabelCache = new Map();
 // { entryIndex, activeSide: "a" | "b" }. Reset whenever sequenceIndex moves
 // to a different entry. null when the current entry isn't a paired one.
 let pairedState = null;
+// The progress of a split-view sequence entry (6.50): each column runs through
+// its own rounds independently (like the Split View mode), so the entry keeps
+// one { sequence, sequenceIndex, group, route } per column. Rebuilt whenever
+// the entry (by key) or its position changes, like pairedState.
+let splitState = null; // { entryIndex, key, entries }
 
 // Entries queued up on the setup screen before "Show sequence" is clicked -
 // purely local UI state, richer than the playback form (keeps labels for
 // display): { type: "round", roundId, label } |
 // { type: "paired", aId, aLabel, bId, bLabel }.
 let sequenceBuilder = [];
-
-// Multimode setup state (6.23): pick a column count first, then each
-// column gets its own dedicated config card (round picker + its own
-// mini round-sequence), all visible and editable at once - rather than
-// building one column at a time. `multiColumnDrafts[i]` is column i's own
-// state: `{ items }` - that column's round sequence so far ({ roundId,
-// discipline }, in play order, index 0 first). A fresh column starts with
-// `items: []` and stays that way until the user clicks "+ Add Sequence"
-// themselves - no round is ever pre-picked without a click (a deliberate
-// reversal of an earlier auto-seed design: it read as the setup screen
-// silently deciding for you, reported live after a screenshot showed
-// every fresh column expected to start truly empty). An empty column is
-// always valid and renders as "Round finished" on the board (a tablet can
-// be set up ahead of time with more columns than currently-known
-// categories).
-// Always kept in sync with `multiColumnCount` (padded/truncated on count
-// change) so `multiColumnDrafts[i]` is never undefined for `i <
-// multiColumnCount`. The discipline lock is per-column, not shared across
-// columns (6.24) - renderMultiColumnsConfig()'s `availableFor()` derives
-// it fresh each render from that column's own `items` only, so two
-// different columns can independently be Lead and Boulder; only a single
-// column's own sequence has to stay one discipline throughout.
-let multiColumnCount = 2;
-let multiColumnDrafts = [{ items: [] }, { items: [] }];
 
 // Shared sessions (6.46) - see the "Shared sessions" section near the end of
 // this file. Declared up here (not next to the code that uses them) so no
@@ -206,7 +218,7 @@ let hostEditorBound = false;
 // "ok" | "offline" (server unreachable) | "lost" (server forgot the session).
 let sessionConnection = "ok";
 
-// Which setup-screen mode is selected: "single" | "sequence" | "training" | "multi".
+// Which setup-screen mode is selected: "single" | "sequence" | "training".
 let currentMode = "single";
 // How many rounds in the currently-loaded event are Speed elimination
 // format - the "interleave two finals" row only makes sense with 2+.
@@ -248,10 +260,37 @@ function saveSelection(sel) {
 }
 function loadSelection() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY));
+    return legacyMultiToWatch(JSON.parse(localStorage.getItem(STORAGE_KEY)));
   } catch {
     return null;
   }
+}
+
+// A selection saved by a version that still had the Split View mode
+// (`{ kind: "multi", entries }`) becomes the same thing as a split-view entry
+// of a watch sequence (6.50), so a tablet bookmarked/last-used on a Split View
+// keeps showing it.
+function legacyMultiToWatch(sel) {
+  if (sel?.kind !== "multi" || !Array.isArray(sel.entries) || !sel.entries.length) return sel?.kind === "multi" ? null : sel;
+  return {
+    kind: "watch",
+    host: sel.host,
+    eventId: sel.eventId,
+    group: null,
+    route: null,
+    sequence: [
+      {
+        type: "split",
+        columns: sel.entries.slice(0, 5).map((e) => ({
+          sequence: (e.sequence ?? []).map((r) => ({ type: "round", id: r.id })),
+          group: e.group ?? null,
+          route: e.route ?? null,
+        })),
+      },
+    ],
+    showNextPreview: true,
+    swap: false,
+  };
 }
 
 // Boulder-finals-only display mode (6.17): "interval" (default, matches
@@ -284,6 +323,23 @@ function parseSequenceToken(token) {
   // `t<roundId>` is a Speed training entry (6.47) - round ids are plain
   // digits, so the leading letter can't be mistaken for one.
   if (/^t\d+$/.test(token)) return { type: "training", id: token.slice(1) };
+  // `m<column>*<column>...` is a split view (6.50); a column is
+  // `roundId+roundId~group~route+route`, the same shape the Split View mode's
+  // own `multi=` link uses.
+  if (/^m\d*[~+*\d]/.test(token) || token === "m") {
+    const columns = token
+      .slice(1)
+      .split("*")
+      .map((column) => {
+        const [roundsStr, group, routeStr] = column.split("~");
+        return {
+          sequence: (roundsStr ?? "").split("+").filter(Boolean).map((id) => ({ type: "round", id })),
+          group: group || null,
+          route: routeStr ? routeStr.split("+").filter(Boolean) : null,
+        };
+      });
+    return { type: "split", columns };
+  }
   const [a, b] = token.split("+");
   return b ? { type: "paired", a, b } : { type: "round", id: a };
 }
@@ -317,6 +373,8 @@ function readUrlSelection() {
       // `control=1` opens the training controller of the session (6.47),
       // which asks for the host password instead of showing a board.
       control: params.get("control") === "1",
+      // `jp=1` opens the jury president's page for technical incidents (6.48).
+      jury: params.get("jp") === "1",
     };
   }
 
@@ -353,26 +411,26 @@ function readUrlSelection() {
   // empty stays empty). `+` joins both a column's own round sequence and
   // its selected route names - unambiguous since `~` already separates the
   // three fields before either gets split on `+`.
+  // Old Split View links (`multi=` - the Split View mode no longer exists, a
+  // split view is a sequence entry now, 6.50) still open: each column is
+  // `roundId1+roundId2~group~route1+route2` (three `~`-separated fields,
+  // empty stays empty).
   const multiParam = params.get("multi");
   if (multiParam) {
-    const entries = multiParam
+    const columns = multiParam
       .split(",")
       .filter(Boolean)
+      .slice(0, 5)
       .map((token) => {
         const [roundsStr, group, routeStr] = token.split("~");
         return {
-          // An empty sequence is a legitimate column (6.23) - a tablet set
-          // up ahead of time with more columns than currently-known
-          // categories - not dropped here; it round-trips to the same
-          // "Round finished" placeholder pollOneMultiColumn()/
-          // renderMultiBoard() already show for one built fresh in the UI.
+          // An empty sequence is a legitimate column (6.23).
           sequence: (roundsStr ?? "").split("+").filter(Boolean).map((id) => ({ type: "round", id })),
-          sequenceIndex: 0,
           group: group || null,
           route: routeStr ? routeStr.split("+").filter(Boolean) : null,
         };
       });
-    if (entries.length) return { kind: "multi", host, eventId, entries };
+    if (columns.length) return { kind: "watch", host, eventId, group: null, route: null, sequence: [{ type: "split", columns }], showNextPreview: true, swap: false };
   }
 
   const group = params.get("group");
@@ -381,7 +439,7 @@ function readUrlSelection() {
   const sequence = roundsParam
     ? roundsParam.split(",").filter(Boolean).map(parseSequenceToken)
     : roundParam
-    ? [{ type: "round", id: roundParam }]
+    ? [parseSequenceToken(roundParam)]
     : null;
   // Default "1" (on) when absent - an older, already-shared link without
   // this param should get the new default-on behavior, not silently fall
@@ -414,17 +472,19 @@ function buildShareLink(sel) {
     return url.toString();
   }
 
-  if (sel.kind === "multi") {
-    const tokens = sel.entries.map((e) => {
-      const rounds = e.sequence.map((s) => s.id).join("+");
-      return `${rounds}~${e.group ?? ""}~${(e.route ?? []).join("+")}`;
-    });
-    url.searchParams.set("multi", tokens.join(","));
-    return url.toString();
-  }
-
-  const tokens = sel.sequence.map((e) => (e.type === "paired" ? `${e.a}+${e.b}` : e.type === "training" ? `t${e.id}` : e.id));
-  if (tokens.length > 1) url.searchParams.set("rounds", tokens.join(","));
+  const tokens = sel.sequence.map((e) =>
+    e.type === "paired"
+      ? `${e.a}+${e.b}`
+      : e.type === "training"
+      ? `t${e.id}`
+      : e.type === "split"
+      ? `m${e.columns.map((c) => `${c.sequence.map((r) => r.id).join("+")}~${c.group ?? ""}~${(c.route ?? []).join("+")}`).join("*")}`
+      : e.id
+  );
+  // `round=` (singular) is the original single-round form; anything that isn't
+  // a plain round (a split view, a training, a paired entry) needs the token
+  // list form even when it is the only entry.
+  if (tokens.length > 1 || sel.sequence[0].type !== "round") url.searchParams.set("rounds", tokens.join(","));
   else url.searchParams.set("round", tokens[0]);
   if (sel.group) url.searchParams.set("group", sel.group);
   if (sel.route?.length) url.searchParams.set("route", sel.route.join(","));
@@ -572,19 +632,25 @@ function setMode(mode) {
   // Same pairing rule for the training button and its hint (6.47): only
   // Speed rounds can be trained on (Training mode's own rule, 6.13).
   el.trainingEntryHint.hidden = el.addTrainingToSequence.hidden = mode !== "sequence" || !loadedEntries.some((e) => e.isSpeed);
+  el.splitEntryHint.hidden = el.addSplitToSequence.hidden = mode !== "sequence" || !loadedEntries.some((e) => !e.isSpeed);
   // Multimode and Sequence both pick their round(s) inside their own
-  // per-mode section now (#multiSetup / #sequenceRow's own live rows,
+  // per-mode section now (#sequenceRow's own live rows,
   // 6.10/6.23) - neither has any use for the shared "Category / round"
   // picker above, unlike Single round and Training.
-  el.categoryRow.hidden = mode === "multi" || mode === "sequence" || el.modeTabs.hidden;
-  el.multiSetup.hidden = mode !== "multi";
+  el.categoryRow.hidden = mode === "sequence" || el.modeTabs.hidden;
   populateRoundSelect();
   renderSequenceBuilder();
   updateTrainingEligibility();
-  // Training isn't part of shared sessions (yet) - the panel would only
-  // offer to publish a plan that can't contain it.
-  el.sessionPanel.hidden = mode === "training";
+  updateSessionPanelForMode();
   updateSessionDirty();
+}
+
+// Shared sessions belong to the Sequence mode (Advanced) ONLY (6.50): Single
+// round and Training don't show the session panel at all - they are for one
+// device and can't feed or change a session. The host state (a session this
+// device hosts) is kept and comes back when the Sequence tab is opened again.
+function updateSessionPanelForMode() {
+  el.sessionPanel.hidden = currentMode !== "sequence";
 }
 
 // Rebuilds #roundSelect's options from loadedEntries - filtered to Speed
@@ -630,15 +696,10 @@ function updateTrainingEligibility() {
 function populateRounds(eventData, host, eventId) {
   loadedEvent = { host, eventId };
   hostEditorBound = false;
-  // A freshly-loaded event starts with an empty sequence/Multimode builder -
+  // A freshly-loaded event starts with an empty sequence builder -
   // carrying over entries from a previously-loaded event would silently mix
   // events.
   sequenceBuilder = [];
-  multiColumnCount = 2;
-  multiColumnDrafts = [{ items: [] }, { items: [] }];
-  for (const btn of el.multiCountTabs.querySelectorAll(".mode-tab")) {
-    btn.classList.toggle("active", Number(btn.dataset.count) === multiColumnCount);
-  }
 
   const entries = [];
   for (const dcat of eventData.d_cats ?? []) {
@@ -743,9 +804,26 @@ function populateRounds(eventData, host, eventId) {
     renderSequenceBuilder();
   };
 
+  // Appends a split view (6.50) with two empty columns - the rounds are picked
+  // in its own columns, like the Split View mode.
+  el.addSplitToSequence.onclick = () => {
+    sequenceBuilder.push({
+      type: "split",
+      columns: [
+        { items: [], group: null, route: null },
+        { items: [], group: null, route: null },
+      ],
+    });
+    renderSequenceBuilder();
+  };
+
   el.watchSequence.onclick = () => {
     if (!sequenceBuilder.length) {
       showError("Add at least one round to the sequence.");
+      return;
+    }
+    if (sequenceBuilder.some((item) => item.type === "split" && !splitItemHasRounds(item))) {
+      showError("A split view needs at least one round in one of its columns.");
       return;
     }
     showError("");
@@ -770,47 +848,19 @@ function populateRounds(eventData, host, eventId) {
   // top of the previous load's every time, firing the handler multiple
   // times per click. Same reasoning as every other el.X.onclick = ... in
   // this function.
-  for (const btn of el.multiCountTabs.querySelectorAll(".mode-tab")) {
-    btn.onclick = () => {
-      multiColumnCount = Number(btn.dataset.count);
-      // Pad with fresh empty columns or truncate extras, but keep already-
-      // configured columns intact when just adjusting the count - going
-      // from 3 to 2 and back to 3 shouldn't lose column 1/2's rounds.
-      while (multiColumnDrafts.length < multiColumnCount) multiColumnDrafts.push({ items: [] });
-      multiColumnDrafts.length = multiColumnCount;
-      for (const b of el.multiCountTabs.querySelectorAll(".mode-tab")) b.classList.toggle("active", b === btn);
-      renderMultiColumnsConfig(entries);
-    };
-  }
-  renderMultiColumnsConfig(entries);
-
-  el.watchMulti.onclick = () => {
-    // Columns don't all need a round configured - a tablet can be set up
-    // ahead of time with more columns than currently-known categories, and
-    // an empty column just renders as "Round finished" (pollOneMultiColumn/
-    // renderMultiBoard). Only block if literally nothing was configured
-    // anywhere - that would just be an empty board.
-    if (multiColumnDrafts.every((d) => d.items.length === 0)) {
-      showError("Add at least one round to a column.");
-      return;
-    }
-    showError("");
-    const multiEntries = multiColumnDrafts.map((draft) => ({
-      sequence: draft.items.map((item) => ({ type: "round", id: item.roundId })),
-      sequenceIndex: 0,
-      group: draft.group ?? null,
-      route: draft.route ?? null,
-    }));
-    startWatching({ kind: "multi", host, eventId, entries: multiEntries });
-  };
-
   el.startTraining.onclick = () => {
     const opt = el.roundSelect.selectedOptions[0];
     if (!opt || opt.dataset.speed !== "1") return; // belt-and-suspenders - button is also disabled for this case
     startWatching({ kind: "training", host, eventId, roundId: opt.value, control: false, route: null });
   };
 
-  el.roundSelect.onchange = updateTrainingEligibility;
+  // The top dropdown IS the plan in Single round mode: changing it makes the
+  // hosted session "dirty" (6.46).
+  el.roundSelect.onchange = () => {
+    updateTrainingEligibility();
+    updateSessionDirty();
+  };
+  bindEditorToHostedPlan();
 }
 
 // Every id claimed by the items in `list`, optionally excluding one item's
@@ -896,7 +946,13 @@ function usedInSequenceBuilder(excludeIndex = -1) {
   // A training entry claims no round: it only borrows a startlist (6.47), so
   // the round it is based on stays available as a normal entry.
   return usedIdsExcluding(sequenceBuilder, excludeIndex, (item) =>
-    item.type === "paired" ? [item.aId, item.bId] : item.type === "training" ? [] : [item.roundId]
+    item.type === "paired"
+      ? [item.aId, item.bId]
+      : item.type === "training"
+      ? []
+      : item.type === "split"
+      ? item.columns.flatMap((column) => column.items.map((i) => i.roundId))
+      : [item.roundId]
   );
 }
 
@@ -909,8 +965,62 @@ function usedTrainingInBuilder(excludeIndex = -1) {
 function sequenceItemToEntry(item) {
   if (item.type === "paired") return { type: "paired", a: item.aId, b: item.bId };
   if (item.type === "training") return { type: "training", id: item.roundId };
+  if (item.type === "split") {
+    return {
+      type: "split",
+      columns: item.columns.map((column) => ({
+        sequence: column.items.map((i) => ({ type: "round", id: i.roundId })),
+        group: column.group ?? null,
+        route: column.route ?? null,
+      })),
+    };
+  }
   return { type: "round", id: item.roundId };
 }
+
+// Why the split view at `later` can't simply be appended to the one before it
+// (6.50): null = it can; "count" = different column counts; "discipline" = a
+// column would mix Lead and Boulder (a column keeps one); "filters" = both
+// carry a different group/route tab in the same column (the later one is
+// dropped, so the user is asked).
+function splitMergeProblem(earlier, later) {
+  if (earlier.columns.length !== later.columns.length) return "count";
+  let filters = false;
+  for (let i = 0; i < earlier.columns.length; i++) {
+    const a = earlier.columns[i];
+    const b = later.columns[i];
+    const disciplineA = a.items[0]?.discipline;
+    const disciplineB = b.items[0]?.discipline;
+    if (disciplineA && disciplineB && disciplineA !== disciplineB) return "discipline";
+    if (a.items.length && b.items.length) {
+      const sameRoute = JSON.stringify(a.route ?? null) === JSON.stringify(b.route ?? null);
+      if ((a.group ?? null) !== (b.group ?? null) || !sameRoute) filters = true;
+    }
+  }
+  return filters ? "filters" : null;
+}
+
+// Appends the rounds of the split view at `index` to the columns of the one
+// before it and removes the row. The earlier column's tabs win; an empty
+// earlier column takes the later one's. The result is an ordinary split entry
+// - sessions, keys and incidents need no special case.
+function mergeSplitIntoPrevious(index) {
+  const earlier = sequenceBuilder[index - 1];
+  const later = sequenceBuilder[index];
+  later.columns.forEach((column, i) => {
+    const target = earlier.columns[i];
+    if (!target.items.length && column.items.length) {
+      target.group = column.group ?? null;
+      target.route = column.route ?? null;
+    }
+    target.items.push(...column.items);
+  });
+  sequenceBuilder.splice(index, 1);
+}
+
+// A split-view row has no round of its own: it is "empty" until a column holds
+// one (the plan validator says the same).
+const splitItemHasRounds = (item) => item.columns.some((column) => column.items.length > 0);
 
 // Every entry is its own live row now, not a static label added via a
 // separate shared dropdown+button (6.10, redesigned to match Multimode's
@@ -956,6 +1066,93 @@ function renderSequenceBuilder() {
       pair.appendChild(sep);
       pair.appendChild(buildSide("bId", "bLabel", "aId"));
       li.appendChild(pair);
+    } else if (item.type === "split") {
+      // Several categories side by side (6.50, the former Split View mode):
+      // the column editor nested in the row. A round can be used once in the
+      // whole sequence (the plan says so), so every row also excludes the
+      // rounds of the other rows and of the other columns.
+      li.draggable = false;
+      li.classList.add("sequence-item--split");
+      const box = document.createElement("div");
+      box.className = "sequence-split";
+      const head = document.createElement("div");
+      head.className = "sequence-pair";
+      const badge = document.createElement("span");
+      badge.className = "sequence-badge";
+      badge.textContent = "Split View";
+      head.appendChild(badge);
+      const count = document.createElement("label");
+      count.className = "sequence-split-count";
+      count.append("Categories side by side ");
+      const countSelect = document.createElement("select");
+      for (const n of [1, 2, 3, 4, 5]) {
+        const opt = document.createElement("option");
+        opt.value = String(n);
+        opt.textContent = String(n);
+        countSelect.appendChild(opt);
+      }
+      countSelect.value = String(item.columns.length);
+      countSelect.addEventListener("change", () => {
+        const n = Number(countSelect.value);
+        while (item.columns.length < n) item.columns.push({ items: [], group: null, route: null });
+        item.columns.length = n;
+        renderSequenceBuilder();
+      });
+      count.appendChild(countSelect);
+      head.appendChild(count);
+      // Two split views in a row make a column wait for the slowest column
+      // of the first one; "Continue the columns above" joins them column by
+      // column so each column moves on on its own. Only offered right under
+      // another split view.
+      const previous = index > 0 ? sequenceBuilder[index - 1] : null;
+      if (previous?.type === "split") {
+        const mergeBtn = document.createElement("button");
+        mergeBtn.type = "button";
+        mergeBtn.className = "ghost sequence-split-merge";
+        mergeBtn.textContent = "Continue the columns above";
+        const problem = splitMergeProblem(previous, item);
+        if (problem === "count") {
+          mergeBtn.disabled = true;
+          mergeBtn.title = "Both split views need the same number of columns.";
+        } else {
+          mergeBtn.title = "Appends each column's rounds to the same column of the split view above, so every column moves on without waiting for the others.";
+        }
+        mergeBtn.addEventListener("click", () => {
+          if (problem === "discipline") {
+            showError("A column keeps one discipline: these two split views mix Lead and Boulder in the same column.");
+            return;
+          }
+          if (problem === "filters" && !window.confirm("The two split views use different group/route tabs in a column. The tabs of the split view above are kept and these are dropped. Continue?")) return;
+          showError("");
+          mergeSplitIntoPrevious(index);
+          renderSequenceBuilder();
+        });
+        head.appendChild(mergeBtn);
+      }
+      box.appendChild(head);
+      const hint = document.createElement("p");
+      hint.className = "sequence-split-hint";
+      hint.textContent = "Rounds in one column run one after another. A column moves on without waiting for the other columns.";
+      box.appendChild(hint);
+      const columnsHost = document.createElement("div");
+      columnsHost.className = "multi-columns-config";
+      box.appendChild(columnsHost);
+      renderColumnCards({
+        container: columnsHost,
+        drafts: item.columns,
+        entries: loadedEntries,
+        rerender: renderSequenceBuilder,
+        excludedFor: (columnIndex, itemIndex) => {
+          const excluded = new Set(usedInSequenceBuilder(index));
+          item.columns.forEach((column, ci) =>
+            column.items.forEach((i, ii) => {
+              if (!(ci === columnIndex && ii === itemIndex)) excluded.add(i.roundId);
+            })
+          );
+          return excluded;
+        },
+      });
+      li.appendChild(box);
     } else if (item.type === "training") {
       const row = document.createElement("div");
       row.className = "sequence-pair";
@@ -1027,11 +1224,13 @@ function renderSequenceBuilder() {
   el.addPairedToSequence.disabled = loadedEliminationEntries.filter((e) => !used.has(e.roundId)).length < 2;
   const usedTraining = usedTrainingInBuilder();
   el.addTrainingToSequence.disabled = !loadedEntries.some((e) => e.isSpeed && !usedTraining.has(e.roundId));
+  // Split Views hold Lead/Boulder only (6.23): offered while one is still free.
+  el.addSplitToSequence.disabled = !loadedEntries.some((e) => !e.isSpeed && !used.has(e.roundId));
   updateSessionDirty();
 }
 
 // Rebuilds every Multimode config card from scratch (6.23) - one per
-// `multiColumnDrafts` entry, each with its own round picker + "Add round"
+// draft column, each with its own round picker + "Add round"
 // button + its own mini round-sequence list (no drag-reorder here, unlike
 // the Sequence-mode builder - a column's rounds are added in the order
 // they should play, and reordering wasn't asked for). A full rebuild on
@@ -1067,10 +1266,10 @@ function getRoundRouteInfo(host, roundId, onReady) {
   return { pending: true };
 }
 
-function renderColumnViewControls(card, draft, entries) {
+function renderColumnViewControls(card, draft, entries, rerender) {
   const first = draft.items[0];
   if (!first || !loadedEvent) return;
-  const info = getRoundRouteInfo(loadedEvent.host, first.roundId, () => renderMultiColumnsConfig(entries));
+  const info = getRoundRouteInfo(loadedEvent.host, first.roundId, rerender);
   if (!info.groups) return;
 
   const groupNames = info.groups.map((g) => g.name).filter(Boolean);
@@ -1103,7 +1302,7 @@ function renderColumnViewControls(card, draft, entries) {
     select.addEventListener("change", () => {
       draft.group = select.value;
       draft.route = null; // a route picked in the old group means something else in the new one
-      renderMultiColumnsConfig(entries);
+      rerender();
     });
     label.appendChild(select);
     box.appendChild(label);
@@ -1125,7 +1324,7 @@ function renderColumnViewControls(card, draft, entries) {
       box1.addEventListener("change", () => {
         const next = routes.filter((n) => (n === name ? box1.checked : draft.route?.includes(n)));
         draft.route = next.length && next.length < routes.length ? next : null;
-        renderMultiColumnsConfig(entries);
+        rerender();
       });
       chip.append(box1, ` ${info.prefix} ${name}`);
       wrap.appendChild(chip);
@@ -1148,10 +1347,13 @@ function entryLabel(entry) {
   return `${entry.label} (${STATUS_LABEL[entry.status] ?? entry.status})`;
 }
 
-function renderMultiColumnsConfig(entries) {
-  el.multiColumnsConfig.innerHTML = "";
+// The column editor of a split-view entry in the Sequence builder (6.23/6.50). `excludedFor(column, item)`
+// is the set of round ids that row may NOT pick (the row's own current value is
+// always allowed - buildRoundSelect()).
+function renderColumnCards({ container, drafts, entries, rerender, excludedFor }) {
+  container.innerHTML = "";
 
-  multiColumnDrafts.forEach((draft, columnIndex) => {
+  drafts.forEach((draft, columnIndex) => {
     // A column's own sequence has to stay one discipline throughout (its
     // rounds are meant to be "the same category, later stage" - Quali ->
     // Finale - not an arbitrary discipline switch mid-column), but
@@ -1193,7 +1395,7 @@ function renderMultiColumnsConfig(entries) {
     // can't be picked twice in one column's sequence, prevented by not
     // offering it rather than validating after the fact, same philosophy
     // as the Speed/discipline filtering above.
-    const usedInThisColumn = (itemIndex) => usedIdsExcluding(draft.items, itemIndex, (item) => [item.roundId]);
+    const usedInThisColumn = (itemIndex) => excludedFor(columnIndex, itemIndex);
 
     const list = document.createElement("ol");
     list.className = "sequence-list";
@@ -1206,7 +1408,7 @@ function renderMultiColumnsConfig(entries) {
       const rowSelect = buildRoundSelect(availableFor(itemIndex), excluded, item.roundId, (newId) => {
         const entry = entries.find((e) => e.roundId === newId);
         draft.items[itemIndex] = { roundId: newId, discipline: multiEntryDiscipline(entry) };
-        renderMultiColumnsConfig(entries);
+        rerender();
       });
       li.appendChild(rowSelect);
 
@@ -1224,19 +1426,19 @@ function renderMultiColumnsConfig(entries) {
       controls.appendChild(
         buildMoveButton("up", "Move earlier in this column", itemIndex === 0, () => {
           [draft.items[itemIndex - 1], draft.items[itemIndex]] = [draft.items[itemIndex], draft.items[itemIndex - 1]];
-          renderMultiColumnsConfig(entries);
+          rerender();
         })
       );
       controls.appendChild(
         buildMoveButton("down", "Move later in this column", itemIndex === draft.items.length - 1, () => {
           [draft.items[itemIndex], draft.items[itemIndex + 1]] = [draft.items[itemIndex + 1], draft.items[itemIndex]];
-          renderMultiColumnsConfig(entries);
+          rerender();
         })
       );
       controls.appendChild(
         buildRemoveButton("Remove from column", () => {
           draft.items.splice(itemIndex, 1);
-          renderMultiColumnsConfig(entries);
+          rerender();
         })
       );
       li.appendChild(controls);
@@ -1244,7 +1446,7 @@ function renderMultiColumnsConfig(entries) {
       list.appendChild(li);
     });
     card.appendChild(list);
-    renderColumnViewControls(card, draft, entries);
+    renderColumnViewControls(card, draft, entries, rerender);
 
     // Appends a new step, pre-filled with the first round *not already
     // used in this column* - never defaults to a duplicate, unlike the
@@ -1253,7 +1455,7 @@ function renderMultiColumnsConfig(entries) {
     // in its sequence (rare, but silently doing nothing on click would
     // read as a broken button - the same lesson learned from Multimode's
     // very first "Show Multimode" bug).
-    const unusedForThisColumn = availableFor(-1).filter((e) => !draft.items.some((item) => item.roundId === e.roundId));
+    const unusedForThisColumn = availableFor(-1).filter((e) => !draft.items.some((item) => item.roundId === e.roundId) && !excludedFor(columnIndex, -1).has(e.roundId));
     const addBtn = document.createElement("button");
     addBtn.type = "button";
     addBtn.className = "ghost";
@@ -1263,13 +1465,12 @@ function renderMultiColumnsConfig(entries) {
       if (!unusedForThisColumn.length) return;
       const entry = unusedForThisColumn[0];
       draft.items.push({ roundId: entry.roundId, discipline: multiEntryDiscipline(entry) });
-      renderMultiColumnsConfig(entries);
+      rerender();
     });
     card.appendChild(addBtn);
 
-    el.multiColumnsConfig.appendChild(card);
+    container.appendChild(card);
   });
-  updateSessionDirty();
 }
 
 function startWatching(selection) {
@@ -1277,13 +1478,13 @@ function startWatching(selection) {
   clearInterval(trainingPollTimer);
   // Bumping BOTH tokens unconditionally - not just whichever one this new
   // selection's own mode will use - is what actually closes the gap: a
-  // still-in-flight pollCurrent()/pollMulti() call from before this switch
+  // still-in-flight pollCurrent() call from before this switch
   // only ever checks its own `pollToken` copy, and a still-in-flight
   // training poll only ever checks `trainingPollToken`. Bumping only the
   // "relevant" one left the other kind of in-flight call free to land
   // later and act on `currentSelection`/the DOM after it had already been
   // reassigned to a completely different mode - e.g. Split View -> Training
-  // while a pollMulti() fetch was still resolving could have it come back,
+  // while a split view's poll was still resolving could have it come back,
   // pass its stale-check (pollToken untouched), and call
   // renderMultiBoard(currentSelection.entries, ...) with `entries` now
   // undefined (a training selection has no `.entries`), crashing the
@@ -1296,6 +1497,7 @@ function startWatching(selection) {
   // Session polling (6.46) follows the same rule: every transition stops the
   // previous one, and only a selection that belongs to a session starts one.
   stopSessionPolling();
+  stopJuryPage();
   currentSelection = selection;
   if (!selection.sessionId) sessionConnection = "ok";
   saveSelection(selection);
@@ -1313,21 +1515,11 @@ function startWatching(selection) {
     return;
   }
 
-  if (selection.kind === "multi") {
-    el.board.hidden = false;
-    el.controller.hidden = true;
-    lastMultiResults = null;
-    setShareLink(buildShareLink(selection));
-    pollMulti();
-    pollTimer = setInterval(pollMulti, 3000);
-    if (selection.sessionId) startSessionPolling();
-    return;
-  }
-
   el.board.hidden = false;
   el.controller.hidden = true;
   sequenceIndex = 0;
   pairedState = null;
+  splitState = null;
   lastRoundData = null;
   setShareLink(buildShareLink(selection));
   pollCurrent();
@@ -1347,6 +1539,7 @@ function goBackToSetup() {
   trainingEntryRoster = null;
   stopSessionPolling();
   stopSessionController();
+  stopJuryPage();
   el.board.hidden = true;
   el.controller.hidden = true;
   el.setup.hidden = false;
@@ -1354,6 +1547,7 @@ function goBackToSetup() {
 }
 el.backBtn.addEventListener("click", goBackToSetup);
 el.controllerBackBtn.addEventListener("click", goBackToSetup);
+el.juryBackBtn.addEventListener("click", goBackToSetup);
 
 function wireCopyButton(inputEl, buttonEl) {
   buttonEl.addEventListener("click", async () => {
@@ -1374,6 +1568,7 @@ wireCopyButton(el.shareLink, el.copyLink);
 wireCopyButton(el.controlLink, el.copyControlLink);
 wireCopyButton(el.sessionLink, el.copySessionLink);
 wireCopyButton(el.sessionControlLink, el.copySessionControlLink);
+wireCopyButton(el.juryLink, el.copyJuryLink);
 
 // --- Fullscreen + screen-wake-lock ("kiosk mode") for a tablet mounted on
 // a wall: keeps the board visible full-bleed and stops the OS from locking
@@ -1489,7 +1684,6 @@ document.addEventListener("visibilitychange", () => {
   // immediately here instead of waiting for the next natural tick.
   if (el.setup.hidden && currentSelection) {
     if (currentSelection.kind === "training") pollTrainingIndex();
-    else if (currentSelection.kind === "multi") pollMulti();
     else pollCurrent();
   }
 });
@@ -1615,6 +1809,10 @@ async function updateNextInSequence() {
       ? (await Promise.all([getRoundLabel(host, next.a), getRoundLabel(host, next.b)])).map((l) => l ?? "…").join(" ↔ ")
       : next.type === "training"
       ? `Training: ${(await getRoundLabel(host, next.id)) ?? "…"}`
+      : next.type === "split"
+      ? `Split View: ${(
+          await Promise.all(next.columns.map(async (c) => (await Promise.all(c.sequence.map((r) => getRoundLabel(host, r.id)))).map((l) => l ?? "…").join(" → ") || "(empty)"))
+        ).join("  |  ")}`
       : (await getRoundLabel(host, next.id)) ?? "…";
   if (myToken !== pollToken) return; // superseded while fetching labels
   el.nextInSequence.hidden = false;
@@ -1637,7 +1835,7 @@ async function updateNextInSequence() {
   // round's own last one.
   // (A training is no round with a startlist worth previewing, and nothing is
   // previewed while a training is the current entry either.)
-  if (next.type !== "round" || current.type === "training" || !currentSelection.showNextPreview) {
+  if (next.type !== "round" || current.type === "training" || current.type === "split" || !currentSelection.showNextPreview) {
     nextRoundPreview = null;
     nextRoundPreviewKey = null;
     return;
@@ -1681,6 +1879,7 @@ el.skipToNextBtn.addEventListener("click", async () => {
   el.skipToNextBtn.disabled = true;
   sequenceIndex++;
   pairedState = null;
+  splitState = null;
   // The entry we were about to preview is now the CURRENT one - clearing
   // this prevents one stale render showing it as a dimmed "preview" of
   // itself before updateNextInSequence() re-derives the real next entry.
@@ -1779,6 +1978,23 @@ function updateEntryControlRow(entry) {
   if (el.controlLink.value !== link) setControlLink(link);
 }
 
+function ensureSplitState(entry) {
+  const key = SessionPlan.entryKey(entry);
+  if (!splitState || splitState.entryIndex !== sequenceIndex || splitState.key !== key) {
+    splitState = {
+      entryIndex: sequenceIndex,
+      key,
+      entries: entry.columns.map((column) => ({
+        sequence: column.sequence.map((e) => ({ ...e })),
+        sequenceIndex: 0,
+        group: column.group ?? null,
+        route: column.route ?? null,
+      })),
+    };
+  }
+  return splitState;
+}
+
 async function pollCurrent() {
   const myToken = ++pollToken;
   clearTimeout(trainingFastTimer);
@@ -1799,12 +2015,38 @@ async function pollCurrent() {
       if (hasNext && state.done) {
         sequenceIndex++;
         pairedState = null;
+        splitState = null;
         nextRoundPreview = null; // see the skip-button handler's comment above
         nextRoundPreviewKey = null;
         continue;
       }
       updateNextInSequence();
       scheduleTrainingFastPoll(myToken);
+      return;
+    }
+    if (entry.type === "split") {
+      // Several categories side by side (6.50): each column runs through its
+      // own rounds exactly like the Split View mode; the entry is done when
+      // every column has finished its last round.
+      el.pairedBar.hidden = true;
+      const state = ensureSplitState(entry);
+      const results = await Promise.all(state.entries.map((column) => pollOneMultiColumn(column, myToken)));
+      if (myToken !== pollToken) return;
+      if (results.some((r) => r === null)) return;
+      lastRoundData = null; // no single round is on screen - tab handlers must not re-render a stale one
+      lastMultiResults = results;
+      renderMultiBoard(state.entries, results);
+      reportMultiStatus(results);
+      const hasNext = sequenceIndex < seq.length - 1;
+      const done = results.every((r) => r.empty || (r.round && isRoundFullyFinished(r.round)));
+      if (hasNext && done) {
+        sequenceIndex++;
+        splitState = null;
+        nextRoundPreview = null; // see the skip-button handler's comment above
+        nextRoundPreviewKey = null;
+        continue;
+      }
+      updateNextInSequence();
       return;
     }
     if (entry.type === "paired") {
@@ -1814,6 +2056,7 @@ async function pollCurrent() {
       if (bothDone && sequenceIndex < seq.length - 1) {
         sequenceIndex++;
         pairedState = null;
+        splitState = null;
         nextRoundPreview = null; // see the skip-button handler's comment above
         nextRoundPreviewKey = null;
         continue;
@@ -1839,7 +2082,7 @@ async function pollCurrent() {
 
 // Multimode (6.23): the same catch-up-through-already-finished-entries loop
 // as pollCurrent() above, but scoped to one column's own sequence/index -
-// run in parallel across all columns by pollMulti() below, so one column
+// run in parallel across all columns by pollCurrent()'s split branch, so one column
 // advancing has no effect on the others' timing. No paired-entry handling
 // needed (Multimode is Lead/Boulder only, "paired" is Speed-only, 6.12).
 // Catches its own fetch errors and returns an error marker instead of
@@ -1870,23 +2113,14 @@ async function pollOneMultiColumn(entry, token) {
   }
 }
 
-// Polls every Multimode column in parallel and renders them together in one
-// pass (not as each column's fetch resolves) so columns with different
-// response times don't visibly pop in one at a time on every tick.
-async function pollMulti() {
-  const myToken = ++pollToken;
-  const results = await Promise.all(currentSelection.entries.map((entry) => pollOneMultiColumn(entry, myToken)));
-  if (myToken !== pollToken) return; // superseded mid-flight
-  if (results.some((r) => r === null)) return; // a column bailed for the same reason
-  lastMultiResults = results;
-  renderMultiBoard(currentSelection.entries, results);
-  // Only configured (non-empty) columns actually fetch anything - if every
-  // one of them came back with an error this tick, results.info itself is
-  // unreachable, not just one bad round, so the shared status line should
-  // say so the same way every other poll path does (pollRound/pollCurrent/
-  // the paired poll). Previously this always showed "Updated ...", so a
-  // real outage read as healthy unless you separately noticed each
-  // column's own "Couldn't load: ..." text.
+// Only configured (non-empty) columns actually fetch anything - if every one
+// of them came back with an error this tick, results.info itself is
+// unreachable, not just one bad round, so the shared status line should say
+// so the same way every other poll path does (pollRound/pollCurrent/the
+// paired poll). Previously this always showed "Updated ...", so a real outage
+// read as healthy unless you separately noticed each column's own "Couldn't
+// load: ..." text. Shared by Split View mode and split-view sequence entries.
+function reportMultiStatus(results) {
   const configured = results.filter((r) => !r.empty);
   if (configured.length && configured.every((r) => r.error)) {
     el.statusLine.textContent = configured[0].error;
@@ -2017,6 +2251,7 @@ function renderPairedBar(otherData, activeSide) {
 // at finished first.
 function isRoundFullyFinished(round) {
   if (!round) return false;
+  if (incidentHoldsRound(round)) return false; // 6.48
   if (round.speed_elimination_stages?.length) return computeSpeedElimination(round).finished;
   const routeGroups = collectRouteGroups(round);
   if (!routeGroups.length) return false;
@@ -2377,6 +2612,17 @@ function athleteLine(athlete) {
   return `${bib}${athlete.name}`;
 }
 
+// A technical-incident re-start (6.48) is drawn highlighted with a "TI"
+// badge in the corner: the lane only passes the flag (`tiRestart`) on.
+function markTechnicalIncident(element, athlete) {
+  if (!athlete?.tiRestart) return;
+  element.classList.add("is-ti");
+  const badge = document.createElement("span");
+  badge.className = "ti-badge";
+  badge.textContent = "TI";
+  element.appendChild(badge);
+}
+
 // Boulder's "2 Courses" format (e.g. format_identifier
 // "boulder_one_group_ifsc_2026_two_courses") has no `starting_groups` at
 // all - the course split lives entirely in route NAMING ("A1"/"A2"/"A3"/
@@ -2436,8 +2682,12 @@ function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
     laneEl.appendChild(done);
     return;
   }
-  laneEl.appendChild(makeCard("climbing", athleteLine(atWall), "at-wall"));
-  laneEl.appendChild(makeCard("next", athleteLine(onDeck), "on-deck"));
+  const climbingCard = makeCard("climbing", athleteLine(atWall), "at-wall");
+  markTechnicalIncident(climbingCard, atWall);
+  laneEl.appendChild(climbingCard);
+  const nextCard = makeCard("next", athleteLine(onDeck), "on-deck");
+  markTechnicalIncident(nextCard, onDeck);
+  laneEl.appendChild(nextCard);
   if (queue.length) {
     const list = document.createElement("ol");
     list.className = "queue-list";
@@ -2455,6 +2705,7 @@ function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
         li.classList.add("queue-item--preview");
       } else {
         li.textContent = athleteLine(item) || "—";
+        markTechnicalIncident(li, item);
       }
       list.appendChild(li);
     }
@@ -2492,6 +2743,56 @@ function withNextCategoryPreview(lane, previewRoute) {
   return { ...lane, queue: [...lane.queue, null, ...preview] };
 }
 
+// Technical incidents (6.48): the session's open incidents of this round, as
+// an overlay on a lane that was computed from the real results. Never
+// touches the inference itself, and never for Speed.
+function sessionIncidentsFor(round) {
+  const list = currentSelection?.sessionTi;
+  if (!list?.length || !round || round.discipline === "Speed") return [];
+  return list.filter((ti) => ti.roundId === String(round.id));
+}
+
+// The athlete a TI stands in front of: a TI that uses another one's slot stands
+// where that slot stands (6.51).
+function incidentAnchor(ti, list) {
+  const owner = ti.reuseOf != null ? list.find((x) => x.id === ti.reuseOf) : null;
+  return owner ? owner.beforeAthleteId : ti.beforeAthleteId;
+}
+
+function ascentStatusFor(round, athleteId, routeId) {
+  const entry = (round.ranking ?? []).find((e) => String(e.athlete_id) === String(athleteId));
+  return entry?.ascents?.find((a) => a.route_id === routeId)?.status;
+}
+
+// The athlete an incident was put in front of has started on this route
+// (or finished it): the incident is over THERE, whatever the JP forgot to
+// press. An incident "at the end" is never over by itself.
+function incidentSupersededOnRoute(ti, round, routeId) {
+  if (ti.beforeAthleteId == null) return false;
+  const status = ascentStatusFor(round, ti.beforeAthleteId, routeId);
+  return status === "active" || DONE_STATUSES.has(status);
+}
+
+function withTechnicalIncidents(lane, round, route) {
+  const incidents = sessionIncidentsFor(round);
+  if (!incidents.length) return lane;
+  return SessionPlan.applyTechnicalIncidents(lane, {
+    incidents,
+    routeId: route.id,
+    athleteById: (id) => (round.startlist ?? []).find((a) => String(a.athlete_id) === String(id)) ?? null,
+    isSuperseded: (ti, routeId) => incidentSupersededOnRoute(ti, round, routeId),
+    isUnderway: (ti, routeId) => ascentStatusFor(round, ti.athleteId, routeId) === "active",
+  });
+}
+
+// An open incident "at the end of the start list" holds the sequence on its
+// round: the round would count as finished (and the tablets move on) before
+// the JP has had the athlete climb again.
+function incidentHoldsRound(round) {
+  const list = sessionIncidentsFor(round);
+  return list.some((ti) => !ti.done && incidentAnchor(ti, list) == null);
+}
+
 function buildLane(round, route, laneLabelPrefix, boulderFinalMode, previewRoute) {
   // Discipline check, not a format_identifier check - deliberately covers
   // every Boulder round shape (qualification, two-group, and any future
@@ -2503,11 +2804,15 @@ function buildLane(round, route, laneLabelPrefix, boulderFinalMode, previewRoute
   // has already been routed to renderSpeedElimination() by renderBoard(),
   // so `discipline === "Speed"` here always means qualification.
   const lane = withNextCategoryPreview(
-    round.discipline === "Boulder"
-      ? computeBoulderLane(round, route, boulderFinalMode)
-      : round.discipline === "Speed"
-      ? computeSpeedQualificationLane(round, route, speedQualificationSharedIndex(round))
-      : computeLane(round, route),
+    withTechnicalIncidents(
+      round.discipline === "Boulder"
+        ? computeBoulderLane(round, route, boulderFinalMode)
+        : round.discipline === "Speed"
+        ? computeSpeedQualificationLane(round, route, speedQualificationSharedIndex(round))
+        : computeLane(round, route),
+      round,
+      route
+    ),
     previewRoute
   );
   const laneEl = document.createElement("section");
@@ -3082,7 +3387,9 @@ function nextCategoryRoutesFor(visibleRouteCount) {
 // see pollOneMultiColumn() - a column that failed to load gets its own
 // small error message instead of blanking the whole board.
 function renderMultiBoard(entries, results) {
-  el.roundTitle.textContent = "Split View"; // display name only - internal "multi" naming (mode id, URL param, code identifiers) stays as-is, see 6.23
+  // One column reads like a normal board (its round's name); several are "Split View".
+  const only = entries.length === 1 && results[0]?.round;
+  el.roundTitle.textContent = only ? `${only.category ?? ""} — ${only.round ?? ""} (${only.discipline ?? ""})`.trim() : "Split View";
   el.lanes.innerHTML = "";
   el.swapRow.hidden = true; // Split View is Lead/Boulder only (no Speed lanes to swap)
   el.groupTabs.hidden = true;
@@ -3232,7 +3539,7 @@ function renderMultiBoard(entries, results) {
         skipBtn.disabled = true;
         entry.sequenceIndex++;
         try {
-          await pollMulti();
+          await pollCurrent();
         } finally {
           skipBtn.disabled = false;
         }
@@ -3627,22 +3934,16 @@ function cacheSessionPlan(id, plan, version) {
 // The selection object the rest of the app already understands, built from a
 // plan. `local` carries this tablet's own preferences (watch sessions only).
 function selectionFromPlan(plan, sessionId, version, local = {}) {
-  const common = { host: plan.host, eventId: plan.eventId, sessionId, sessionVersion: version, sessionPlan: plan };
-  if (plan.kind === "multi") {
-    return {
-      kind: "multi",
-      ...common,
-      entries: plan.entries.map((e) => ({
-        sequence: e.sequence.map((entry) => ({ type: "round", id: entry.id })),
-        sequenceIndex: 0,
-        group: e.group ?? null,
-        route: e.route ?? null,
-      })),
-    };
-  }
   return {
     kind: "watch",
-    ...common,
+    host: plan.host,
+    eventId: plan.eventId,
+    sessionId,
+    sessionVersion: version,
+    sessionPlan: plan,
+    // technical incidents of the session (6.48) - updated by pollSession()
+    sessionTi: local.sessionTi ?? [],
+    sessionTiVersion: local.sessionTiVersion ?? 0,
     group: local.group ?? null,
     route: local.route ?? null,
     swap: !!local.swap,
@@ -3668,7 +3969,8 @@ async function joinSession(local) {
   // The server may have forgotten the session (restart) or be unreachable:
   // a tablet that has seen this session before keeps showing its last plan.
   const cached = lsGet(sessionCacheKey(id));
-  const source = fresh ?? (cached?.plan ? cached : null);
+  // (A plan cached by an older version of the app with another shape is not usable.)
+  const source = fresh ?? (cached?.plan?.kind === "watch" && Array.isArray(cached.plan.sequence) ? cached : null);
   if (!source) {
     showError(
       reachable
@@ -3679,7 +3981,13 @@ async function joinSession(local) {
   }
   if (fresh) cacheSessionPlan(id, fresh.plan, fresh.version);
   sessionConnection = fresh ? "ok" : reachable ? "lost" : "offline";
-  startWatching(selectionFromPlan(source.plan, id, source.version, local));
+  startWatching(
+    selectionFromPlan(source.plan, id, source.version, {
+      ...local,
+      sessionTi: fresh?.ti,
+      sessionTiVersion: fresh?.tiVersion,
+    })
+  );
   // Fill the setup screen in the background so "switch round" works later,
   // same as a bookmarked normal link does - but never reload an event the
   // setup screen already has: that would wipe a host's unapplied edits (the
@@ -3709,7 +4017,6 @@ function setSessionConnection(next) {
 // tablets a change would affect: the key of the entry it is on (per column
 // in a Split View).
 function currentSessionKeys(sel) {
-  if (sel.kind === "multi") return sel.entries.map((e, i) => SessionPlan.columnKey(i, e.sequence[e.sequenceIndex]));
   const key = SessionPlan.entryKey(sel.sequence[sequenceIndex]);
   return key ? [key] : [];
 }
@@ -3721,7 +4028,10 @@ async function pollSession() {
   let r;
   try {
     const keys = encodeURIComponent(currentSessionKeys(sel).join(","));
-    r = await sessionApi("GET", `/${encodeURIComponent(sel.sessionId)}?v=${sel.sessionVersion}&c=${sessionClientId}&k=${keys}`);
+    r = await sessionApi(
+      "GET",
+      `/${encodeURIComponent(sel.sessionId)}?v=${sel.sessionVersion}&tv=${sel.sessionTiVersion}&c=${sessionClientId}&k=${keys}`
+    );
   } catch {
     if (myToken === sessionPollToken && currentSelection === sel) setSessionConnection("offline");
     return;
@@ -3738,6 +4048,15 @@ async function pollSession() {
     return;
   }
   setSessionConnection("ok");
+  // Technical incidents (6.48) change independently of the plan: take them
+  // over and redraw straight away (the next 3 s tick would be late for a
+  // wall display).
+  if (Array.isArray(r.data.ti) && r.data.tiVersion !== sel.sessionTiVersion) {
+    sel.sessionTi = r.data.ti;
+    sel.sessionTiVersion = r.data.tiVersion;
+    pollToken++;
+    pollCurrent();
+  }
   if (r.data.unchanged || !r.data.plan || r.data.version <= sel.sessionVersion) return;
   applySessionPlan(sel, r.data.plan, r.data.version);
 }
@@ -3754,40 +4073,42 @@ function applySessionPlan(sel, plan, version) {
     cacheSessionPlan(sel.sessionId, plan, version);
     return;
   }
-  if (plan.kind !== sel.kind || plan.host !== sel.host || plan.eventId !== sel.eventId) {
-    // A different kind of board: restart cleanly, like opening the link again.
+  if (plan.host !== sel.host || plan.eventId !== sel.eventId) {
+    // A different event: restart cleanly, like opening the link again.
     cacheSessionPlan(sel.sessionId, plan, version);
     startWatching(selectionFromPlan(plan, sel.sessionId, version, sel));
     return;
   }
 
-  if (sel.kind === "watch") {
-    const oldKey = SessionPlan.entryKey(sel.sequence[sequenceIndex]);
-    sel.sequence = plan.sequence.map((entry) => ({ ...entry }));
-    sel.showNextPreview = plan.showNextPreview !== false;
-    const found = SessionPlan.relocateIndex(oldKey, sel.sequence);
-    sequenceIndex = found >= 0 ? found : 0;
-    if (found >= 0 && pairedState) pairedState.entryIndex = found;
-    else pairedState = null;
-    if (found < 0) lastRoundData = null;
-    // The previewed "next category" may have changed with the order.
-    nextRoundPreview = null;
-    nextRoundPreviewKey = null;
-    // Invalidate whatever poll is in flight (it captured the old sequence)
-    // and show the new plan right away instead of at the next 3 s tick.
-    pollToken++;
-    pollCurrent();
-  } else {
-    const oldKeys = sel.entries.map((e) => SessionPlan.entryKey(e.sequence[e.sequenceIndex]));
-    sel.entries = plan.entries.map((e, i) => {
-      const sequence = e.sequence.map((entry) => ({ type: "round", id: entry.id }));
-      const found = SessionPlan.relocateIndex(oldKeys[i], sequence);
-      return { sequence, sequenceIndex: Math.max(found, 0), group: e.group ?? null, route: e.route ?? null };
+  const oldKey = SessionPlan.entryKey(sel.sequence[sequenceIndex]);
+  sel.sequence = plan.sequence.map((entry) => ({ ...entry }));
+  sel.showNextPreview = plan.showNextPreview !== false;
+  const found = SessionPlan.relocateIndex(oldKey, sel.sequence);
+  sequenceIndex = found >= 0 ? found : 0;
+  if (found >= 0 && pairedState) pairedState.entryIndex = found;
+  else pairedState = null;
+  // A split view stays on screen with each column's progress when the host
+  // only changed its filters (same key = same rounds per column); the
+  // filters are the plan's, so take the new ones over.
+  if (found >= 0 && splitState && splitState.key === oldKey && sel.sequence[found].type === "split") {
+    splitState.entryIndex = found;
+    sel.sequence[found].columns.forEach((column, i) => {
+      if (splitState.entries[i]) {
+        splitState.entries[i].group = column.group ?? null;
+        splitState.entries[i].route = column.route ?? null;
+      }
     });
-    lastMultiResults = null;
-    pollToken++;
-    pollMulti();
+  } else {
+    splitState = null;
   }
+  if (found < 0) lastRoundData = null;
+  // The previewed "next category" may have changed with the order.
+  nextRoundPreview = null;
+  nextRoundPreviewKey = null;
+  // Invalidate whatever poll is in flight (it captured the old sequence)
+  // and show the new plan right away instead of at the next 3 s tick.
+  pollToken++;
+  pollCurrent();
   sel.sessionVersion = version;
   sel.sessionPlan = plan;
   cacheSessionPlan(sel.sessionId, plan, version);
@@ -3849,35 +4170,18 @@ function knownHostNames() {
 function planFromSetup() {
   if (!loadedEvent) return { error: "Load an event first." };
   const { host, eventId } = loadedEvent;
-  let raw;
-  if (currentMode === "multi") {
-    if (multiColumnDrafts.every((d) => d.items.length === 0)) return { error: "Add at least one round to a column." };
-    raw = {
-      kind: "multi",
-      host,
-      eventId,
-      entries: multiColumnDrafts.map((d) => ({
-        sequence: d.items.map((item) => ({ type: "round", id: item.roundId })),
-        group: d.group ?? null,
-        route: d.route ?? null,
-      })),
-    };
-  } else if (currentMode === "sequence") {
-    if (!sequenceBuilder.length) return { error: "Add at least one round to the sequence." };
-    raw = {
-      kind: "watch",
-      host,
-      eventId,
-      sequence: sequenceBuilder.map(sequenceItemToEntry),
-      showNextPreview: el.showNextPreview.checked,
-    };
-  } else if (currentMode === "single") {
-    const roundId = el.roundSelect.value;
-    if (!roundId) return { error: "Pick a round first." };
-    raw = { kind: "watch", host, eventId, sequence: [{ type: "round", id: roundId }], showNextPreview: true };
-  } else {
-    return { error: "Shared sessions work with Single round, Sequence and Split View." };
-  }
+  // A shared session is always a Sequence (6.50): the Single round, Training
+  // and Split View tabs are for one device and never feed a session, so the
+  // plan can't depend on which tab happens to be open.
+  if (currentMode !== "sequence") return { error: "Shared sessions are created and edited in Sequence mode (Advanced)." };
+  if (!sequenceBuilder.length) return { error: "Add at least one round to the sequence." };
+  const raw = {
+    kind: "watch",
+    host,
+    eventId,
+    sequence: sequenceBuilder.map(sequenceItemToEntry),
+    showNextPreview: el.showNextPreview.checked,
+  };
   try {
     return { plan: SessionPlan.validatePlan(raw, knownHostNames()) };
   } catch (err) {
@@ -3957,11 +4261,13 @@ function renderHostPanel() {
   el.sessionHostState.hidden = !hosting;
   el.sessionCreateRow.hidden = hosting;
   el.sessionLoginRow.hidden = hosting;
+  updateSessionPanelForMode();
   if (!hosting) {
     stopHostClientsPolling();
     el.sessionDirty.hidden = true;
     return;
   }
+  renderSessionSummary();
   el.sessionHostId.textContent = hostSession.id;
   el.sessionHostVersion.textContent = hostSession.plan ? String(hostSession.version) : "?";
   const link = sessionUrl(hostSession.id);
@@ -3980,8 +4286,44 @@ function renderHostPanel() {
       renderQrCode(el.sessionControlQr, controlLink);
     }
   }
+  // The JP link (6.48): technical incidents exist for Lead and Boulder only,
+  // but the plan may not tell which rounds those are - always offer it.
+  const juryLink = `${link}&jp=1`;
+  if (el.juryLink.value !== juryLink) {
+    el.juryLink.value = juryLink;
+    renderQrCode(el.juryQr, juryLink);
+  }
   updateSessionDirty();
   startHostClientsPolling();
+}
+
+// What the tablets show right now, in words: the host sees at a glance whether
+// the live session has the round they meant to load (labels come from the
+// round data, never from the editor).
+async function renderSessionSummary() {
+  const sess = hostSession;
+  const plan = sess?.plan;
+  const version = sess?.version;
+  if (!plan) {
+    el.sessionPlanSummary.textContent = "";
+    return;
+  }
+  const label = async (id) => (await getRoundLabel(plan.host, id)) ?? `Round ${id}`;
+  const parts = await Promise.all(
+    plan.sequence.map(async (entry) => {
+      if (entry.type === "paired") return `${await label(entry.a)} ⇔ ${await label(entry.b)}`;
+      if (entry.type === "training") return `Training: ${await label(entry.id)}`;
+      if (entry.type === "split") {
+        const columns = await Promise.all(
+          entry.columns.map(async (column) => (await Promise.all(column.sequence.map((e) => label(e.id)))).join(" → ") || "(empty)")
+        );
+        return `Split View [${columns.join("  |  ")}]`;
+      }
+      return label(entry.id);
+    })
+  );
+  const text = parts.join(" → ");
+  if (hostSession === sess && sess.version === version) el.sessionPlanSummary.textContent = `Live on the tablets: ${text}`;
 }
 
 function startHosting(id, creds, plan, version) {
@@ -4025,44 +4367,64 @@ async function loadPlanIntoSetup(plan) {
     await loadEvent();
     if (!loadedEvent || loadedEvent.host !== plan.host || loadedEvent.eventId !== plan.eventId) return null;
   }
+  return fillEditorFromPlan(plan);
+}
+
+// The synchronous half: the event of `plan` is already loaded. A plan with
+// exactly one plain round opens in Single round mode with THAT round selected
+// in the top dropdown (not as a one-row Sequence), so "the round shown at the
+// top" and "the round in the session" are the same thing.
+function fillEditorFromPlan(plan) {
   const byId = new Map(loadedEntries.map((e) => [e.roundId, e]));
   let missing = 0;
-  if (plan.kind === "multi") {
-    multiColumnCount = Math.min(5, Math.max(2, plan.entries.length));
-    multiColumnDrafts = Array.from({ length: multiColumnCount }, (_, i) => {
-      const column = plan.entries[i];
-      const items = [];
-      for (const entry of column?.sequence ?? []) {
-        const info = byId.get(entry.id);
-        if (info) items.push({ roundId: entry.id, discipline: multiEntryDiscipline(info) });
-        else missing++;
-      }
-      return { items, group: column?.group ?? null, route: column?.route ?? null };
-    });
-    for (const btn of el.multiCountTabs.querySelectorAll(".mode-tab")) {
-      btn.classList.toggle("active", Number(btn.dataset.count) === multiColumnCount);
+  sequenceBuilder = [];
+  for (const entry of plan.sequence) {
+    if (entry.type === "paired") {
+      const a = byId.get(entry.a);
+      const b = byId.get(entry.b);
+      if (a && b) sequenceBuilder.push({ type: "paired", aId: a.roundId, aLabel: entryLabel(a), bId: b.roundId, bLabel: entryLabel(b) });
+      else missing++;
+    } else if (entry.type === "split") {
+      const columns = entry.columns.map((column) => {
+        const items = [];
+        for (const item of column.sequence) {
+          const info = byId.get(item.id);
+          if (info) items.push({ roundId: item.id, discipline: multiEntryDiscipline(info) });
+          else missing++;
+        }
+        return { items, group: column.group ?? null, route: column.route ?? null };
+      });
+      const row = { type: "split", columns };
+      if (splitItemHasRounds(row)) sequenceBuilder.push(row);
+    } else {
+      const info = byId.get(entry.id);
+      if (info) sequenceBuilder.push({ type: entry.type === "training" ? "training" : "round", roundId: info.roundId, label: entryLabel(info) });
+      else missing++;
     }
-    setMode("multi");
-    renderMultiColumnsConfig(loadedEntries);
-  } else {
-    sequenceBuilder = [];
-    for (const entry of plan.sequence) {
-      if (entry.type === "paired") {
-        const a = byId.get(entry.a);
-        const b = byId.get(entry.b);
-        if (a && b) sequenceBuilder.push({ type: "paired", aId: a.roundId, aLabel: entryLabel(a), bId: b.roundId, bLabel: entryLabel(b) });
-        else missing++;
-      } else {
-        const info = byId.get(entry.id);
-        if (info) sequenceBuilder.push({ type: entry.type === "training" ? "training" : "round", roundId: info.roundId, label: entryLabel(info) });
-        else missing++;
-      }
-    }
-    el.showNextPreview.checked = plan.showNextPreview !== false;
-    setMode("sequence");
   }
+  el.showNextPreview.checked = plan.showNextPreview !== false;
+  // A shared session is always edited as a Sequence (6.50), whatever tab was open.
+  setMode("sequence");
   updateSessionDirty();
   return { missing };
+}
+
+// The editor starts out holding defaults every time an event is (re)loaded
+// (6.46 rule 5). While this device hosts a session for THAT event, start from
+// the live plan instead: the host sees - and edits - what the tablets show
+// right now, and "Apply to all tablets" works without an extra "Reload plan"
+// round trip. Only ever runs on a freshly reset editor, so it can't discard an
+// edit.
+function bindEditorToHostedPlan() {
+  const plan = hostSession?.plan;
+  if (!plan || hostEditorBound || !loadedEvent || loadedEvent.host !== plan.host || loadedEvent.eventId !== plan.eventId) return;
+  // Fill the Sequence editor, but leave the tab the user is on alone: loading
+  // an event while in Single round or Training must not jump to Sequence.
+  const tab = currentMode;
+  fillEditorFromPlan(plan);
+  if (tab !== "sequence") setMode(tab);
+  hostEditorBound = true;
+  updateSessionDirty();
 }
 
 async function loginSession() {
@@ -4229,6 +4591,7 @@ async function initHostPanel() {
     // offline: the panel stays in "can't reach" state until the next refresh
   }
   renderHostPanel();
+  bindEditorToHostedPlan();
 }
 
 function refreshHostPanelOnReturn() {
@@ -4288,6 +4651,7 @@ async function startSessionController(local) {
   trainingPollToken++;
   stopSessionPolling();
   stopSessionController();
+  stopJuryPage();
   currentSelection = { kind: "controller", host: r.data.plan.host, eventId: r.data.plan.eventId, sessionId: id };
   const creds = loadHostCreds()[id];
   sessionController = {
@@ -4501,14 +4865,812 @@ el.controlRestart.addEventListener("click", () => {
   }
 });
 
+// ---- Jury president: technical incidents (6.48) -------------------------------
+//
+// `?s=<id>&jp=1`: a phone the jury president uses to let an athlete climb
+// again (a technical incident, "TI") in front of another athlete. Reading
+// needs nothing; adding/finishing/removing needs the host password (asked
+// once, same stored host credentials as the setup screen and the training
+// controller). The wall tablets of the session draw the incident as an
+// overlay on their lanes (withTechnicalIncidents()); this page only edits the
+// session's list. Lead and Boulder only - the server refuses Speed rounds.
+let juryState = null; // { id, hostKey, plan, version, ti, tiVersion, rounds: Map, round, scopes, pending, timer, tick }
+
+function setJuryMsg(text, isError = true) {
+  el.juryMsg.textContent = text;
+  el.juryMsg.hidden = !text;
+  el.juryMsg.classList.toggle("session-msg--error", isError);
+}
+
+async function startJuryPage(local) {
+  const id = local.sessionId;
+  showError("");
+  let r;
+  try {
+    r = await sessionApi("GET", `/${encodeURIComponent(id)}`);
+  } catch {
+    r = null;
+  }
+  if (!r || r.status !== 200 || !r.data?.plan) {
+    showError(r?.status === 404 ? `Session ${id} was not found - the link may be wrong, or the session ended.` : `Couldn't reach the server to open session ${id}.`);
+    return;
+  }
+  // A mode transition like startWatching()/startSessionController().
+  clearInterval(pollTimer);
+  clearInterval(trainingPollTimer);
+  clearTimeout(trainingFastTimer);
+  pollToken++;
+  trainingPollToken++;
+  stopSessionPolling();
+  stopSessionController();
+  stopJuryPage();
+  currentSelection = { kind: "jury", host: r.data.plan.host, eventId: r.data.plan.eventId, sessionId: id };
+  const creds = loadHostCreds()[id];
+  const j = {
+    id,
+    hostKey: creds?.hostKey ?? null,
+    plan: r.data.plan,
+    version: r.data.version,
+    ti: r.data.ti ?? [],
+    tiVersion: r.data.tiVersion,
+    rounds: new Map(),
+    roundId: null,
+    round: null,
+    scopes: [],
+    athletes: new Map(),
+    editing: null,
+    pending: false,
+    timer: null,
+    tick: 0,
+  };
+  juryState = j;
+  el.setup.hidden = true;
+  el.board.hidden = true;
+  el.controller.hidden = true;
+  el.jury.hidden = false;
+  setJuryMsg("");
+  el.juryStatus.textContent = "";
+  updateJuryGate();
+  fillJuryRounds(); // also loads the displayed round once the page is unlocked
+  renderJuryList();
+  j.timer = setInterval(juryTick, 3000);
+}
+
+function stopJuryPage() {
+  if (!juryState) {
+    el.jury.hidden = true;
+    return;
+  }
+  clearInterval(juryState.timer);
+  juryState = null;
+  el.juryRound.disabled = false;
+  el.juryScope.disabled = false;
+  el.jury.hidden = true;
+  el.juryGate.hidden = true;
+  el.juryForm.hidden = true;
+  setJuryMsg("");
+}
+
+// Every plain round of the plan (paired entries and trainings are Speed only).
+function juryPlanRoundIds(plan) {
+  const ids = plan.sequence.flatMap((e) =>
+    e.type === "round" ? [e.id] : e.type === "split" ? e.columns.flatMap((c) => c.sequence.map((r) => r.id)) : []
+  );
+  return [...new Set(ids)];
+}
+
+function fillJuryRounds() {
+  const j = juryState;
+  const keep = el.juryRound.value;
+  el.juryRound.innerHTML = "";
+  for (const id of juryPlanRoundIds(j.plan)) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = `Round ${id}`;
+    el.juryRound.appendChild(opt);
+    getRoundLabel(j.plan.host, id).then((label) => {
+      if (label && juryState === j) opt.textContent = label;
+    });
+  }
+  if (keep && [...el.juryRound.options].some((o) => o.value === keep)) el.juryRound.value = keep;
+  // The form must always belong to the round the dropdown shows. When the plan
+  // changed under the JP (the round they had open was removed, the order
+  // changed, the first start) the dropdown can end up on another round than the
+  // data below it - reload it for the displayed one, never keep the old one.
+  if (String(j.round?.id ?? "") !== el.juryRound.value) {
+    resetJuryForm();
+    if (j.hostKey && el.juryRound.value) loadJuryRound(el.juryRound.value);
+  }
+}
+
+// Empties the form (round data, athlete, position) so nothing of a previously
+// loaded round can be used while another one is displayed or still loading. The
+// owner's rule for the TI-Rechner: every field of a new TI starts empty.
+function resetJuryForm() {
+  const j = juryState;
+  j.round = null;
+  j.scopes = [];
+  j.athletes = new Map();
+  for (const select of [el.juryScope, el.juryBoulder, el.juryReuse, el.juryAthleteList]) select.innerHTML = "";
+  el.juryAthlete.value = "";
+  el.juryPos.value = "";
+  el.juryGapMode.value = "pos";
+  el.juryBoulderRow.hidden = true;
+  el.juryScopeRow.hidden = true;
+  updateJuryForm();
+}
+
+function updateJuryGate() {
+  const j = juryState;
+  const locked = !j.hostKey;
+  el.juryGate.hidden = !locked;
+  el.juryForm.hidden = locked;
+}
+
+// Route choices a TI can be bound to: one route for Lead, a whole block
+// (starting group / course, or all boulders) for Boulder.
+function juryScopesFor(round) {
+  const groups = collectRouteGroups(round);
+  if (round.discipline === "Boulder") {
+    return groups.map((g) => ({ label: g.groupName ?? "All boulders", routes: g.routes }));
+  }
+  return groups.flatMap((g) => g.routes).map((r) => ({ label: `Route ${r.name}`, routes: [r] }));
+}
+
+function juryScopeStatuses(round, scope, athleteId) {
+  return scope.routes.map((r) => ascentStatusFor(round, athleteId, r.id));
+}
+
+function juryScopeAthletes(round, scope) {
+  return (round.startlist ?? [])
+    .map((athlete) => {
+      const positions = scope.routes
+        .map((r) => athlete.route_start_positions?.find((p) => p.route_id === r.id)?.position)
+        .filter((x) => x != null);
+      return positions.length ? { athlete, position: Math.min(...positions) } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.position - b.position)
+    .map((x) => x.athlete);
+}
+
+// A technical incident can only be claimed until the next PLANNED athlete has
+// started on the affected route (Lead) / until the next interval begins
+// (Boulder). Returns that athlete when he has already started on the
+// route/boulder the form is set to, else null. A hint for the JP, never a
+// block - the president decides.
+function juryStartedAfter(round, scope, athleteId) {
+  const route = scope.routes[juryBoulderIndex()];
+  if (!route) return null;
+  const ordered = (round.startlist ?? [])
+    .map((athlete) => ({
+      athlete,
+      position: athlete.route_start_positions?.find((p) => p.route_id === route.id)?.position,
+    }))
+    .filter((x) => x.position != null)
+    .sort((a, b) => a.position - b.position);
+  const at = ordered.findIndex((x) => String(x.athlete.athlete_id) === String(athleteId));
+  const next = ordered[at + 1]?.athlete;
+  if (at === -1 || !next) return null;
+  const status = ascentStatusFor(round, next.athlete_id, route.id);
+  return status === "active" || DONE_STATUSES.has(status) ? { athlete: next, route: `${laneLabelPrefixFor(round)} ${route.name}` } : null;
+}
+
+// The athlete typed into the form: a bib number (with or without "#"), a full
+// "#bib - name" line, or a unique part of the name (for athletes without a
+// bib). Any athlete of the chosen route/block can be picked - also one who
+// isn't on the wall any more or whose result isn't entered yet: the attempt
+// may be over without the data saying so. Returns the athlete id or "".
+function juryAthleteId() {
+  const j = juryState;
+  const text = el.juryAthlete.value.trim().replace(/^#\s*/, "").toLowerCase();
+  if (!j || !text) return "";
+  const all = [...j.athletes.values()];
+  const only = (list) => (list.length === 1 ? String(list[0].athlete_id) : null);
+  return (
+    only(all.filter((a) => a.bib != null && a.bib !== "" && String(a.bib).toLowerCase() === text)) ??
+    only(all.filter((a) => athleteLine(a).toLowerCase() === text || String(a.name ?? "").toLowerCase() === text)) ??
+    (text.length >= 3 ? only(all.filter((a) => athleteLine(a).toLowerCase().includes(text))) : null) ??
+    ""
+  );
+}
+
+function juryAthleteLabel(athlete) {
+  return athlete ? athleteLine(athlete) : "?";
+}
+
+async function loadJuryRound(roundId) {
+  const j = juryState;
+  if (!j || !roundId) return;
+  setJuryMsg("");
+  resetJuryForm();
+  try {
+    const round = await fetchRoundJson(j.plan.host, roundId);
+    if (juryState !== j || el.juryRound.value !== roundId) return;
+    j.round = round;
+    j.rounds.set(String(roundId), round);
+    j.scopes = round.discipline === "Speed" ? [] : juryScopesFor(round);
+    const keep = el.juryScope.value;
+    el.juryScope.innerHTML = "";
+    j.scopes.forEach((scope, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = scope.label;
+      el.juryScope.appendChild(opt);
+    });
+    if (keep && j.scopes[Number(keep)]) el.juryScope.value = keep;
+    el.juryScopeRow.hidden = j.scopes.length < 2;
+    if (round.discipline === "Speed") {
+      setJuryMsg("Technical incidents are not available for Speed rounds.");
+    } else if (!j.scopes.length) {
+      setJuryMsg("This round has no routes yet.");
+    }
+    fillJuryAthletes();
+    renderJuryList();
+  } catch (err) {
+    if (juryState === j) setJuryMsg(describeConnectionError(err));
+  }
+}
+
+function juryCurrentScope() {
+  return juryState.scopes[Number(el.juryScope.value)];
+}
+
+function jurySameRoutes(ti, scope) {
+  const ids = scope.routes.map((r) => r.id);
+  return ti.routeIds.length === ids.length && ti.routeIds.every((id) => ids.includes(id));
+}
+
+const juryBoulderIndex = () => (!el.juryBoulderRow.hidden ? Number(el.juryBoulder.value) : 0);
+
+// Step 1 of the form: which athlete (typed bib), on which boulder.
+function fillJuryAthletes() {
+  const j = juryState;
+  const scope = juryCurrentScope();
+  const keepBoulder = el.juryBoulder.value;
+  el.juryAthleteList.innerHTML = "";
+  el.juryBoulder.innerHTML = "";
+  j.athletes = new Map();
+  if (!scope || !j.round || j.round.discipline === "Speed") {
+    el.juryBoulderRow.hidden = true;
+    updateJuryForm();
+    return;
+  }
+  for (const athlete of juryScopeAthletes(j.round, scope)) {
+    j.athletes.set(String(athlete.athlete_id), athlete);
+    // suggestions while typing: the bib is what gets typed, the line is the label
+    const opt = document.createElement("option");
+    opt.value = athlete.bib != null && athlete.bib !== "" ? String(athlete.bib) : String(athlete.name ?? "");
+    opt.label = juryAthleteLabel(athlete);
+    el.juryAthleteList.appendChild(opt);
+  }
+  const askBoulder = j.round.discipline === "Boulder" && scope.routes.length > 1;
+  el.juryBoulderRow.hidden = !askBoulder;
+  if (askBoulder) {
+    scope.routes.forEach((route, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = `${laneLabelPrefixFor(j.round)} ${route.name}`;
+      el.juryBoulder.appendChild(opt);
+    });
+    if (keepBoulder && el.juryBoulder.options[Number(keepBoulder)]) el.juryBoulder.value = keepBoulder;
+  }
+  updateJuryForm();
+}
+
+// "In front of start position X" -> the athlete at that position on the first
+// boulder of the block (the position column of results.info is the "Order" of
+// the TI-Rechner). A position behind the last athlete is the end of the list.
+function juryAnchor(round, scope) {
+  const text = el.juryPos.value.trim();
+  if (!/^\d{1,4}$/.test(text)) return null;
+  const asked = Number(text);
+  const first = scope.routes[0].id;
+  const ordered = (round.startlist ?? [])
+    .map((athlete) => ({ athlete, position: athlete.route_start_positions?.find((p) => p.route_id === first)?.position }))
+    .filter((x) => x.position != null)
+    .sort((a, b) => a.position - b.position);
+  const exact = ordered.find((x) => x.position === asked);
+  if (exact) return { athlete: exact.athlete, position: asked, exact: true };
+  const next = ordered.find((x) => x.position > asked);
+  if (next) return { athlete: next.athlete, position: next.position, exact: false, asked };
+  return { end: true, last: ordered.length ? ordered[ordered.length - 1].position : 0 };
+}
+
+// The other TIs of this block a Boulder TI can use the free slot of.
+function juryReuseOwners(round, scope, boulderRouteId) {
+  const j = juryState;
+  return j.ti.filter(
+    (t) => !t.done && t.id !== j.editing && t.roundId === String(round.id) && t.boulderRouteId != null && t.reuseOf == null && jurySameRoutes(t, scope) && t.boulderRouteId !== boulderRouteId
+  );
+}
+
+// One place that sets every row, hint and the button from what the form holds.
+function updateJuryForm() {
+  const j = juryState;
+  if (!j) return;
+  const round = j.round;
+  const scope = round ? juryCurrentScope() : null;
+  const boulder = round?.discipline === "Boulder";
+  const prefix = round ? laneLabelPrefixFor(round) : "Route";
+  // the three ways to say where the athlete stands (the TI-Rechner's answer)
+  const kind = boulder ? "boulder" : "lead";
+  if (el.juryGapMode.dataset.kind !== kind) {
+    const keep = el.juryGapMode.value;
+    el.juryGapMode.innerHTML = "";
+    const options = boulder
+      ? [["pos", "Boulder 1 stays free in front of a start position"], ["end", "No gap needed (end of the start list)"], ["reuse", "No new gap: uses the slot of another TI"]]
+      : [["pos", "Climbs again in front of a start position"], ["end", "Climbs again at the end of the start list"]];
+    for (const [value, text] of options) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      el.juryGapMode.appendChild(opt);
+    }
+    el.juryGapMode.dataset.kind = kind;
+    el.juryGapMode.value = [...el.juryGapMode.options].some((o) => o.value === keep) ? keep : "pos";
+  }
+  const mode = el.juryGapMode.value;
+  el.juryPosRow.hidden = mode !== "pos";
+  el.juryReuseRow.hidden = mode !== "reuse";
+
+  const athleteId = juryAthleteId();
+  const athlete = athleteId ? j.athletes.get(athleteId) : null;
+  // who the typed bib is and how far that athlete is - a warning (not a block) when
+  // there is no result and nobody on the wall yet
+  let msg = "";
+  let warn = false;
+  if (round && scope && el.juryAthlete.value.trim()) {
+    if (!athlete) {
+      msg = "No athlete with this bib in this route/block.";
+      warn = true;
+    } else {
+      const statuses = juryScopeStatuses(round, scope, athlete.athlete_id);
+      const done = statuses.filter((st) => DONE_STATUSES.has(st)).length;
+      const state = done
+        ? `has a result on ${done} of ${statuses.length} ${statuses.length === 1 ? "route" : "boulders"}`
+        : statuses.includes("active")
+        ? "is climbing now"
+        : "has no result yet - only add this if the attempt is over but not entered in the results yet";
+      msg = `${juryAthleteLabel(athlete)} ${state}.`;
+      warn = !done && !statuses.includes("active");
+      const late = juryStartedAfter(round, scope, athlete.athlete_id);
+      if (late) {
+        msg += ` Deadline probably passed: the next planned athlete (${juryAthleteLabel(late.athlete)}) has already started on ${late.route} (an incident can only be claimed until then). Only add this if the jury president accepted the incident in time.`;
+        warn = true;
+      }
+    }
+  }
+  el.juryStep1Msg.textContent = msg;
+  el.juryStep1Msg.classList.toggle("is-warning", warn);
+
+  // the typed start position, shown as the athlete it stands for
+  let anchor = null;
+  let posMsg = "";
+  let posWarn = false;
+  if (mode === "pos" && round && scope) {
+    anchor = juryAnchor(round, scope);
+    const route = scope.routes[juryBoulderIndex()];
+    if (el.juryPos.value.trim() && !anchor) {
+      posMsg = "Enter the start position as a number.";
+      posWarn = true;
+    } else if (anchor?.end) {
+      posMsg = `Behind the last athlete (position ${anchor.last}) - the end of the start list.`;
+    } else if (anchor) {
+      posMsg = `= ${juryAthleteLabel(anchor.athlete)}${anchor.exact ? "" : ` (nobody at position ${anchor.asked}, the next one is ${anchor.position})`}`;
+      if (route && !juryNotStartedOn(round, anchor.athlete, route.id)) {
+        posMsg += ` - has already started on ${prefix} ${route.name}, the TI would not show there.`;
+        posWarn = true;
+      }
+    }
+  }
+  el.juryPosInfo.textContent = posMsg;
+  el.juryPosInfo.classList.toggle("is-warning", posWarn);
+
+  // the slot of another TI (Boulder)
+  let owner = null;
+  if (mode === "reuse" && round && scope) {
+    const keep = el.juryReuse.value;
+    const route = scope.routes[juryBoulderIndex()];
+    const owners = juryReuseOwners(round, scope, route?.id);
+    el.juryReuse.innerHTML = "";
+    for (const t of owners) {
+      const opt = document.createElement("option");
+      opt.value = t.id;
+      const a = (round.startlist ?? []).find((x) => String(x.athlete_id) === String(t.athleteId));
+      const bRoute = scope.routes.find((r) => r.id === t.boulderRouteId);
+      opt.textContent = `TI ${t.no} · ${a ? athleteLine(a) : `athlete ${t.athleteId}`} · ${prefix} ${bRoute?.name ?? ""}`.trim();
+      el.juryReuse.appendChild(opt);
+    }
+    if (keep && owners.some((t) => t.id === keep)) el.juryReuse.value = keep;
+    owner = owners.find((t) => t.id === el.juryReuse.value) ?? null;
+    if (!owners.length) {
+      posMsg = "There is no other open TI on another boulder of this block to use a slot of.";
+      el.juryPosInfo.textContent = posMsg;
+      el.juryPosInfo.classList.add("is-warning");
+    }
+  }
+
+  // the sentence that says what gets saved, and whether it can be saved
+  const route = scope?.routes[juryBoulderIndex()];
+  const who = athlete ? juryAthleteLabel(athlete) : "";
+  const where = boulder && route ? `on ${prefix} ${route.name}` : scope ? `on ${scope.label}` : "";
+  const target = mode === "pos" && anchor && !anchor.end ? `in front of ${juryAthleteLabel(anchor.athlete)}` : "at the end of the start list";
+  let preview = "";
+  let ready = false;
+  if (athlete && scope) {
+    if (mode === "reuse") {
+      ready = !!owner;
+      if (owner) preview = `${who} climbs again ${where} in the slot of TI ${owner.no}`;
+    } else {
+      ready = mode === "end" || !!anchor;
+      if (ready) {
+        preview = boulder
+          ? mode === "end"
+            ? `${who} climbs again ${where}, at the end of the start list (no gap needed)`
+            : `${who} climbs again ${where}; ${prefix} 1 stays free ${target}`
+          : `${who} climbs again ${where}, ${mode === "end" ? "at the end of the start list" : target.replace("in front of", "before")}`;
+      }
+    }
+  }
+  el.juryPreview.textContent = preview;
+  el.juryAdd.disabled = !ready || j.pending || !j.hostKey;
+  el.juryAdd.textContent = j.editing ? "Save changes" : "Add TI";
+  el.juryCancel.hidden = !j.editing;
+}
+
+// Not started on this route: nothing of him is recorded as running or done there.
+const juryNotStartedOn = (round, athlete, routeId) => {
+  const st = ascentStatusFor(round, athlete.athlete_id, routeId);
+  return st !== "active" && !DONE_STATUSES.has(st);
+};
+
+// Leaves edit mode and empties the form for the next TI.
+function resetJuryEntry() {
+  const j = juryState;
+  j.editing = null;
+  el.juryRound.disabled = false;
+  el.juryScope.disabled = false;
+  el.juryAthlete.value = "";
+  el.juryPos.value = "";
+  el.juryGapMode.value = "pos";
+  updateJuryForm();
+}
+
+// Loads a TI into the form to change it. The round and the block stay (the
+// server refuses to change them); the position is what the TI-Rechner says now.
+async function startJuryEdit(ti) {
+  const j = juryState;
+  if (!j || j.pending) return;
+  j.editing = ti.id;
+  el.juryRound.disabled = true;
+  el.juryScope.disabled = true;
+  if (el.juryRound.value !== ti.roundId) {
+    el.juryRound.value = ti.roundId;
+    await loadJuryRound(ti.roundId);
+    if (juryState !== j || j.editing !== ti.id) return;
+  }
+  const scopeIndex = j.scopes.findIndex((sc) => jurySameRoutes(ti, sc));
+  if (scopeIndex === -1) {
+    resetJuryEntry();
+    return setJuryMsg("This TI's block is not in the round any more.");
+  }
+  el.juryScope.value = String(scopeIndex);
+  fillJuryAthletes();
+  const scope = j.scopes[scopeIndex];
+  const athlete = j.athletes.get(String(ti.athleteId));
+  el.juryAthlete.value = athlete?.bib != null && athlete.bib !== "" ? String(athlete.bib) : athlete ? String(athlete.name) : "";
+  if (ti.boulderRouteId != null) {
+    const bi = scope.routes.findIndex((r) => r.id === ti.boulderRouteId);
+    if (bi !== -1 && !el.juryBoulderRow.hidden) el.juryBoulder.value = String(bi);
+  }
+  updateJuryForm(); // builds the options of the gap select for this discipline
+  const first = scope.routes[0].id;
+  const anchorAthlete = ti.beforeAthleteId != null ? j.round.startlist.find((a) => String(a.athlete_id) === String(ti.beforeAthleteId)) : null;
+  el.juryGapMode.value = ti.reuseOf != null ? "reuse" : ti.beforeAthleteId == null ? "end" : "pos";
+  el.juryPos.value = anchorAthlete ? String(anchorAthlete.route_start_positions?.find((p) => p.route_id === first)?.position ?? "") : "";
+  updateJuryForm();
+  if (ti.reuseOf != null) {
+    el.juryReuse.value = ti.reuseOf;
+    updateJuryForm();
+  }
+  setJuryMsg("");
+  el.juryAthlete.scrollIntoView({ block: "center" });
+}
+
+// Add a TI - or save the changes of the one being edited. The position comes
+// from the TI-Rechner; nothing is calculated here (6.51).
+async function addJuryIncident() {
+  const j = juryState;
+  if (!j || j.pending || !j.hostKey || el.juryAdd.disabled) return;
+  const roundId = el.juryRound.value;
+  if (!j.round || String(j.round.id) !== roundId) {
+    // the dropdown moved to another round than the one the form was built from
+    return setJuryMsg("The round changed - fill the form again.");
+  }
+  const wantedAthlete = juryAthleteId();
+  const wantedScope = el.juryScope.value;
+  const wantedMode = el.juryGapMode.value;
+  const wantedOwner = el.juryReuse.value;
+  const wantedBoulder = juryBoulderIndex();
+  const editing = j.editing;
+  j.pending = true;
+  el.juryAdd.disabled = true;
+  try {
+    // Re-read the round right before saving: the athlete in front may have
+    // started while the JP was typing.
+    const fresh = await fetchRoundJson(j.plan.host, roundId);
+    if (juryState !== j || el.juryRound.value !== roundId) return;
+    j.round = fresh;
+    j.rounds.set(String(roundId), fresh);
+    const scope = j.scopes[Number(wantedScope)];
+    const athlete = j.athletes.get(wantedAthlete);
+    const anchor = wantedMode === "pos" && scope ? juryAnchor(fresh, scope) : null;
+    if (!scope || !athlete || (wantedMode === "pos" && !anchor)) {
+      fillJuryAthletes();
+      return setJuryMsg("The form changed while saving - check it and try again.");
+    }
+    if (anchor?.athlete && !juryScopeStatuses(fresh, scope, anchor.athlete.athlete_id).some((st) => st !== "active" && !DONE_STATUSES.has(st))) {
+      return setJuryMsg(`${juryAthleteLabel(anchor.athlete)} has already started on every boulder of this block - the TI would not show.`);
+    }
+    const owner = wantedMode === "reuse" ? j.ti.find((t) => t.id === wantedOwner) : null;
+    const body = {
+      roundId,
+      routeIds: scope.routes.map((route) => route.id),
+      athleteId: Number(wantedAthlete),
+      // a TI that uses a slot stands where that slot stands (the position is kept as a snapshot)
+      beforeAthleteId: owner ? owner.beforeAthleteId : anchor && !anchor.end ? Number(anchor.athlete.athlete_id) : null,
+    };
+    if (fresh.discipline === "Boulder") body.boulderRouteId = scope.routes[wantedBoulder].id;
+    if (owner) body.reuseOf = owner.id;
+    const path = editing ? `/${encodeURIComponent(j.id)}/ti/${editing}` : `/${encodeURIComponent(j.id)}/ti`;
+    const r = await sessionApi(editing ? "PUT" : "POST", path, { hostKey: j.hostKey, body });
+    if (juryState !== j) return;
+    if (r.status === 201 || r.status === 200) {
+      j.ti = editing ? j.ti.map((x) => (x.id === r.data.ti.id ? r.data.ti : x)) : [...j.ti, r.data.ti];
+      j.tiVersion = r.data.tiVersion;
+      resetJuryEntry();
+      renderJuryList();
+      setJuryMsg(editing ? "Saved - the tablets show it within a few seconds." : "TI added - the tablets show it within a few seconds.", false);
+    } else if (r.status === 403) {
+      forgetHostCreds(j.id);
+      j.hostKey = null;
+      updateJuryGate();
+      setJuryMsg("The host password is no longer valid - enter it again.");
+    } else {
+      setJuryMsg(r.data?.error ?? `Couldn't ${editing ? "save" : "add"} the TI (error ${r.status}).`);
+    }
+  } catch (err) {
+    if (juryState === j) setJuryMsg(err?.status ? describeConnectionError(err) : "Couldn't reach the server.");
+  } finally {
+    if (juryState === j) {
+      j.pending = false;
+      updateJuryForm();
+    }
+  }
+}
+
+async function juryIncidentAction(ti, action) {
+  const j = juryState;
+  if (!j || j.pending || !j.hostKey) return;
+  j.pending = true;
+  renderJuryList();
+  try {
+    const path = action === "done" ? `/${encodeURIComponent(j.id)}/ti/${ti.id}/done` : `/${encodeURIComponent(j.id)}/ti/${ti.id}`;
+    const r = await sessionApi(action === "done" ? "POST" : "DELETE", path, { hostKey: j.hostKey });
+    if (juryState !== j) return;
+    if (r.status === 200 || r.status === 404) {
+      j.ti = action === "done" && r.status === 200 ? j.ti.map((x) => (x.id === ti.id ? r.data.ti : x)) : j.ti.filter((x) => x.id !== ti.id);
+      if (r.data?.tiVersion != null) j.tiVersion = r.data.tiVersion;
+      setJuryMsg("");
+    } else if (r.status === 403) {
+      forgetHostCreds(j.id);
+      j.hostKey = null;
+      updateJuryGate();
+      setJuryMsg("The host password is no longer valid - enter it again.");
+    } else {
+      setJuryMsg(r.data?.error ?? `Couldn't change the TI (error ${r.status}).`);
+    }
+  } catch {
+    if (juryState === j) setJuryMsg("Couldn't reach the server.");
+  } finally {
+    if (juryState === j) {
+      j.pending = false;
+      renderJuryList();
+    }
+  }
+}
+
+function renderJuryList() {
+  const j = juryState;
+  el.juryList.innerHTML = "";
+  if (!j) return;
+  const items = [...j.ti].sort((a, b) => Number(a.done) - Number(b.done) || a.createdAt - b.createdAt);
+  if (!items.length) {
+    const li = document.createElement("li");
+    li.className = "jury-empty";
+    li.textContent = "No technical incidents yet.";
+    el.juryList.appendChild(li);
+    return;
+  }
+  for (const ti of items) {
+    const round = j.rounds.get(ti.roundId);
+    if (!round && !j.rounds.has(`loading:${ti.roundId}`)) {
+      j.rounds.set(`loading:${ti.roundId}`, true);
+      fetchRoundJson(j.plan.host, ti.roundId)
+        .then((data) => {
+          if (juryState === j) {
+            j.rounds.set(ti.roundId, data);
+            renderJuryList();
+          }
+        })
+        .catch(() => {})
+        .finally(() => j.rounds.delete(`loading:${ti.roundId}`));
+    }
+    const nameOf = (id) => {
+      const athlete = (round?.startlist ?? []).find((a) => String(a.athlete_id) === String(id));
+      return athlete ? athleteLine(athlete) : `athlete ${id}`;
+    };
+    const nameOfRoute = (rid) => (round?.routes ?? collectRouteGroups(round ?? {}).flatMap((g) => g.routes)).find((r) => r.id === rid)?.name ?? rid;
+    // Boulder: the boulder he climbs again on; Lead: the route
+    const routeNames = (ti.boulderRouteId != null ? [ti.boulderRouteId] : ti.routeIds).map(nameOfRoute);
+    // a TI that uses another one's slot stands where that slot stands
+    const anchorId = incidentAnchor(ti, j.ti);
+    const over = !!round && !ti.done && anchorId != null && ti.routeIds.every((rid) => incidentSupersededOnRoute({ ...ti, beforeAthleteId: anchorId }, round, rid));
+    const li = document.createElement("li");
+    li.classList.toggle("is-done", ti.done || over);
+    const meta = document.createElement("div");
+    meta.className = "jury-item-meta";
+    const label = round ? `${round.category ?? ""} — ${round.round ?? ""}`.trim() : `Round ${ti.roundId}`;
+    const state = ti.done ? "done" : over ? "over - the next athlete has started" : "open";
+    meta.textContent = `TI ${ti.no ?? ""} · ${label} · ${round ? laneLabelPrefixFor(round) : "Route"} ${routeNames.join(", ")} · ${state}`.replace("TI  ·", "TI ·");
+    const text = document.createElement("div");
+    text.className = "jury-item-text";
+    const owner = ti.reuseOf != null ? j.ti.find((x) => x.id === ti.reuseOf) : null;
+    text.textContent =
+      ti.boulderRouteId == null
+        ? `${nameOf(ti.athleteId)} ${anchorId != null ? `before ${nameOf(anchorId)}` : "at the end"}`
+        : owner
+        ? `${nameOf(ti.athleteId)} · uses the slot of TI ${owner.no}`
+        : anchorId != null
+        ? `${nameOf(ti.athleteId)} · ${round ? laneLabelPrefixFor(round) : "Boulder"} 1 free in front of ${nameOf(anchorId)}`
+        : `${nameOf(ti.athleteId)} · no gap needed (end of the start list)`;
+    li.append(meta, text);
+    const buttons = document.createElement("div");
+    buttons.className = "jury-item-buttons";
+    if (!ti.done && j.hostKey) {
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "ghost";
+      editBtn.textContent = "Edit";
+      editBtn.disabled = j.pending;
+      editBtn.addEventListener("click", () => startJuryEdit(ti));
+      buttons.appendChild(editBtn);
+      const doneBtn = document.createElement("button");
+      doneBtn.type = "button";
+      doneBtn.textContent = "TI done";
+      doneBtn.disabled = j.pending;
+      doneBtn.addEventListener("click", () => juryIncidentAction(ti, "done"));
+      buttons.appendChild(doneBtn);
+    }
+    if (j.hostKey) {
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "ghost";
+      removeBtn.textContent = "Remove";
+      removeBtn.disabled = j.pending;
+      removeBtn.addEventListener("click", () => juryIncidentAction(ti, "remove"));
+      buttons.appendChild(removeBtn);
+    }
+    if (buttons.children.length) li.appendChild(buttons);
+    el.juryList.appendChild(li);
+  }
+}
+
+async function juryTick() {
+  const j = juryState;
+  if (!j) return;
+  j.tick++;
+  try {
+    const r = await sessionApi("GET", `/${encodeURIComponent(j.id)}?v=${j.version}&tv=${j.tiVersion}`);
+    if (juryState !== j) return;
+    if (r.status === 404) {
+      el.juryStatus.textContent = "Session ended";
+      el.juryStatus.classList.add("stale");
+      return;
+    }
+    if (r.status !== 200 || !r.data) throw new Error("offline");
+    if (!r.data.unchanged) {
+      if (r.data.version > j.version && r.data.plan) {
+        j.plan = r.data.plan;
+        j.version = r.data.version;
+        fillJuryRounds();
+      }
+      if (Array.isArray(r.data.ti) && r.data.tiVersion !== j.tiVersion && !j.pending) {
+        j.ti = r.data.ti;
+        j.tiVersion = r.data.tiVersion;
+      }
+    }
+    // The state of the incidents ("over - the next athlete has started")
+    // follows the live results: refresh the rounds they belong to now and then.
+    if (j.tick % 2 === 0) {
+      for (const roundId of new Set(j.ti.filter((x) => !x.done).map((x) => x.roundId))) {
+        j.rounds.set(roundId, await fetchRoundJson(j.plan.host, roundId));
+      }
+    }
+    if (juryState !== j) return;
+    renderJuryList();
+    el.juryStatus.textContent = `Updated ${new Date().toLocaleTimeString("en-GB")}`;
+    el.juryStatus.classList.remove("stale");
+  } catch (err) {
+    if (juryState !== j) return;
+    el.juryStatus.textContent = describeConnectionError(err);
+    el.juryStatus.classList.add("stale");
+  }
+}
+
+async function unlockJuryPage() {
+  const j = juryState;
+  const password = el.juryPassword.value;
+  if (!j || !password) return;
+  el.juryUnlock.disabled = true;
+  try {
+    const r = await sessionApi("POST", `/${encodeURIComponent(j.id)}/login`, { body: { password } });
+    if (juryState !== j) return;
+    if (r.status === 200) {
+      saveHostCreds(j.id, { hostKey: r.data.hostKey, record: r.data.record });
+      j.hostKey = r.data.hostKey;
+      el.juryPassword.value = "";
+      setJuryMsg("");
+      updateJuryGate();
+      renderJuryList();
+      loadJuryRound(el.juryRound.value);
+    } else {
+      setJuryMsg(r.data?.error ?? `Login failed (error ${r.status}).`);
+    }
+  } catch {
+    if (juryState === j) setJuryMsg("Couldn't reach the server.");
+  } finally {
+    el.juryUnlock.disabled = false;
+  }
+}
+
+el.juryUnlock.addEventListener("click", unlockJuryPage);
+el.juryPassword.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") unlockJuryPage();
+});
+el.juryRound.addEventListener("change", () => {
+  el.juryScope.innerHTML = "";
+  el.juryAthlete.value = "";
+  el.juryAthleteList.innerHTML = "";
+  el.juryBoulder.innerHTML = "";
+  loadJuryRound(el.juryRound.value);
+});
+el.juryScope.addEventListener("change", fillJuryAthletes);
+for (const [input, type] of [
+  [el.juryAthlete, "input"],
+  [el.juryBoulder, "change"],
+  [el.juryGapMode, "change"],
+  [el.juryPos, "input"],
+  [el.juryReuse, "change"],
+]) {
+  input.addEventListener(type, updateJuryForm);
+}
+el.juryAdd.addEventListener("click", addJuryIncident);
+el.juryCancel.addEventListener("click", () => {
+  resetJuryEntry();
+  setJuryMsg("");
+});
+
 const initial = readUrlSelection() ?? loadSelection();
 if (initial?.kind === "session") {
   if (initial.control) startSessionController(initial);
+  else if (initial.jury) startJuryPage(initial);
   else joinSession(initial);
 } else if (initial?.host && initial?.eventId) {
   el.eventId.value = initial.eventId;
   el.host.value = initial.host;
-  if (initial.kind === "training" || initial.kind === "multi" || initial.sequence?.length) {
+  if (initial.kind === "training" || initial.sequence?.length) {
     // Jump straight to the board (or controller) so a bookmarked device
     // never has to see the setup screen; loadEvent() below fills the
     // dropdown in the background for when "switch round" is used later.
@@ -4518,9 +5680,7 @@ if (initial?.kind === "session") {
     const restoredRoundId =
       initial.kind === "training"
         ? initial.roundId
-        : initial.kind === "multi"
-        ? initial.entries?.[0]?.sequence?.[0]?.id
-        : initial.sequence?.[0]?.id ?? initial.sequence?.[0]?.a;
+        : initial.sequence?.[0]?.id ?? initial.sequence?.[0]?.a ?? initial.sequence?.[0]?.columns?.[0]?.sequence?.[0]?.id;
     if (restoredRoundId && [...el.roundSelect.options].some((o) => o.value === restoredRoundId)) {
       el.roundSelect.value = restoredRoundId;
     }

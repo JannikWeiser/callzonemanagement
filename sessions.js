@@ -4,6 +4,9 @@
 // server keeps no state" (the first being the Training counter) and the
 // first thing in this app with a password:
 //
+//   - A session is always ONE kind of plan, a Sequence (rounds, paired
+//     entries, trainings, split views side by side - 6.50), so there is no
+//     "type" to mix up.
 //   - Anyone with the session id can WATCH (GET) - the id is the viewer's
 //     only secret, tablets must open without typing anything.
 //   - Changing the plan needs the host password. The server stores only a
@@ -40,6 +43,7 @@ export const DEFAULTS = {
   loginMaxFailures: 5,
   loginLockMs: 60_000,
   createPerHour: 20,
+  maxTi: 30, // technical incidents per session (open + recently done)
 };
 
 function newId() {
@@ -77,8 +81,12 @@ function validRecord(record) {
  * @param {string} [opts.secret] HMAC secret (SESSION_SECRET); random per process when omitted
  * @param {() => number} [opts.now] clock, injectable for tests
  * @param {object} [opts.limits] overrides for DEFAULTS
+ * @param {(host: string, roundId: string) => Promise<string|null>} [opts.roundDiscipline]
+ *   looks up a round's discipline ("Lead"/"Boulder"/"Speed") - technical
+ *   incidents (6.48) are refused for anything but Lead and Boulder; without
+ *   a lookup they are refused altogether
  */
-export function createSessionRouter({ hostNames, secret, now = Date.now, limits = {} }) {
+export function createSessionRouter({ hostNames, secret, now = Date.now, limits = {}, roundDiscipline }) {
   const cfg = { ...DEFAULTS, ...limits };
   const persistentSecret = Boolean(secret);
   const hmacSecret = secret || crypto.randomBytes(32).toString("hex");
@@ -121,12 +129,25 @@ export function createSessionRouter({ hostNames, secret, now = Date.now, limits 
   const trainingRoundIds = (plan) =>
     new Set(plan.kind === "watch" ? plan.sequence.filter((e) => e.type === "training").map((e) => e.id) : []);
 
+  // Every round a technical incident can belong to: plain rounds and the
+  // columns of split views (paired and training entries are Speed only).
+  const planRoundIds = (plan) =>
+    new Set(
+      plan.sequence.flatMap((entry) =>
+        entry.type === "round"
+          ? [entry.id]
+          : entry.type === "split"
+          ? entry.columns.flatMap((column) => column.sequence.map((e) => e.id))
+          : []
+      )
+    );
+
   function bad(res, status, message, extra = {}) {
     return res.status(status).set("Cache-Control", "no-store").json({ error: message, ...extra });
   }
 
   function publicSession(s) {
-    return { id: s.id, version: s.version, plan: s.plan };
+    return { id: s.id, version: s.version, plan: s.plan, ti: s.ti, tiVersion: s.tiVersion };
   }
 
   function requireSession(req, res, next) {
@@ -202,6 +223,8 @@ export function createSessionRouter({ hostNames, secret, now = Date.now, limits 
           touchedAt: t,
           clients: new Map(),
           training: new Map(),
+          ti: [],
+          tiVersion: t,
         };
         sessions.set(id, session);
         return res.status(201).set("Cache-Control", "no-store").json({ ...publicSession(session), restored: true });
@@ -236,6 +259,8 @@ export function createSessionRouter({ hostNames, secret, now = Date.now, limits 
         touchedAt: t,
         clients: new Map(),
         training: new Map(),
+        ti: [],
+        tiVersion: t,
       };
       sessions.set(id, session);
       res.status(201).set("Cache-Control", "no-store").json({
@@ -268,8 +293,8 @@ export function createSessionRouter({ hostNames, secret, now = Date.now, limits 
       s.clients.set(clientId, { at: t, keys });
     }
 
-    if (String(req.query.v ?? "") === String(s.version)) {
-      return res.set("Cache-Control", "no-store").json({ version: s.version, unchanged: true });
+    if (String(req.query.v ?? "") === String(s.version) && String(req.query.tv ?? "") === String(s.tiVersion)) {
+      return res.set("Cache-Control", "no-store").json({ version: s.version, tiVersion: s.tiVersion, unchanged: true });
     }
     res.set("Cache-Control", "no-store").json(publicSession(s));
   });
@@ -331,6 +356,13 @@ export function createSessionRouter({ hostNames, secret, now = Date.now, limits 
     // again starts from the beginning.
     const keep = trainingRoundIds(plan);
     for (const roundId of s.training.keys()) if (!keep.has(roundId)) s.training.delete(roundId);
+    // Same for technical incidents of rounds that left the plan.
+    const rounds = planRoundIds(plan);
+    const kept = s.ti.filter((ti) => rounds.has(ti.roundId));
+    if (kept.length !== s.ti.length) {
+      s.ti = kept;
+      s.tiVersion += 1;
+    }
     res.set("Cache-Control", "no-store").json(publicSession(s));
   });
 
@@ -361,6 +393,174 @@ export function createSessionRouter({ hostNames, secret, now = Date.now, limits 
     s.training.set(req.roundId, next);
     s.touchedAt = now();
     res.set("Cache-Control", "no-store").json({ index: next });
+  });
+
+
+  // ---- technical incidents (6.48) ----------------------------------------------
+  // The jury president re-starts an athlete who already climbed: an overlay
+  // the tablets draw over the inferred lane (athlete `athleteId` climbs again
+  // right before `beforeAthleteId`, or at the end when null). The server only
+  // stores and validates it; whether it is still relevant is decided from
+  // the live results on each tablet. Reads go through the viewer poll, writes
+  // need the host key (the JP uses the host password).
+  const numericId = (value) => {
+    const id = typeof value === "number" ? String(value) : value;
+    return typeof id === "string" && /^\d{1,12}$/.test(id) ? id : null;
+  };
+  const MAX_TI_DONE_KEPT = 10;
+
+  function touchTi(s) {
+    s.tiVersion += 1;
+    s.touchedAt = now();
+  }
+
+  // Validates an incident body (create and edit share it). `own` = the
+  // incident being edited (it can't be its own slot owner). Returns { fields }
+  // or { error }.
+  async function readTiBody(s, body, own) {
+    const roundId = numericId(body.roundId);
+    const athleteId = numericId(body.athleteId);
+    const beforeAthleteId = body.beforeAthleteId == null ? null : numericId(body.beforeAthleteId);
+    if (!roundId || !athleteId || (body.beforeAthleteId != null && !beforeAthleteId)) {
+      return { error: [400, "Invalid round or athlete id"] };
+    }
+    if (athleteId === beforeAthleteId) return { error: [400, "The athlete can't start before themselves"] };
+    const routeIds = Array.isArray(body.routeIds) ? body.routeIds.map(numericId) : [];
+    if (routeIds.length < 1 || routeIds.length > 20 || routeIds.some((id) => !id) || new Set(routeIds).size !== routeIds.length) {
+      return { error: [400, "Invalid route list"] };
+    }
+    if (!planRoundIds(s.plan).has(roundId)) return { error: [400, "This round is not part of the session's plan"] };
+
+    let discipline = null;
+    try {
+      discipline = roundDiscipline ? await roundDiscipline(s.host, roundId) : null;
+    } catch {
+      return { error: [502, "Could not check the round with results.info, try again"] };
+    }
+    if (discipline !== "Lead" && discipline !== "Boulder") {
+      return { error: [400, "Technical incidents exist for Lead and Boulder rounds only"] };
+    }
+
+    // Boulder (6.51): the boulder the athlete climbs again on - one of the
+    // block's routes. `reuseOf`: he uses the already free slot of another
+    // incident of the same block (no gap of his own). Lead has neither.
+    let boulderRouteId = null;
+    let reuseOf = null;
+    if (discipline === "Boulder") {
+      boulderRouteId = numericId(body.boulderRouteId);
+      if (!boulderRouteId || !routeIds.includes(boulderRouteId)) return { error: [400, "Invalid boulder"] };
+      if (body.reuseOf != null) {
+        const owner = s.ti.find((x) => x.id === body.reuseOf);
+        const same = owner && owner !== own && owner.roundId === roundId && owner.routeIds.join() === routeIds.join();
+        if (!same || owner.reuseOf != null || owner.boulderRouteId == null || String(owner.boulderRouteId) === boulderRouteId) {
+          return { error: [400, "Invalid slot to use"] };
+        }
+        reuseOf = owner.id;
+      }
+    } else if (body.boulderRouteId != null || body.reuseOf != null) {
+      return { error: [400, "Boulder fields on a Lead incident"] };
+    }
+    return {
+      fields: {
+        roundId,
+        routeIds: routeIds.map(Number),
+        athleteId: Number(athleteId),
+        beforeAthleteId: beforeAthleteId == null ? null : Number(beforeAthleteId),
+        boulderRouteId: boulderRouteId ? Number(boulderRouteId) : null,
+        reuseOf,
+      },
+    };
+  }
+
+  // An incident that leaves the list (removed, trimmed) takes its slot with it:
+  // the TIs that used it keep the position it had as their own.
+  const releaseUsers = (s, ti) => {
+    for (const u of s.ti) {
+      if (u.reuseOf === ti.id) {
+        u.beforeAthleteId = ti.beforeAthleteId;
+        delete u.reuseOf;
+      }
+    }
+  };
+
+  // Boulder fields are stored only when set, so a Lead incident keeps its old shape.
+  const applyTiFields = (ti, f) => {
+    Object.assign(ti, { roundId: f.roundId, routeIds: f.routeIds, athleteId: f.athleteId, beforeAthleteId: f.beforeAthleteId });
+    if (f.boulderRouteId) ti.boulderRouteId = f.boulderRouteId;
+    else delete ti.boulderRouteId;
+    if (f.reuseOf) ti.reuseOf = f.reuseOf;
+    else delete ti.reuseOf;
+  };
+
+  router.post("/:id/ti", requireSession, requireHostKey, async (req, res) => {
+    const s = req.session;
+    const read = await readTiBody(s, req.body ?? {}, null);
+    if (read.error) return bad(res, ...read.error);
+    if (s.ti.length >= cfg.maxTi) {
+      const oldestDone = s.ti.findIndex((ti) => ti.done);
+      if (oldestDone === -1) return bad(res, 400, "Too many open technical incidents");
+      releaseUsers(s, s.ti[oldestDone]);
+      s.ti.splice(oldestDone, 1);
+    }
+    const ti = {
+      id: crypto.randomBytes(5).toString("hex"),
+      createdAt: now(),
+      done: false,
+      no: (s.tiNo = (s.tiNo ?? 0) + 1), // stable number shown to the JP, not renumbered after a removal
+    };
+    applyTiFields(ti, read.fields);
+    s.ti.push(ti);
+    touchTi(s);
+    res.status(201).set("Cache-Control", "no-store").json({ ti, tiVersion: s.tiVersion });
+  });
+
+  function requireTi(req, res, next) {
+    const ti = req.session.ti.find((x) => x.id === req.params.tiId);
+    if (!ti) return bad(res, 404, "Technical incident not found");
+    req.ti = ti;
+    next();
+  }
+
+  router.post("/:id/ti/:tiId/done", requireSession, requireHostKey, requireTi, (req, res) => {
+    const s = req.session;
+    if (!req.ti.done) {
+      req.ti.done = true;
+      // Keep a short history for the JP's list, not an ever-growing one.
+      const done = s.ti.filter((ti) => ti.done);
+      for (const old of done.slice(0, Math.max(0, done.length - MAX_TI_DONE_KEPT))) {
+        releaseUsers(s, old);
+        s.ti.splice(s.ti.indexOf(old), 1);
+      }
+      touchTi(s);
+    }
+    res.set("Cache-Control", "no-store").json({ ti: req.ti, tiVersion: s.tiVersion });
+  });
+
+  // Edit: the TI-Rechner moves "in front of start position X" when TIs are added or
+  // removed there, the JP passes the new slot on here. Same checks as creating.
+  router.put("/:id/ti/:tiId", requireSession, requireHostKey, requireTi, async (req, res) => {
+    const s = req.session;
+    const read = await readTiBody(s, req.body ?? {}, req.ti);
+    if (read.error) return bad(res, ...read.error);
+    if (read.fields.roundId !== req.ti.roundId || read.fields.routeIds.join() !== req.ti.routeIds.join()) {
+      return bad(res, 400, "The round and the block of a TI can't change");
+    }
+    // another TI uses this one's slot: it must stay a valid owner
+    const users = s.ti.filter((x) => x.reuseOf === req.ti.id);
+    if (users.length && (read.fields.reuseOf || read.fields.boulderRouteId == null || users.some((u) => u.boulderRouteId === read.fields.boulderRouteId))) {
+      return bad(res, 400, "Another TI uses this slot");
+    }
+    applyTiFields(req.ti, read.fields);
+    touchTi(s);
+    res.set("Cache-Control", "no-store").json({ ti: req.ti, tiVersion: s.tiVersion });
+  });
+
+  router.delete("/:id/ti/:tiId", requireSession, requireHostKey, requireTi, (req, res) => {
+    const s = req.session;
+    releaseUsers(s, req.ti);
+    s.ti.splice(s.ti.indexOf(req.ti), 1);
+    touchTi(s);
+    res.set("Cache-Control", "no-store").json({ tiVersion: s.tiVersion });
   });
 
   // ---- who is online (host only) ------------------------------------------

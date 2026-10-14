@@ -134,6 +134,14 @@ app.use(express.static(path.join(__dirname, "public")));
 const sessionRouter = createSessionRouter({
   hostNames: Object.keys(HOSTS),
   secret: process.env.SESSION_SECRET?.trim() || undefined,
+  // Technical incidents (6.48) are Lead/Boulder only - the discipline comes
+  // from the same (3 s cached) round fetch the tablets use.
+  roundDiscipline: async (host, roundId) => {
+    const data = await cachedFetch(`round:${host}:${roundId}`, 3_000, () =>
+      upstreamJson(host, `/api/v1/category_rounds/${roundId}/results`)
+    );
+    return data?.discipline ?? null;
+  },
 });
 app.use("/api/session", sessionRouter);
 if (!sessionRouter.persistentSecret) {
