@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import "../public/session-plan.js";
 
-const { validatePlan, entryKey, relocateIndex, affectedClients, removesOrReplaces } = globalThis.SessionPlan;
+const { validatePlan, entryKey, relocateIndex, affectedClients, removesOrReplaces, LANE_QUEUE } = globalThis.SessionPlan;
 const HOSTS = ["prod", "stage"];
 
 const watch = (sequence, extra = {}) => ({ kind: "watch", host: "stage", eventId: "1594", sequence, ...extra });
@@ -167,7 +167,7 @@ const laneFrom = (ids, extra = {}) => ({
   finished: false,
   atWall: ath(ids[0]),
   onDeck: ids[1] ? ath(ids[1]) : null,
-  queue: ids.slice(2, 8).map(ath),
+  queue: ids.slice(2, 2 + LANE_QUEUE).map(ath),
   ...extra,
 });
 const tiOf = (athleteId, beforeAthleteId, extra = {}) => ({
@@ -223,7 +223,7 @@ test("incident: several incidents keep their creation order, also in front of th
 
 test("incident: at the end of the start list - shown once the end is in view, never earlier", () => {
   assert.deepEqual(names(apply(laneFrom([5, 6, 7]), [tiOf(1, null)])), [5, 6, 7, "TI:1"]);
-  const long = laneFrom([5, 6, 7, 8, 9, 10, 11, 4]); // queue full: the list may continue
+  const long = laneFrom(Array.from({ length: 2 + LANE_QUEUE }, (_, i) => 100 + i)); // queue full: the list may continue
   assert.equal(apply(long, [tiOf(1, null)]), long, "end not in view");
   // the last athlete is at the wall, nobody after
   assert.deepEqual(names(apply(laneFrom([5]), [tiOf(1, null)])), [5, "TI:1"]);
@@ -253,9 +253,9 @@ test("incident: superseded (the athlete in front already started) is ignored", (
   assert.deepEqual(names(out), [5, 6, "TI:2", 7]);
 });
 
-test("incident: the queue stays at 6 entries and a not-yet-started round (blank climbing) works", () => {
-  const out = apply(laneFrom([5, 6, 7, 8, 9, 10, 11, 4]), [tiOf(1, 7)]);
-  assert.equal(out.queue.length, 6);
+test("incident: the queue stays at LANE_QUEUE entries and a not-yet-started round (blank climbing) works", () => {
+  const out = apply(laneFrom([5, 6, 7, ...Array.from({ length: LANE_QUEUE + 2 }, (_, i) => 100 + i)]), [tiOf(1, 7)]);
+  assert.equal(out.queue.length, LANE_QUEUE);
   const blank = { routeName: "1", finished: false, atWall: null, onDeck: null, queue: [ath(5), ath(6)] };
   assert.deepEqual(names(apply(blank, [tiOf(1, 6)])), [null, null, 5, "TI:1", 6]);
 });
@@ -337,7 +337,7 @@ test("incident fuzz: Lead and Boulder incidents, reuse, done, superseded - invar
   const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
   const routes = [10, 11, 12, 13];
   for (let run = 0; run < 3000; run++) {
-    const ids = Array.from({ length: ri(0, 9) }, (_, i) => i + 1);
+    const ids = Array.from({ length: ri(0, 2 + LANE_QUEUE + 3) }, (_, i) => i + 1);
     const incidents = [];
     const pool = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].sort(() => rnd() - 0.5); // one TI per athlete: the check below names athletes
     for (let n = 0; n < ri(0, 4); n++) {
@@ -385,7 +385,7 @@ test("incident fuzz: Lead and Boulder incidents, reuse, done, superseded - invar
         }
       }
       // no empty place at the very end, and no more than the queue limit
-      assert.ok(out.queue.length <= 6);
+      assert.ok(out.queue.length <= LANE_QUEUE);
       // (a full queue may end with an empty place: the list is cut there)
       if (out !== lane && out.queue.length && out.queue.length < 6) assert.notEqual(out.queue[out.queue.length - 1], null, "no empty place at the end of the list");
       assert.equal(out.finished && out !== lane, false, "a lane with incidents is not finished");

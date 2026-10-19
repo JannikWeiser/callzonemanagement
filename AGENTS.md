@@ -915,8 +915,8 @@ previously-reported problems:
   the size never changes while a round runs - the user asked for exactly that
   after a version that sized from the visible names grew and shrank. A name
   over 15 characters shows the first name as an initial. Display only: don't
-  size from the content, don't touch `queue`/`atWall`/`onDeck`, don't hide
-  rows, don't move the size back into CSS. See
+  size from the content, don't touch `queue`/`atWall`/`onDeck` logic, don't
+  hide places that fit, don't move the size back into CSS. See
   [ARCHITECTURE.md §6.52](ARCHITECTURE.md#652-wall-text-fills-the-available-space---one-fixed-size-per-screen-names-over-15-characters-shortened).
 
 - **Shared sessions (6.46)** - `sessions.js` (server), `session-plan.js`

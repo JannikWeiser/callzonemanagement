@@ -631,6 +631,14 @@ button.ghost {
 }
 .queue-list li { color: var(--queue); overflow-wrap: anywhere; }
 .queue-list li.queue-item--preview { color: var(--preview); font-style: italic; }
+/* "Next: U 13 m — Finale": heading in front of the next category's names */
+.queue-list li.queue-item--next-title {
+  list-style: none;
+  color: var(--text);
+  font-style: normal;
+  font-weight: 700;
+  margin: 0.35em 0 0.1em -1.7em;
+}
 
 /* Technical incident (6.48): the re-starting athlete is a normal card/list
    row with its own colour and a "TI" badge in the corner. The card keeps its

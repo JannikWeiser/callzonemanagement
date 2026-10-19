@@ -228,7 +228,10 @@
   // Returns the same lane object when nothing applies. Re-started athletes are
   // copies flagged `tiRestart: true`; an empty place is `{ tiGap: true }` (drawn
   // as "TI: no athlete" - a plain `null` would look like any other blank).
-  const LANE_QUEUE = 6;
+  // How many queue entries a lane carries. The display shows as many as fit the
+  // screen (6.52), at least 6; "the end of the list is in view" means the queue is
+  // shorter than this.
+  const LANE_QUEUE = 15;
 
   function applyTechnicalIncidents(lane, { incidents, routeId, athleteById, isSuperseded, isUnderway }) {
     const all = (incidents ?? []).filter((ti) => ti && Array.isArray(ti.routeIds));
@@ -308,6 +311,7 @@
   root.SessionPlan = {
     applyTechnicalIncidents,
     MAX_SEQUENCE,
+    LANE_QUEUE,
     MAX_COLUMNS,
     ID_PATTERN,
     entryKey,

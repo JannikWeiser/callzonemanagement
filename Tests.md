@@ -325,6 +325,10 @@ siehe AGENTS.md §3/§4) und Boulder mit Gruppen `13709` (Event 1594).
 | A-12 | Handy 390×844, 2 Lanes untereinander | kein Name bricht um, Vornamen gekürzt, nichts läuft seitlich über | ✔ |
 | A-13 | Split-View-Eintrag mit 4 Spalten bei 1920×1080 | jede Spalte hat ihre eigene Größe (35–55 px), Spalten laufen nicht über | ✔ |
 | A-14 | Ganze Startliste (21 Athleten) Schritt für Schritt durchgehen, 14 s Polling | Schriftgröße bleibt exakt gleich (51,8 px bei 1700×1000), auch bei 0 Wartelistenplätzen und bei langen Namen | ✔ |
+| A-15 | Mehr Wartelistenplätze bei viel Platz: Speed-Training 1920×1400 / Split-View-Spalte mit einer Boulder-Lane 1700×1200 | 10 / 11–12 Plätze sichtbar, Schrift unverändert; bei 1180×820 und 1700×1000 weiter 6 | ✔ |
+| A-16 | Mehrere Boulder untereinander in einer Spalte | bleiben bei 6 Plätzen | ✔ |
+| A-17 | Vorschau der nächsten Kategorie (Mock): 3 Athleten übrig | 3 echte + Leerzeile + 3 Vorschau-Namen (wie vorher mit 6), auf größeren Bildschirmen mehr | ✔ |
+| A-18 | Speed-Finale → nächste Runde (Sequenz 13740, 13748, „Show next category’s start list“ an), letzte Stufe | statt „—“ steht „Next: U 13 m — Finale“ vor den Vorschau-Namen, deren Nummern wieder bei 1 beginnen; bei 6 Plätzen kein Überlauf | ✔ |
 | A-10 | Safari < 16 (keine Container-Query-Einheiten) | alte Schriftgrößen als Fallback | ○ |
 
 ---

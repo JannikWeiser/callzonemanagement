@@ -1,5 +1,9 @@
 const STORAGE_KEY = "callzone-selection";
 
+// how many queue entries the lane computation hands to the display (6.52): the
+// screen shows as many as fit (at least FIT_ROWS), the rest stays hidden
+const QUEUE_MAX = SessionPlan.LANE_QUEUE;
+
 const el = {
   eventId: document.getElementById("eventId"),
   host: document.getElementById("host"),
@@ -1785,6 +1789,9 @@ let nextRoundPreview = null;
 // apart from "not loaded yet" without re-fetching or re-rendering on every
 // 3s tick once the preview has settled.
 let nextRoundPreviewKey = null;
+// Label of the round `nextRoundPreview` shows ("U 13 m — Finale"), drawn as the
+// heading in front of its names in the queue list.
+let nextRoundPreviewLabel = null;
 
 // The "next up" strip below the lanes (6.10) - only meaningful in Sequence
 // mode with more than one entry, and only once the CURRENT entry is known
@@ -1846,6 +1853,7 @@ async function updateNextInSequence() {
   if (myToken !== pollToken) return; // superseded while fetching the full round
   nextRoundPreview = data;
   nextRoundPreviewKey = cacheKey;
+  nextRoundPreviewLabel = label && label !== "…" ? label : null;
   // Re-render now instead of waiting for the next 3s tick - but NOT via
   // plain renderBoard() when the current entry is paired: that would run
   // the round through the ordinary computeSpeedElimination() path instead
@@ -2337,7 +2345,7 @@ function computeLane(round, route) {
       finished: false,
       atWall: null,
       onDeck: ordered[0] ?? null,
-      queue: ordered.slice(1, 1 + 6),
+      queue: ordered.slice(1, 1 + QUEUE_MAX),
     };
   }
 
@@ -2352,7 +2360,7 @@ function computeLane(round, route) {
     finished: currentIndex >= ordered.length,
     atWall: ordered[currentIndex] ?? null,
     onDeck: ordered[currentIndex + 1] ?? null,
-    queue: ordered.slice(currentIndex + 2, currentIndex + 2 + 6),
+    queue: ordered.slice(currentIndex + 2, currentIndex + 2 + QUEUE_MAX),
   };
 }
 
@@ -2405,7 +2413,7 @@ function computeSpeedQualificationLane(round, route, sharedIndex) {
       finished: false,
       atWall: null,
       onDeck: ordered[0] ?? null,
-      queue: ordered.slice(1, 1 + 6),
+      queue: ordered.slice(1, 1 + QUEUE_MAX),
     };
   }
 
@@ -2414,7 +2422,7 @@ function computeSpeedQualificationLane(round, route, sharedIndex) {
     finished: sharedIndex >= ordered.length,
     atWall: ordered[sharedIndex] ?? null,
     onDeck: ordered[sharedIndex + 1] ?? null,
-    queue: ordered.slice(sharedIndex + 2, sharedIndex + 2 + 6),
+    queue: ordered.slice(sharedIndex + 2, sharedIndex + 2 + QUEUE_MAX),
   };
 }
 
@@ -2533,9 +2541,9 @@ function computeBoulderLane(round, route, finalMode) {
     // until a candidate is genuinely more than one heat out).
     if (finalMode === "world_series") {
       const padding = candidateIsReady ? 0 : Math.max(0, distance - 1);
-      const queue = [...Array(Math.min(padding, 6)).fill(null), ...ordered.slice(candidateIsReady ? 1 : 0, 7)].slice(
+      const queue = [...Array(Math.min(padding, QUEUE_MAX)).fill(null), ...ordered.slice(candidateIsReady ? 1 : 0, QUEUE_MAX + 1)].slice(
         0,
-        6
+        QUEUE_MAX
       );
       return {
         routeName: route.name,
@@ -2551,7 +2559,7 @@ function computeBoulderLane(round, route, finalMode) {
       finished: false,
       atWall: null,
       onDeck: candidateIsReady ? candidate : null,
-      queue: candidateIsReady ? ordered.slice(1, 7) : ordered.slice(0, 6),
+      queue: candidateIsReady ? ordered.slice(1, 1 + QUEUE_MAX) : ordered.slice(0, QUEUE_MAX),
     };
   }
 
@@ -2598,7 +2606,7 @@ function computeBoulderLane(round, route, finalMode) {
     finished: currentIndex >= ordered.length,
     atWall: ordered[currentIndex] ?? null,
     onDeck: ordered[currentIndex + 1] ?? null,
-    queue: ordered.slice(currentIndex + 2, currentIndex + 2 + 6),
+    queue: ordered.slice(currentIndex + 2, currentIndex + 2 + QUEUE_MAX),
   };
 }
 
@@ -2682,6 +2690,20 @@ function collectRouteGroups(round) {
 const TI_GAP_TEXT = "TI: no athlete";
 const laneEntryText = (entry) => (entry?.tiGap ? TI_GAP_TEXT : athleteLine(entry));
 
+// The row between this round's last athletes and the next category's preview
+// (6.42): a heading with the name of that category ("Next: U 13 m — Finale"), not
+// a place of its own. Without a known name it stays the plain dash. The first
+// preview name after it is numbered 1 again - it is a new start list.
+function markNextCategoryHeading(li) {
+  li.dataset.gap = "1";
+  if (nextRoundPreviewLabel) {
+    li.textContent = `Next: ${nextRoundPreviewLabel}`;
+    li.classList.add("queue-item--next-title");
+  } else {
+    li.textContent = "—";
+  }
+}
+
 // Renders the climbing/next/queue cards (or a "finished" placeholder) into
 // an already-headed lane section - shared by the live inference (buildLane)
 // and Training mode's manual position (buildTrainingLane), which differ
@@ -2705,8 +2727,11 @@ function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
     list.className = "queue-list";
     // "Next" is implicitly queue position 1, so this list continues from 2.
     list.setAttribute("start", "2");
-    for (const item of queue) {
+    queue.forEach((item, i) => {
       const li = document.createElement("li");
+      // the blank between this round's last athletes and the next category's
+      // preview is not a place of its own (the text fit does not count it)
+
       // A `{ preview: athlete }` entry is the next category's startlist
       // preview (6.42) - shown dimmed/italic since they're not part of THIS
       // round. A `null` entry is either that preview's own boundary gap or
@@ -2715,12 +2740,15 @@ function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
       if (item?.preview) {
         li.textContent = athleteLine(item.preview) || "—";
         li.classList.add("queue-item--preview");
+        if (!queue[i - 1]?.preview) li.value = 1;
+      } else if (item == null && queue[i + 1]?.preview) {
+        markNextCategoryHeading(li);
       } else {
         li.textContent = laneEntryText(item) || "—";
         markTechnicalIncident(li, item);
       }
       list.appendChild(li);
-    }
+    });
     laneEl.appendChild(list);
   }
 }
@@ -2747,8 +2775,8 @@ function laneLabelPrefixFor(round) {
 // same number of lanes (see nextCategoryRoutes() below) - no partial/guessed
 // lane matching here.
 function withNextCategoryPreview(lane, previewRoute) {
-  if (lane.finished || !previewRoute || !nextRoundPreview || lane.queue.length >= 6) return lane;
-  const previewCount = 6 - lane.queue.length;
+  if (lane.finished || !previewRoute || !nextRoundPreview || lane.queue.length >= QUEUE_MAX) return lane;
+  const previewCount = QUEUE_MAX - lane.queue.length;
   const preview = orderedAthletesForRoute(nextRoundPreview, previewRoute)
     .slice(0, previewCount)
     .map((athlete) => ({ preview: athlete }));
@@ -2855,7 +2883,7 @@ function buildTrainingLane(route, ordered, index, laneLabelPrefix) {
   renderLaneBody(laneEl, {
     atWall: ordered[index] ?? null,
     onDeck: ordered[index + 1] ?? null,
-    queue: ordered.slice(index + 2, index + 2 + 6),
+    queue: ordered.slice(index + 2, index + 2 + QUEUE_MAX),
     finished: index >= ordered.length,
   });
   return laneEl;
@@ -2946,6 +2974,7 @@ function fitLaneGrid(grid) {
   // Measure with single-line texts and a probe queue of FIT_ROWS rows instead of
   // the real one, so neither the names nor the number of athletes left matter.
   grid.classList.add("fit-measure");
+  let rows = FIT_ROWS; // queue rows shown: more when the lanes have the screen height to themselves
   const probes = lanes.map((lane) => {
     const ol = document.createElement("ol");
     ol.className = "queue-list fit-probe";
@@ -2980,7 +3009,17 @@ function fitLaneGrid(grid) {
     const beneathLanes =
       el.board.getBoundingClientRect().bottom - el.lanes.getBoundingClientRect().bottom +
       (parseFloat(bodyStyle.paddingBottom) || 0) + (parseFloat(bodyStyle.marginBottom) || 0);
-    const below = Math.max(0, (block ?? el.lanes).getBoundingClientRect().bottom - gridRect.bottom) + beneathLanes;
+    // what follows the grid inside its column/container: later siblings (the
+    // "Next:" line of a Split View column) and the container's own padding. Not
+    // `container.bottom - grid.bottom`: columns of one row are stretched to the
+    // tallest one, which would count the empty space below a shorter column.
+    const container = block ?? el.lanes;
+    const containerStyle = getComputedStyle(container);
+    let after = (parseFloat(containerStyle.paddingBottom) || 0) + (parseFloat(containerStyle.borderBottomWidth) || 0);
+    for (let sib = grid.nextElementSibling; sib; sib = sib.nextElementSibling) {
+      if (!sib.hidden) after += sib.getBoundingClientRect().height + (parseFloat(getComputedStyle(sib).marginTop) || 0) + (parseFloat(getComputedStyle(sib).marginBottom) || 0);
+    }
+    const below = after + beneathLanes;
     // never less than the old fixed allowance for the page chrome (CSS `.lane`),
     // so a board that still shows its link rows is not smaller than before; in
     // fullscreen the real room is larger and wins
@@ -3016,9 +3055,33 @@ function fitLaneGrid(grid) {
       size = limit;
       setSize(size);
     }
+
+    // Spare height below the 6 probe rows becomes more queue rows (display only:
+    // the lane computation hands over QUEUE_MAX entries). Lanes stacked above
+    // each other (one column of several boulders) keep FIT_ROWS.
+    const stacked = lanes.length > 1 && lanes[1].getBoundingClientRect().top > lanes[0].getBoundingClientRect().top + 1;
+    if (!stacked) {
+      const step = probes[0].children[1].getBoundingClientRect().top - probes[0].children[0].getBoundingClientRect().top;
+      const trueRoom = window.innerHeight - gridRect.top - window.scrollY - below - 8;
+      const spare = trueRoom - Math.max(...lanes.map((lane, i) => needed(lane, probes[i])));
+      if (step > 0 && spare > 0) rows = Math.min(QUEUE_MAX, FIT_ROWS + Math.floor(spare / step));
+    }
   } finally {
     probes.forEach((ol) => ol.remove());
     grid.classList.remove("fit-measure");
+  }
+
+  // the heading of the next category takes the height of one place
+  if (rows > FIT_ROWS && lanes.some((lane) => lane.querySelector(".queue-list:not(.fit-probe) li[data-gap]"))) rows--;
+
+  // show the first `rows` places; the blank before the next category's preview
+  // is not a place of its own
+  for (const lane of lanes) {
+    let shown = 0;
+    for (const li of lane.querySelectorAll(".queue-list:not(.fit-probe) li")) {
+      li.hidden = shown >= rows;
+      if (!li.hidden && li.dataset.gap !== "1") shown++;
+    }
   }
 
   // the text of each line: the full name, or the first name shortened when the
@@ -3286,7 +3349,7 @@ function buildSpeedLane(laneName, heats, previewRoute) {
   laneEl.appendChild(makeCard("climbing", heatAthleteLine(athletes[0]), "at-wall"));
   laneEl.appendChild(makeCard("next", heatAthleteLine(athletes[1]), "on-deck"));
 
-  let queue = athletes.slice(2, 2 + 6);
+  let queue = athletes.slice(2, 2 + QUEUE_MAX);
   // Next-category preview (6.43): pad back out to a virtual 6-real-
   // equivalent total, same principle as withNextCategoryPreview() for
   // Lead/Boulder/Speed-qualification. Uses a distinct `{ gap: true }`
@@ -3295,8 +3358,8 @@ function buildSpeedLane(laneName, heats, previewRoute) {
   // results.info hasn't paired yet), which renders as a blank string with
   // no "—" fallback below; a bare `null` gap would be indistinguishable
   // from that pre-existing case and would need it to change too.
-  if (previewRoute && nextRoundPreview && queue.length < 6) {
-    const previewCount = 6 - queue.length;
+  if (previewRoute && nextRoundPreview && queue.length < QUEUE_MAX) {
+    const previewCount = QUEUE_MAX - queue.length;
     const preview = orderedAthletesForRoute(nextRoundPreview, previewRoute)
       .slice(0, previewCount)
       .map((athlete) => ({ preview: athlete }));
@@ -3307,18 +3370,19 @@ function buildSpeedLane(laneName, heats, previewRoute) {
     list.className = "queue-list";
     // "Next" is implicitly queue position 1, so this list continues from 2.
     list.setAttribute("start", "2");
-    for (const item of queue) {
+    queue.forEach((item, i) => {
       const li = document.createElement("li");
       if (item?.preview) {
         li.textContent = heatAthleteLine(item.preview) || "—";
         li.classList.add("queue-item--preview");
+        if (!queue[i - 1]?.preview) li.value = 1;
       } else if (item?.gap) {
-        li.textContent = "—";
+        markNextCategoryHeading(li);
       } else {
         li.textContent = heatAthleteLine(item); // unchanged existing behavior
       }
       list.appendChild(li);
-    }
+    });
     laneEl.appendChild(list);
   }
 

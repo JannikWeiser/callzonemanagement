@@ -290,7 +290,7 @@ each rule, then take **`Math.max(lastActive, lastConfirmed + 1)`** — not
 just "prefer active whenever one exists". Then:
 
 - `atWall = ordered[currentIndex]`, `onDeck = ordered[currentIndex + 1]`,
-  `queue = ordered.slice(currentIndex + 2, currentIndex + 8)` (next 6).
+  `queue = ordered.slice(currentIndex + 2, currentIndex + 2 + QUEUE_MAX)` (the next 15, `SessionPlan.LANE_QUEUE`; the display shows as many as fit, at least 6, see 6.52).
 - If `currentIndex >= ordered.length`, the whole route is done →
   `finished: true`, rendered as "Round finished" instead of the three cards.
 
@@ -3160,6 +3160,13 @@ context was completely unaffected; Split View continued rendering with
 zero preview items despite reusing the same `buildLane()`/`renderLaneBody()`
 functions.
 
+**Heading in front of the preview (added with 6.52):** the boundary row between
+the round's last athletes and the next category's names is no longer a bare
+dash but "Next: <round label>" (`markNextCategoryHeading()`, the label is
+`nextRoundPreviewLabel`, the same text as the "Next up:" strip; without a known
+label it stays the dash). The first preview name is numbered 1 again (`li.value
+= 1`). The row is `li[data-gap]`: not a place of its own for the fit.
+
 ### 6.43 Next-category preview extended to Speed elimination (Paired Entries and plain Speed finals)
 
 **Problem this solves:** §6.42 explicitly excluded the whole Speed-
@@ -3861,6 +3868,19 @@ names are and however many athletes are left; it changes only with the screen
 so the numbers grow with the text and stay inside the lane box. The widths are
 measured again after the size is set (the indent depends on it).
 
+**More queue rows (display only):** the lane computation hands over up to
+`QUEUE_MAX` = `SessionPlan.LANE_QUEUE` = 15 entries (all the former `slice(..., 6)`
+sites, the World Series padding, the next-category preview "pad up to N", and
+the TI overlay's "end of the list is in view" all use this one constant). The
+fit shows `FIT_ROWS` (6) places plus as many more as the spare height below the
+6 probe rows allows (`li.hidden` for the rest, same count for all lanes of the
+grid). Lanes standing above each other in one column (several boulders) keep
+6. The blank before the next category's preview (`li[data-gap]`) is not a
+place of its own, so with 6 places a lane still shows "r real + blank + 6-r
+preview" as before; on a bigger screen the preview grows with the free places.
+The space below a column is measured from its own later siblings and padding,
+not from the stretched column bottom.
+
 **Names:** `athleteLine()`/`heatAthleteLine()` remember a short variant
 (`SCHRÖDINGER E.`, `A.-M.` for double first names) in `shortLines`. A name
 (the part after `#bib · `) longer than 15 characters shows it - a fixed rule,
@@ -3871,9 +3891,9 @@ the CSS fallback of 6.45 stays.
 
 **Don't:** size the text from the names or the number of rows (that is the
 jumping this replaced), make the fit read or change `queue`/`atWall`/`onDeck`,
-hide rows, or put the size back into pure CSS (CSS cannot measure the real
-chrome). The number of queue rows (6) is unchanged; showing more when there is
-room is a separate decision.
+hide places that fit, or put the size back into pure CSS (CSS cannot measure the
+real chrome). Don't base the number of places on the content either: it comes
+from the screen like the size.
 
 ## 7. Explicitly out of scope (do not "fix" without asking)
 

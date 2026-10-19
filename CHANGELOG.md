@@ -14,8 +14,13 @@ section number); this file is the *what happened, when* log.
   screen height (before: a guess of 30 characters and 11 lines). The size comes
   from the screen alone, so it does not change while a round runs. A name over
   15 characters shows the first name as an initial ("SCHRÖDINGER E."), if
-  that is still too long it wraps. Display only, no algorithm touched. See
+  that is still too long it wraps. More than 6 places are shown when the screen has room (up to 15; lanes standing above each other keep 6), the next-category preview grows with them. The inference itself is untouched, only the length of `queue`. See
   [ARCHITECTURE.md §6.52](ARCHITECTURE.md#652-wall-text-fills-the-available-space---one-fixed-size-per-screen-names-over-15-characters-shortened).
+
+- **The next category's preview has a heading.** Instead of a bare dash the queue
+  list shows "Next: U 13 m — Finale" in front of the names of the next category,
+  whose numbering starts at 1 again (it is a new start list). Display only. See
+  [ARCHITECTURE.md §6.42](ARCHITECTURE.md#642-sequence-mode-next-categorys-startlist-preview-in-the-queue-list).
 
 ### Added
 - **One-page Quick Guide (English) linked in "About".** `public/quick-guide.pdf`
