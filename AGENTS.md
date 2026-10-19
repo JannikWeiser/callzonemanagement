@@ -909,6 +909,16 @@ previously-reported problems:
   `renderBoard(lastRoundData)` for a paired entry. See
   [ARCHITECTURE.md §6.45](ARCHITECTURE.md#645-wall-display-rework-greenredgrey-cards-container-query-font-sizes-speed-lane-swap).
 
+- **Text fit (6.52)** - `fitLaneText()` sets `--lane-fs` inline per lane grid
+  after every render, from the GEOMETRY ALONE (a 15-character reference line
+  fits the lane width, CLIMBING + NEXT + 6 probe rows fit the screen height) so
+  the size never changes while a round runs - the user asked for exactly that
+  after a version that sized from the visible names grew and shrank. A name
+  over 15 characters shows the first name as an initial. Display only: don't
+  size from the content, don't touch `queue`/`atWall`/`onDeck`, don't hide
+  rows, don't move the size back into CSS. See
+  [ARCHITECTURE.md §6.52](ARCHITECTURE.md#652-wall-text-fills-the-available-space---one-fixed-size-per-screen-names-over-15-characters-shortened).
+
 - **Shared sessions (6.46)** - `sessions.js` (server), `session-plan.js`
   (shared pure logic, loaded by the browser, the server and the tests) and the
   "Shared sessions" section of `app.js`. Rules that each cost a design

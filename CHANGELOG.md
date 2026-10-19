@@ -7,6 +7,16 @@ section number); this file is the *what happened, when* log.
 
 ## Unreleased
 
+### Changed
+- **Wall text fills the screen (or a Split View column), one fixed size.** The
+  page sets the largest text size at which a line of 15 name characters plus
+  the bib fits the lane width and CLIMBING, NEXT and 6 queue rows fit the
+  screen height (before: a guess of 30 characters and 11 lines). The size comes
+  from the screen alone, so it does not change while a round runs. A name over
+  15 characters shows the first name as an initial ("SCHRÖDINGER E."), if
+  that is still too long it wraps. Display only, no algorithm touched. See
+  [ARCHITECTURE.md §6.52](ARCHITECTURE.md#652-wall-text-fills-the-available-space---one-fixed-size-per-screen-names-over-15-characters-shortened).
+
 ### Added
 - **One-page Quick Guide (English) linked in "About".** `public/quick-guide.pdf`
   covers the display, Sequence, shared sessions and the TI flow; the full

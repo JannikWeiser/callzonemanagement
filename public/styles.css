@@ -620,7 +620,9 @@ button.ghost {
 .queue-list {
   list-style: decimal;
   margin: 0.75rem 0 0;
-  padding-left: 1.4rem;
+  /* em, not rem: the list numbers grow with the fitted text size (6.52) and
+     must stay inside the lane box */
+  padding-left: 1.7em;
   color: var(--muted);
   font-size: 1rem;
   display: flex;
@@ -955,3 +957,9 @@ button.ghost {
   align-items: center;
   gap: 0.6rem;
 }
+
+/* While the text size is measured (6.52): single-line texts and only the probe
+   queue, so neither names nor the number of athletes left change the result. */
+.fit-measure .card-athlete,
+.fit-measure .queue-list li { white-space: nowrap; }
+.fit-measure .queue-list:not(.fit-probe) { display: none; }

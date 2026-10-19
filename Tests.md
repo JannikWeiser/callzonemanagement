@@ -313,7 +313,7 @@ siehe AGENTS.md §3/§4) und Boulder mit Gruppen `13709` (Event 1594).
 | ID | Prüfung | Erwartet | Status |
 |---|---|---|---|
 | A-01 | CLIMBING grün, NEXT rot, Rest grau, Vorschau der nächsten Kategorie dunkleres Grau/kursiv | Farben und Labels wie beschrieben; Labels stehen auf den Karten | ✔ |
-| A-02 | Schriftgröße bei 2 Lanes, 1180×820 / 1920×1080 | ≈ 26 px / ≈ 47 px; Namen bis ca. 30 Zeichen in einer Zeile, längere brechen um | ✔ |
+| A-02 | Schriftgröße bei 2 Lanes (Speed-Training), Vollbild 1180×820 / 1920×1080 | ≈ 31 px / ≈ 61 px (vorher ≈ 26 / 47); CLIMBING, NEXT und 6 Wartelistenplätze passen ohne Scrollen; Listennummern liegen innerhalb der Lane | ✔ |
 | A-03 | Einzelne Lane (Route-Tab) bei 1920×1080 | größere Schrift, Seite passt ohne zu scrollen | ✔ |
 | A-04 | Split-View-Eintrag mit 3 Spalten | jede Lane richtet sich nach **ihrer eigenen** Breite; nichts läuft über den Rand | ✔ |
 | A-05 | Handy-Breite 375 px | Mindestgrößen greifen, kein horizontales Scrollen | ✔ |
@@ -321,6 +321,10 @@ siehe AGENTS.md §3/§4) und Boulder mit Gruppen `13709` (Event 1594).
 | A-07 | Swap bei Paired Entry | Stage-Synchronisation bleibt, kein „Weiterspringen“ | ✔ |
 | A-08 | Swap-Knopf bei Lead/Boulder und in einem Split-View-Eintrag | nicht vorhanden | ✔ |
 | A-09 | Swap in einer Sitzung (`?s=…&swap=1`) | wird als lokale Einstellung gespeichert, überlebt Plan-Änderungen | ✔ |
+| A-11 | Langer Name (z. B. „SCHMIDT-HOFFMANN Maximilian Alexander“, „VAN DER WESTHUIZEN Christopher“) | Name über 15 Zeichen: Vorname als Initiale („… M. A.“); ist die Zeile dann noch zu lang, bricht sie um; Namen bis 15 Zeichen bleiben voll | ✔ |
+| A-12 | Handy 390×844, 2 Lanes untereinander | kein Name bricht um, Vornamen gekürzt, nichts läuft seitlich über | ✔ |
+| A-13 | Split-View-Eintrag mit 4 Spalten bei 1920×1080 | jede Spalte hat ihre eigene Größe (35–55 px), Spalten laufen nicht über | ✔ |
+| A-14 | Ganze Startliste (21 Athleten) Schritt für Schritt durchgehen, 14 s Polling | Schriftgröße bleibt exakt gleich (51,8 px bei 1700×1000), auch bei 0 Wartelistenplätzen und bei langen Namen | ✔ |
 | A-10 | Safari < 16 (keine Container-Query-Einheiten) | alte Schriftgrößen als Fallback | ○ |
 
 ---

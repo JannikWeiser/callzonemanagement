@@ -2609,7 +2609,7 @@ function athleteLine(athlete) {
   // (also catches undefined) plus an explicit empty-string check is what
   // "no bib assigned" actually looks like.
   const bib = athlete.bib != null && athlete.bib !== "" ? `#${athlete.bib} · ` : "";
-  return `${bib}${athlete.name}`;
+  return rememberShortLine(`${bib}${athlete.name}`, bib, athlete);
 }
 
 // A technical-incident re-start (6.48) is drawn highlighted with a "TI"
@@ -2875,6 +2875,197 @@ function makeCard(label, text, variant) {
   return card;
 }
 
+// --- Display fit (6.52) ------------------------------------------------------
+// Display only: nothing here reads or changes who is at the wall. After every
+// render the text size of each lane grid is set as large as the screen (or a
+// Split View column) allows, from the GEOMETRY ALONE - never from the names or
+// from how many athletes are left, so the size never changes while a round
+// runs: the largest `--lane-fs` such that a line of FIT_NAME_CHARS characters
+// (plus the bib) fits the lane width, and CLIMBING + NEXT + FIT_ROWS queue rows
+// fit below the grid's top edge without scrolling. A name longer than
+// FIT_NAME_CHARS shows the first name as an initial ("SCHRÖDINGER E."); if it
+// is still longer, it wraps. The size is the same for all lanes of one grid.
+// Without container query units (old Safari) the CSS fallback stays.
+const FIT_NAME_CHARS = 15; // longer names get the first name shortened
+const FIT_ROWS = 6; // queue rows the size always leaves room for
+const FIT_REF = "#0000 · SCHRÖDINGER Erw"; // bib + 15 characters, the line the width is sized for
+const FIT_MIN_PX = 16;
+const FIT_MAX_PX = 400;
+
+// full line -> shortened line, filled by athleteLine()/heatAthleteLine()
+const shortLines = new Map();
+
+function initialsOf(firstname) {
+  return String(firstname)
+    .trim()
+    .split(/\s+/)
+    .map((part) =>
+      part
+        .split("-")
+        .map((p) => (p ? `${Array.from(p)[0].toUpperCase()}.` : ""))
+        .join("-")
+    )
+    .join(" ");
+}
+
+function rememberShortLine(full, bib, athlete) {
+  if (athlete?.lastname && athlete?.firstname) {
+    const short = `${bib}${athlete.lastname.toUpperCase()} ${initialsOf(athlete.firstname)}`.trim();
+    if (short.length < full.length) {
+      if (shortLines.size > 3000) shortLines.clear();
+      shortLines.set(full, short);
+    }
+  }
+  return full;
+}
+
+let fitCanvas = null;
+const fitWidths = new Map();
+// width of `text` in em for one font (measured at 100px)
+function textEm(text, weight, family) {
+  const key = `${weight}|${family}|${text}`;
+  let w = fitWidths.get(key);
+  if (w === undefined) {
+    fitCanvas ??= document.createElement("canvas").getContext("2d");
+    fitCanvas.font = `${weight} 100px ${family}`;
+    w = fitCanvas.measureText(text).width / 100;
+    if (fitWidths.size > 6000) fitWidths.clear();
+    fitWidths.set(key, w);
+  }
+  return w;
+}
+
+// the part of a line after the bib ("#201 · "), whose length decides the shortening
+const nameOfLine = (line) => line.replace(/^#\S+ · /, "");
+
+function fitLaneGrid(grid) {
+  const lanes = [...grid.querySelectorAll(":scope > .lane")].filter((l) => l.querySelector(".card"));
+  if (!lanes.length) return;
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+
+  // Measure with single-line texts and a probe queue of FIT_ROWS rows instead of
+  // the real one, so neither the names nor the number of athletes left matter.
+  grid.classList.add("fit-measure");
+  const probes = lanes.map((lane) => {
+    const ol = document.createElement("ol");
+    ol.className = "queue-list fit-probe";
+    for (let i = 0; i < FIT_ROWS; i++) {
+      const li = document.createElement("li");
+      li.textContent = "#0000";
+      ol.appendChild(li);
+    }
+    lane.appendChild(ol);
+    return ol;
+  });
+
+  try {
+    const cards = lanes.map((lane) => lane.querySelector(".card-athlete"));
+    const cardFont = getComputedStyle(cards[0]);
+    const rowFont = getComputedStyle(probes[0].firstChild);
+    const cardEm = textEm(FIT_REF, cardFont.fontWeight, cardFont.fontFamily);
+    const rowEm = textEm(FIT_REF, rowFont.fontWeight, rowFont.fontFamily);
+    const rowAvail = (li) => li.clientWidth - parseFloat(getComputedStyle(li).paddingLeft) - parseFloat(getComputedStyle(li).paddingRight);
+    const widthLimit = () => {
+      let limit = FIT_MAX_PX;
+      for (const card of cards) limit = Math.min(limit, (card.clientWidth * 0.97) / cardEm);
+      for (const ol of probes) limit = Math.min(limit, (rowAvail(ol.firstChild) * 0.97) / rowEm / 0.8);
+      return Math.max(FIT_MIN_PX, limit);
+    };
+
+    // vertical room: from the grid's top edge to the bottom of the screen, minus
+    // what sits below the grid (the "Next:" strip, a Split View column's padding)
+    const gridRect = grid.getBoundingClientRect();
+    const block = grid.closest(".multi-block");
+    const bodyStyle = getComputedStyle(document.body);
+    const beneathLanes =
+      el.board.getBoundingClientRect().bottom - el.lanes.getBoundingClientRect().bottom +
+      (parseFloat(bodyStyle.paddingBottom) || 0) + (parseFloat(bodyStyle.marginBottom) || 0);
+    const below = Math.max(0, (block ?? el.lanes).getBoundingClientRect().bottom - gridRect.bottom) + beneathLanes;
+    // never less than the old fixed allowance for the page chrome (CSS `.lane`),
+    // so a board that still shows its link rows is not smaller than before; in
+    // fullscreen the real room is larger and wins
+    const chromeRem = block ? 26 : grid.classList.contains("lanes-grid--single") ? 33 : 22;
+    const room = Math.max(window.innerHeight - gridRect.top - window.scrollY - below - 8, window.innerHeight - chromeRem * rem);
+
+    const setSize = (size) => lanes.forEach((lane) => lane.style.setProperty("--lane-fs", `${size}px`));
+    const needed = (lane, probe) => {
+      const bottom = probe.lastElementChild.getBoundingClientRect().bottom;
+      return bottom - lane.getBoundingClientRect().top + parseFloat(getComputedStyle(lane).paddingBottom);
+    };
+    const fits = (size) => {
+      setSize(size);
+      return lanes.every((lane, i) => needed(lane, probes[i]) <= room);
+    };
+
+    let size = widthLimit();
+    if (!fits(size)) {
+      let lo = FIT_MIN_PX;
+      let hi = size;
+      for (let i = 0; i < 14 && hi - lo > 0.5; i++) {
+        const mid = (lo + hi) / 2;
+        if (fits(mid)) lo = mid;
+        else hi = mid;
+      }
+      size = lo;
+    }
+    setSize(size);
+    // the new size changes the indent of the list (em): measure the widths again
+    for (let pass = 0; pass < 3; pass++) {
+      const limit = widthLimit();
+      if (size <= limit + 0.01) break;
+      size = limit;
+      setSize(size);
+    }
+  } finally {
+    probes.forEach((ol) => ol.remove());
+    grid.classList.remove("fit-measure");
+  }
+
+  // the text of each line: the full name, or the first name shortened when the
+  // name is longer than FIT_NAME_CHARS (a fixed rule, not "does it fit")
+  for (const lane of lanes) {
+    for (const t of lane.querySelectorAll(".card-athlete, .queue-list li")) {
+      const node = t.firstChild;
+      if (!node || node.nodeType !== 3) continue;
+      const full = (t.dataset.full ??= node.nodeValue);
+      const short = shortLines.get(full);
+      const text = short && nameOfLine(full).length > FIT_NAME_CHARS ? short : full;
+      if (node.nodeValue !== text) node.nodeValue = text;
+    }
+  }
+}
+
+let fitting = false;
+function fitLaneText() {
+  if (fitting || !CSS.supports("width", "1cqi") || !el.lanes.getClientRects().length) return;
+  fitting = true;
+  try {
+    el.lanes.querySelectorAll(".lanes-grid").forEach((grid) => fitLaneGrid(grid));
+  } catch (err) {
+    console.warn("Text fit failed, keeping the CSS sizes:", err);
+  } finally {
+    fitting = false;
+    lanesObserver.takeRecords(); // the probe rows of the measurement are not a new render
+  }
+}
+let fitScheduled = false;
+function scheduleFit() {
+  if (fitScheduled) return;
+  fitScheduled = true;
+  queueMicrotask(() => {
+    fitScheduled = false;
+    fitLaneText();
+  });
+}
+// every render rebuilds the lanes; the strips around them change the room
+const lanesObserver = new MutationObserver(scheduleFit);
+lanesObserver.observe(el.lanes, { childList: true, subtree: true });
+for (const node of [el.nextInSequence, el.swapRow, el.groupTabs, el.routeTabs, el.boulderModeRow, el.statusLine]) {
+  new MutationObserver(scheduleFit).observe(node, { attributes: true, childList: true, subtree: true, characterData: true });
+}
+window.addEventListener("resize", scheduleFit);
+window.addEventListener("orientationchange", scheduleFit);
+
 // --- Speed elimination (bracket) rounds ------------------------------------
 //
 // Unlike qualification rounds, a Speed final's heats are pre-computed by
@@ -3065,7 +3256,7 @@ function heatAthleteLine(athlete) {
   // Same falsy-zero fix as athleteLine() above - see its comment.
   const bib = athlete.bib != null && athlete.bib !== "" ? `#${athlete.bib} · ` : "";
   const last = athlete.lastname?.toUpperCase() ?? "";
-  return `${bib}${last} ${athlete.firstname ?? ""}`.trim();
+  return rememberShortLine(`${bib}${last} ${athlete.firstname ?? ""}`.trim(), bib, athlete);
 }
 
 function athleteForLane(heat, laneName) {

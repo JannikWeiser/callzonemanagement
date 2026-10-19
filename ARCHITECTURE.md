@@ -3313,6 +3313,8 @@ all six hosts), so there is no push channel to use.
 
 ### 6.45 Wall-display rework: green/red/grey cards, container-query font sizes, Speed lane swap
 
+> **Since 6.52 the font size is measured by `fitLaneText()` after each render;** the CSS rule below is the starting value and the fallback.
+
 **Why:** staff read these tablets from a distance. CLIMBING now sits in a
 green box and NEXT in a red one (everyone else grey), the text is as large
 as the lane allows, and a tablet facing the walls from the other side can
@@ -3826,6 +3828,52 @@ frontier (5.6) the slot's athlete shows as NEXT behind the previous athlete and 
 CLIMBING only if his ascent goes `active` again; "TI done" ends it. If the
 organisers change the start order outside results.info the positions in the
 TI-Rechner and here no longer match - the form shows who a position means.
+
+### 6.52 Wall text fills the available space - one fixed size per screen, names over 15 characters shortened
+
+**Why:** the sizes of 6.45 were a guess (30 characters per line, 11 lines, a
+fixed allowance for the page chrome), so a tablet in fullscreen left a lot of
+room unused. Display only: nothing here reads or changes who is at the wall.
+An earlier version of this section sized the text from the names and the
+queue that were on screen; the text then grew and shrank while a round ran,
+which confused the staff. **Decided with the user:** a fixed size from the
+geometry alone.
+
+**How** (`fitLaneText()` / `fitLaneGrid()` in `app.js`): a `MutationObserver` on
+`#lanes` (and on the strips around it: swap row, tabs, "Next:" strip, status
+line) plus `resize` runs the fit right after every render, before the browser
+paints. Per `.lanes-grid` (so per Split View column) it sets `--lane-fs` inline
+on every lane, the same value for all lanes of the grid. It is the largest size
+at which
+- a reference line of `FIT_NAME_CHARS` = 15 name characters plus the bib
+  (`FIT_REF`, measured with `canvas.measureText` in the real font) fits the
+  lane width, for the cards and (at 0.8x) for the queue rows, and
+- CLIMBING, NEXT and `FIT_ROWS` = 6 queue rows fit between the grid's top edge
+  and the bottom of the screen, minus what sits below the grid. Never less room
+  than the old chrome allowance of `.lane` (22/26/33 rem), so a board that
+  still shows its link rows is not smaller than before.
+
+The measurement does not use the real content: the grid gets the class
+`fit-measure` (single-line texts, real queue hidden) and each lane a probe
+queue of 6 rows, removed afterwards. So the size is the same whatever the
+names are and however many athletes are left; it changes only with the screen
+(resize, fullscreen, route tabs, another round). The list indent is `1.7em`,
+so the numbers grow with the text and stay inside the lane box. The widths are
+measured again after the size is set (the indent depends on it).
+
+**Names:** `athleteLine()`/`heatAthleteLine()` remember a short variant
+(`SCHRÖDINGER E.`, `A.-M.` for double first names) in `shortLines`. A name
+(the part after `#bib · `) longer than 15 characters shows it - a fixed rule,
+not "does it fit". If the line is still too long it wraps (the CSS has
+`overflow-wrap: anywhere`). The fit edits the text node, so the TI badge in
+the same element stays. Without `1cqi` (Safari < 16) the fit does nothing and
+the CSS fallback of 6.45 stays.
+
+**Don't:** size the text from the names or the number of rows (that is the
+jumping this replaced), make the fit read or change `queue`/`atWall`/`onDeck`,
+hide rows, or put the size back into pure CSS (CSS cannot measure the real
+chrome). The number of queue rows (6) is unchanged; showing more when there is
+room is a separate decision.
 
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
