@@ -23,6 +23,14 @@ section number); this file is the *what happened, when* log.
   [ARCHITECTURE.md §6.42](ARCHITECTURE.md#642-sequence-mode-next-categorys-startlist-preview-in-the-queue-list).
 
 ### Added
+- **Frozen logic regression tests ("who is where and when").** `test/logic.test.js`
+  runs the real `public/app.js` in a Node `vm` (`test/helpers/app-harness.js`)
+  against synthetic rounds and frozen snapshots of real rounds (`test/fixtures`):
+  Lead, Boulder rotation heat by heat, groups/courses, Boulder finals (Intervall
+  and World Series), Speed qualification, Speed elimination, paired entries,
+  route groups, names and the next-category preview. 49 tests; 9 deliberately
+  broken variants of the logic were all caught. `npm test` now runs
+  `test/*.test.js` only (108 tests). See [Tests.md §0b](Tests.md).
 - **One-page Quick Guide (English) linked in "About".** `public/quick-guide.pdf`
   covers the display, Sequence, shared sessions and the TI flow; the full
   User Guide link stays next to it.

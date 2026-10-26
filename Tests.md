@@ -48,6 +48,50 @@ Abbrechen).
 
 ---
 
+## 0b. Logik-Regressionstests: „wer ist wann wo“ (eingefroren)
+
+**Nach JEDER Änderung `npm test` laufen lassen** (nicht nur bei Sitzungs-Code). Die
+Datei [test/logic.test.js](test/logic.test.js) prüft die Logik der Wand-Anzeige gegen das
+echte `public/app.js` (in einem Node-`vm`, siehe
+[test/helpers/app-harness.js](test/helpers/app-harness.js)): wer CLIMBING ist, wer NEXT,
+wer wartet, wann eine Route/Runde/Stufe fertig ist.
+
+**Eingefroren:** Sobald ein Test grün ist, wird seine Erwartung **nicht mehr geändert**,
+damit eine Änderung ihn besteht. Wird ein Test rot, ist der **Code** falsch – oder die
+Änderung ändert absichtlich, wer wo angezeigt wird: dann **anhalten und den Besitzer
+fragen**. Neue Tests dürfen jederzeit dazukommen; eine bestehende Erwartung wird nur auf
+ausdrückliche Entscheidung des Besitzers ersetzt.
+
+Womit getestet wird:
+- **kleine, selbst gebaute Runden** (`makeRound()`, Erwartungen von Hand prüfbar) und
+- **eingefrorene Schnappschüsse echter Runden** aus `dav-stage` ([test/fixtures](test/fixtures),
+  nur die Felder, die die Logik liest). Sie werden **nicht** automatisch aktualisiert;
+  `scripts/refresh-fixtures.mjs` lädt sie nur auf ausdrücklichen Wunsch neu.
+- **Rotations-Tabellen**: Heat für Heat („in Heat h sind alle Startpositionen < h
+  bestätigt, die bei h aktiv“) wird für jeden Boulder CLIMBING/NEXT/Warteliste mit einer
+  fest hinterlegten Tabelle verglichen.
+
+| Bereich | Was festgenagelt ist |
+|---|---|
+| Lead (`computeLane`) | pending → niemand an der Wand, erster = NEXT · nach k bestätigten ist k+1 CLIMBING · Lücke (No-Show) blockiert nicht (letzter bestätigter + 1) · „active“ vor den bestätigten gewinnt, bei mehreren der spätere · nachträglich geöffneter früherer Eintrag zieht nicht zurück · „active“ ist nicht fertig, „locked“ schon · letzter Athlet: NEXT leer, nicht fertig · alle bestätigt → fertig · Warteliste höchstens `QUEUE_MAX` · mehrere Routen unabhängig |
+| Runde fertig (`isRoundFullyFinished`) | erst wenn jede Route jeder Gruppe fertig ist; pending nie |
+| Boulder-Rotation | Tabelle aller 5 Boulder über 13 Heats (gap 2): noch nicht erreichter Boulder zeigt CLIMBING –, NEXT ab Heat 6, CLIMBING ab Heat 7 · dieselbe Person nie auf zwei Bouldern CLIMBING · bleibt auf dem letzten bestätigten, bis der nächste „active“ wird · früherer Eintrag zurückgeholt springt nicht zurück · letzter bestätigt → „Round finished“ |
+| Boulder-Gruppen/Courses | Gruppe B ändert sich nicht durch Fortschritt in Gruppe A (eigene Positionszählung) · Course A/B aus den Routennamen (nur bei Boulder) |
+| Boulder-Finale | parallel (4 Boulder): „Intervall“ und „World Series“ Heat für Heat inkl. Warteliste (World Series schiebt den Namen pro Heat einen Platz nach vorn) · beide Modi unterscheiden sich nur in der Warteliste eines nicht erreichten Boulders · one-by-one: Boulder N+1 öffnet erst nach allen Finalisten |
+| Speed-Qualifikation | beide Bahnen folgen der **langsameren** (Position N auf A = Position N auf B) · pending / fertig |
+| Speed-K.-o. | `heatIsDone`: beide Zeiten · Status wird ignoriert · `dns` und „NOT STARTED“ entscheiden allein · `dnf` entscheidet nicht · leerer Lauf ≠ „NOT STARTED“ · aktuelle Stufe und Restläufe · nächste Stufe noch nicht gepaart → nichts, aber nicht fertig · alles erledigt → fertig · echte Runden 13739 (1/4, A:208 / B:218) und 13748 (fertig) |
+| Paare | `earlierStageName` nach Stufen-Name, nicht nach Index (inkl. null/unbekannt) · pending-Runde meldet keine Stufe · `stageHeatsRemaining`/`isLastSpeedStage` |
+| Sonstiges | `collectRouteGroups` (Gruppen, Courses, nie Course-Reiter bei Lead/Speed) · Namenszeilen (`#bib · Name`, Bib 0) · Vorschau der nächsten Kategorie (Lücke + Namen bis `QUEUE_MAX`, fasst CLIMBING/NEXT nie an) |
+
+Die Prüfung der Prüfung: 9 absichtlich eingebaute Fehler (z. B. `Math.max` in
+`findCurrentIndex` weg, `dnf` entscheidet den Lauf, Speed-Quali nimmt die schnellere
+Bahn, Frontier über die ganze Runde statt pro Gruppe, pending-Wächter entfernt) wurden
+von den Tests **alle** erkannt.
+
+Nicht von diesen Tests abgedeckt (Browser nötig, siehe Abschnitte 2–4): Darstellung
+(Schriftgröße, Kürzen der Namen, Farben), das Weiterschalten der Sequence beim Abspielen,
+Training/Steuer-Link.
+
 ## 1. Automatische Tests (`npm test`)
 
 `test/session-plan.test.js` – Plan-Logik (gemeinsam für Browser und Server):

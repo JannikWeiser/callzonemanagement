@@ -1129,9 +1129,16 @@ before saying it's fixed:
    console errors" — confirm the actual displayed content is correct.
 4. Do a quick regression check against an unrelated round to confirm nothing
    else broke.
-5. Server-side/session changes: also run `npm test` (automated, no network
-   needed) and, for anything in the browser part of shared sessions, the
-   relevant parts of [Tests.md](Tests.md).
+5. **After EVERY change, however small, run `npm test`** (automated, no
+   network needed) and report the result. It includes the **frozen logic
+   regression tests** (`test/logic.test.js`, "who is where and when", see
+   [Tests.md §0b](Tests.md)): they run the real `public/app.js` against small
+   synthetic rounds and frozen snapshots of real rounds. **An expectation in
+   them is never edited to make a change pass.** If one goes red, the code is
+   wrong - fix the code - or the change really alters who the wall shows where:
+   then stop and ask the owner. New tests may always be added. For anything in
+   the browser part of shared sessions also walk through the relevant parts of
+   [Tests.md](Tests.md).
 
 ## 5. Git and deployment
 
