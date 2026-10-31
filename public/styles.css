@@ -517,6 +517,11 @@ button.ghost {
   border-color: var(--accent);
 }
 
+/* Lead/Boulder route order (6.53): ◀ ▶ around each route tab while "Order" is on */
+.route-tab-wrap { display: inline-flex; align-items: center; gap: 0.25rem; }
+.tab-arrow { padding: 0.4rem 0.65rem; border-radius: 999px; font-size: 0.8rem; line-height: 1; }
+.tab-arrow:disabled { opacity: 0.3; }
+
 .lanes-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));

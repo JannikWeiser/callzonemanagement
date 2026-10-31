@@ -22,7 +22,24 @@ section number); this file is the *what happened, when* log.
   whose numbering starts at 1 again (it is a new start list). Display only. See
   [ARCHITECTURE.md §6.42](ARCHITECTURE.md#642-sequence-mode-next-categorys-startlist-preview-in-the-queue-list).
 
+### Fixed
+- **Lead: athletes marked DNS are skipped.** A DNS athlete stays "pending" in
+  results.info (`score: "DNS"` on the ascent), so the wall kept showing them as
+  CLIMBING/NEXT, and a DNS athlete at the end kept the round from finishing. They
+  are now left out of the route's order (also in the next-category preview). Found
+  on the real round 13519. See [ARCHITECTURE.md §6.54](ARCHITECTURE.md#654-lead-athletes-who-did-not-start-dns-are-skipped).
+- **Link/QR rows stayed visible on a kiosk browser (Raspberry Pi).** They were only
+  hidden when the Fullscreen API reported a fullscreen element; a kiosk browser
+  that just fills the screen (or a home-screen app) never does. The kiosk view
+  is now also detected by the window filling the screen, `display-mode`
+  fullscreen/standalone and the Safari `webkit` event, and re-checked after
+  every poll. See [ARCHITECTURE.md §6.53](ARCHITECTURE.md#653-this-tablets-own-route-order-leadboulder-and-a-kiosk-view-that-does-not-need-the-fullscreen-api).
+
 ### Added
+- **Route/boulder order per tablet (Lead and Boulder).** "⇄ Order" next to the
+  route tabs shows ◀ ▶ arrows around each tab; the lanes follow. Stored in the
+  tablet link (`order=3,1,2`), like the Speed lane swap. Display only. See
+  [ARCHITECTURE.md §6.53](ARCHITECTURE.md#653-this-tablets-own-route-order-leadboulder-and-a-kiosk-view-that-does-not-need-the-fullscreen-api).
 - **Frozen logic regression tests ("who is where and when").** `test/logic.test.js`
   runs the real `public/app.js` in a Node `vm` (`test/helpers/app-harness.js`)
   against synthetic rounds and frozen snapshots of real rounds (`test/fixtures`):

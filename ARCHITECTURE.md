@@ -3895,6 +3895,59 @@ hide places that fit, or put the size back into pure CSS (CSS cannot measure the
 real chrome). Don't base the number of places on the content either: it comes
 from the screen like the size.
 
+### 6.53 This tablet's own route order (Lead/Boulder) and a kiosk view that does not need the Fullscreen API
+
+**Route order.** Like the Speed lane swap (6.45) a display preference of ONE
+tablet: which boulder/route stands left or right depends on where the tablet
+hangs. Decided with the user: arrow buttons (not drag & drop), per tablet (not
+part of a session plan), Lead and Boulder only (Speed keeps "Swap lanes", a split
+view's columns have no order yet).
+- `currentSelection.order` = route names in the wanted order (`null` = natural),
+  URL `order=3,1,2`, saved with the selection (a session keeps it as a view
+  preference like `swap`).
+- `applyRouteOrder(items, nameOf, order)` is pure and stable: listed names first
+  in the given order, unknown/unlisted ones keep their natural order after them.
+  `renderBoard()` applies it to the group's routes (so the tabs show the same
+  order) and again after the route filter. The next-category preview route is
+  paired with its lane BEFORE this, so it travels with the lane.
+- UI: `renderRouteTabs(..., reorder)` adds a "⇄ Order" button; while on
+  (`routeOrderEditing`) each tab has ◀ ▶ buttons, "✓ Done" ends it. Moving
+  keeps the order of routes the current group does not show (other group/course)
+  and clears `order` when it is the natural order again.
+- Never touches `computeLane()`/`computeBoulderLane()`: it only moves lanes
+  (tests: "Route order never changes who is where").
+
+**Kiosk view.** `isKioskView()` is true for the Fullscreen API
+(`fullscreenElement`/`webkitFullscreenElement`), a `display-mode: fullscreen` or
+`standalone` window (home-screen app, `navigator.standalone`) AND a window that
+simply fills the screen (`innerWidth/innerHeight >= screen`). The last one is what
+a Raspberry Pi kiosk browser (`--kiosk`) is: no Fullscreen-API element at all, so
+the old `document.fullscreenElement` check never hid the link/QR rows there.
+`syncKioskView()` hides "Link for this tablet" (+ QR), "switch round" and the
+training control link (+ QR) in the kiosk view and restores them outside it; it
+runs on `fullscreenchange` (also the `webkit` one), `resize`, display-mode
+changes, after every poll (status line) and once at start. The control-link rows
+are also guarded where they are shown (`updateEntryControlRow()`,
+`startTrainingSession()`). Don't go back to testing `document.fullscreenElement`
+alone.
+
+### 6.54 Lead: athletes who did not start (DNS) are skipped
+
+**Reported live (31 Oct 2026, DM Darmstadt, round 13519):** BICKNELL (#4) is
+marked DNS but his ascents stay `status: "pending"`, so the inference
+(`lastConfirmed + 1`) kept offering him as NEXT/CLIMBING and a DNS athlete at the
+end would have kept the route from ever finishing (the sequence would not move on).
+
+**Verified field:** on the real round both ascents of a DNS athlete carry
+`score: "DNS"` (the ranking row too, `active: false`). `skipDnsAthletes(round,
+route, ordered)` drops those athletes from the route's order before the
+inference, in `computeLane()` and in the next-category preview. An ascent that is
+already `"active"` is never skipped. **Nothing else is guessed:** Boulder
+ascents have no such field (checked on real data), Speed has its own `dns`
+handling (5.5/5.7) - don't extend this to them without fetching real data first.
+Tests: the "DNS: ..." group in `test/logic.test.js` incl. the frozen real round
+(`test/fixtures/lead-two-pass-dns.json`).
+
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
 - **A visual bracket tree** for Speed elimination (like the PDF heat sheet

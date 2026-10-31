@@ -909,6 +909,15 @@ previously-reported problems:
   `renderBoard(lastRoundData)` for a paired entry. See
   [ARCHITECTURE.md §6.45](ARCHITECTURE.md#645-wall-display-rework-greenredgrey-cards-container-query-font-sizes-speed-lane-swap).
 
+- **Lead DNS athletes (6.54)** - `skipDnsAthletes()` drops athletes whose ascent
+  on the route has `score: "DNS"` (status stays "pending" in results.info) from
+  `computeLane()`'s order and from the next-category preview; an "active" ascent
+  is never skipped. Verified on the real round 13519 for Lead ONLY - Boulder has
+  no such field, Speed has its own `dns` handling: don't extend it to them without
+  fetching real data first (rule 2). Frozen tests: the "DNS: ..." group in
+  `test/logic.test.js`. See
+  [ARCHITECTURE.md §6.54](ARCHITECTURE.md#654-lead-athletes-who-did-not-start-dns-are-skipped).
+
 - **Text fit (6.52)** - `fitLaneText()` sets `--lane-fs` inline per lane grid
   after every render, from the GEOMETRY ALONE (a 15-character reference line
   fits the lane width, CLIMBING + NEXT + 6 probe rows fit the screen height) so
@@ -918,6 +927,16 @@ previously-reported problems:
   size from the content, don't touch `queue`/`atWall`/`onDeck` logic, don't
   hide places that fit, don't move the size back into CSS. See
   [ARCHITECTURE.md §6.52](ARCHITECTURE.md#652-wall-text-fills-the-available-space---one-fixed-size-per-screen-names-over-15-characters-shortened).
+
+- **Route order + kiosk view (6.53)** - the route order (`currentSelection.order`,
+  `applyRouteOrder()`, "⇄ Order" with ◀ ▶) is a per-tablet display preference,
+  Lead/Boulder only, never part of a plan and never an input of the inference.
+  The link/QR rows are hidden by `syncKioskView()` through `isKioskView()`, which
+  also recognises a kiosk browser that only fills the screen (Raspberry Pi), a
+  home-screen app and the `webkit` fullscreen event - don't go back to testing
+  `document.fullscreenElement` alone, and keep every place that shows a control
+  link guarded by `isKioskView()`. See
+  [ARCHITECTURE.md §6.53](ARCHITECTURE.md#653-this-tablets-own-route-order-leadboulder-and-a-kiosk-view-that-does-not-need-the-fullscreen-api).
 
 - **Shared sessions (6.46)** - `sessions.js` (server), `session-plan.js`
   (shared pure logic, loaded by the browser, the server and the tests) and the

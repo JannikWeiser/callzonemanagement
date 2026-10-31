@@ -258,6 +258,7 @@ function saveSelection(sel) {
         route: sel.route ?? null,
         group: sel.group ?? null,
         swap: !!sel.swap,
+        order: sel.order ?? null,
       }
     : sel;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
@@ -357,6 +358,13 @@ function parseSequenceToken(token) {
 // sequences existed. `training=<roundId>` is a distinct flow entirely (no
 // live results to poll - see 6.11); `control=1` alongside it marks this
 // device as a controller rather than the wall display.
+// `order=3,1,2` (6.53): this tablet's own order of the routes/boulders of a
+// Lead/Boulder round - a display preference like `swap`, never part of a plan.
+function orderParam(params) {
+  const list = params.get("order")?.split(",").filter(Boolean);
+  return list?.length ? list : null;
+}
+
 function readUrlSelection() {
   const params = new URLSearchParams(location.search);
 
@@ -374,6 +382,7 @@ function readUrlSelection() {
       route: routeParam ? routeParam.split(",").filter(Boolean) : null,
       group: params.get("group"),
       swap: params.get("swap") === "1",
+      order: orderParam(params),
       // `control=1` opens the training controller of the session (6.47),
       // which asks for the host password instead of showing a board.
       control: params.get("control") === "1",
@@ -449,7 +458,7 @@ function readUrlSelection() {
   // this param should get the new default-on behavior, not silently fall
   // back to off.
   const showNextPreview = params.get("preview") !== "0";
-  return sequence ? { kind: "watch", host, eventId, group, route, sequence, showNextPreview, swap } : null;
+  return sequence ? { kind: "watch", host, eventId, group, route, sequence, showNextPreview, swap, order: orderParam(params) } : null;
 }
 
 function buildShareLink(sel) {
@@ -462,6 +471,7 @@ function buildShareLink(sel) {
       if (sel.group) url.searchParams.set("group", sel.group);
       if (sel.route?.length) url.searchParams.set("route", sel.route.join(","));
       if (sel.swap) url.searchParams.set("swap", "1");
+      if (sel.order?.length) url.searchParams.set("order", sel.order.join(","));
     }
     return url.toString();
   }
@@ -497,6 +507,7 @@ function buildShareLink(sel) {
   // doesn't need to clutter every share link with "preview=1".
   if (sel.showNextPreview === false) url.searchParams.set("preview", "0");
   if (sel.swap) url.searchParams.set("swap", "1");
+  if (sel.order?.length) url.searchParams.set("order", sel.order.join(","));
   return url.toString();
 }
 
@@ -1633,29 +1644,44 @@ el.kioskBtn.addEventListener("click", () => {
   else enterKioskMode();
 });
 
-document.addEventListener("fullscreenchange", () => {
-  const fullscreen = !!document.fullscreenElement;
+// Kiosk view (6.53): the wall display runs without browser chrome. That is a
+// real Fullscreen-API fullscreen (button), but also a kiosk browser that simply
+// fills the screen (Raspberry Pi, `--kiosk`: no `fullscreenElement` at all), a
+// home-screen app (`standalone`) or a window the OS made fullscreen (F11, the
+// green button). All of them must hide the link/QR rows.
+function isKioskView() {
+  if (document.fullscreenElement || document.webkitFullscreenElement) return true;
+  const mq = (query) => !!window.matchMedia?.(query)?.matches;
+  if (mq("(display-mode: fullscreen)") || mq("(display-mode: standalone)") || navigator.standalone) return true;
+  return window.innerWidth >= screen.width - 1 && window.innerHeight >= screen.height - 1;
+}
+
+// Hides what must not stay on a wall display and brings back what belongs to
+// the setup/normal view. Idempotent: called on every fullscreen change, resize,
+// display-mode change and after every poll render.
+function syncKioskView() {
+  const kiosk = isKioskView();
   // The "link for this tablet" row is only useful for setting a bookmark up
   // in the first place - once mounted and running in kiosk mode, it's just
   // clutter (and a copy-able URL, now with a scannable QR code too - 6.18)
   // on an otherwise clean wall display.
-  el.shareRow.hidden = fullscreen;
+  el.shareRow.hidden = kiosk;
   // "Switch round" is only needed to leave the current round/sequence
   // entirely - rarely done mid-event, and always reachable by exiting
   // fullscreen first. Unlike the group/route tabs and the Boulder-format
   // toggle (deliberately left visible - see 6.22), it's not something
   // someone would want to tap without leaving kiosk mode anyway, so it's
   // just clutter on the wall display like the share-link row above.
-  el.backBtn.hidden = fullscreen;
+  el.backBtn.hidden = kiosk;
   // The Training "link to control from another device" row (6.11) is more
-  // than clutter if left up in fullscreen - reported live: whoever's near
+  // than clutter if left up in kiosk view - reported live: whoever's near
   // a wall-mounted, unattended tablet could scan its QR code and take over
   // advancing the training session, with no login required by design. Hide
-  // it in fullscreen the same way; only restore it on exit if this tablet
+  // it the same way; only restore it outside the kiosk view if this tablet
   // is genuinely the training wall-display side (`kind === "training" &&
   // !control`) - it must stay hidden everywhere else (every non-training
-  // context, and the controller's OWN view), not just during fullscreen.
-  if (fullscreen) {
+  // context, and the controller's OWN view).
+  if (kiosk) {
     el.controlShareRow.hidden = true;
   } else if (
     (currentSelection?.kind === "training" && !currentSelection?.control) ||
@@ -1664,12 +1690,20 @@ document.addEventListener("fullscreenchange", () => {
   ) {
     el.controlShareRow.hidden = false;
   }
-  if (!fullscreen) {
+}
+
+function onFullscreenChange() {
+  syncKioskView();
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
     wakeLockSentinel?.release?.();
     wakeLockSentinel = null;
     el.kioskBtn.textContent = "Fullscreen + Always On";
   }
-});
+}
+document.addEventListener("fullscreenchange", onFullscreenChange);
+document.addEventListener("webkitfullscreenchange", onFullscreenChange);
+window.addEventListener("resize", syncKioskView);
+for (const query of ["(display-mode: fullscreen)", "(display-mode: standalone)"]) window.matchMedia?.(query)?.addEventListener?.("change", syncKioskView);
 
 // The wake lock is released by the browser whenever the tab is backgrounded
 // (spec-mandated) - re-acquire it once the tablet's screen comes back. The
@@ -1979,7 +2013,7 @@ function scheduleTrainingFastPoll(token) {
 // handler). In a session the controller needs the host password instead and
 // its link lives in the host panel, never on a wall display.
 function updateEntryControlRow(entry) {
-  const show = entry?.type === "training" && !currentSelection?.sessionId && !document.fullscreenElement;
+  const show = entry?.type === "training" && !currentSelection?.sessionId && !isKioskView();
   el.controlShareRow.hidden = !show;
   if (!show) return;
   const link = buildShareLink({ kind: "training", host: currentSelection.host, eventId: currentSelection.eventId, roundId: entry.id, control: true });
@@ -2325,6 +2359,22 @@ function orderedAthletesForRoute(round, route) {
     .map((x) => x.athlete);
 }
 
+// Athletes who will not climb this route (6.54): results.info marks a Lead
+// athlete who did not start with `score: "DNS"` on the ascent (verified on the
+// real round 13519: both routes, status stays "pending", so the inference would
+// call them CLIMBING/NEXT forever). Skipped on the wall like they are not in the
+// start list. An ascent that is already "active" is never skipped (someone is
+// scoring it), and nothing else is guessed: Boulder has no such field, Speed
+// has its own `dns` handling.
+function skipDnsAthletes(round, route, ordered) {
+  const dns = new Set();
+  for (const entry of round.ranking ?? []) {
+    const ascent = entry.ascents?.find((a) => a.route_id === route.id);
+    if (ascent?.score === "DNS" && ascent.status !== "active") dns.add(entry.athlete_id);
+  }
+  return dns.size ? ordered.filter((a) => !dns.has(a.athlete_id)) : ordered;
+}
+
 function computeLane(round, route) {
   const statusByAthlete = new Map();
   for (const entry of round.ranking ?? []) {
@@ -2332,7 +2382,7 @@ function computeLane(round, route) {
     if (ascent) statusByAthlete.set(entry.athlete_id, ascent.status);
   }
 
-  const ordered = orderedAthletesForRoute(round, route);
+  const ordered = skipDnsAthletes(round, route, orderedAthletesForRoute(round, route));
 
   // Before the round has actually begun, nobody is "at the wall" yet, even
   // though every athlete's ascent status is still "pending" - that status
@@ -2777,7 +2827,7 @@ function laneLabelPrefixFor(round) {
 function withNextCategoryPreview(lane, previewRoute) {
   if (lane.finished || !previewRoute || !nextRoundPreview || lane.queue.length >= QUEUE_MAX) return lane;
   const previewCount = QUEUE_MAX - lane.queue.length;
-  const preview = orderedAthletesForRoute(nextRoundPreview, previewRoute)
+  const preview = skipDnsAthletes(nextRoundPreview, previewRoute, orderedAthletesForRoute(nextRoundPreview, previewRoute))
     .slice(0, previewCount)
     .map((athlete) => ({ preview: athlete }));
   return { ...lane, queue: [...lane.queue, null, ...preview] };
@@ -3123,6 +3173,7 @@ function scheduleFit() {
 // every render rebuilds the lanes; the strips around them change the room
 const lanesObserver = new MutationObserver(scheduleFit);
 lanesObserver.observe(el.lanes, { childList: true, subtree: true });
+new MutationObserver(syncKioskView).observe(el.statusLine, { childList: true, subtree: true, characterData: true });
 for (const node of [el.nextInSequence, el.swapRow, el.groupTabs, el.routeTabs, el.boulderModeRow, el.statusLine]) {
   new MutationObserver(scheduleFit).observe(node, { attributes: true, childList: true, subtree: true, characterData: true });
 }
@@ -3472,6 +3523,22 @@ function renderGroupTabs(groupNames, container, sel, onSelect) {
 // safely falls back to "all" instead of silently filtering everything out.
 // `sel` holds `.route` - `currentSelection` for watch/training, or one
 // Multimode column entry.
+// This tablet's own order of the routes/boulders (6.53), like the Speed lane
+// swap a display preference that never touches the inference. `order` lists
+// route names; routes it does not name keep their natural order after the
+// listed ones. Stable, pure, returns the same array when there is no order.
+function applyRouteOrder(items, nameOf, order) {
+  if (!order?.length) return items;
+  const rank = (item) => {
+    const i = order.indexOf(nameOf(item));
+    return i === -1 ? order.length : i;
+  };
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => rank(a.item) - rank(b.item) || a.index - b.index)
+    .map((x) => x.item);
+}
+
 function filterRoutesBySelection(routes, routeNames, sel) {
   const selected = (sel.route ?? []).filter((name) => routeNames.includes(name));
   return selected.length ? routes.filter((r) => selected.includes(r.name)) : routes;
@@ -3490,7 +3557,12 @@ function filterRoutesBySelection(routes, routeNames, sel) {
 // (laneLabelPrefixFor()) so the tabs read the same as the lane headings
 // they filter. `container`/`sel` parameterized for the same reason as
 // renderGroupTabs() above (6.23).
-function renderRouteTabs(routeNames, prefix, container, sel, onSelect) {
+// While true the route tabs of a Lead/Boulder board show ◀ ▶ arrows (6.53).
+let routeOrderEditing = false;
+
+// `reorder` (optional, Lead/Boulder boards only): { onChange(namesInNewOrder) } -
+// adds the "⇄ Order" button and, while it is on, the ◀ ▶ arrows around each tab.
+function renderRouteTabs(routeNames, prefix, container, sel, onSelect, reorder = null) {
   container.innerHTML = "";
   if (routeNames.length < 2) {
     container.hidden = true;
@@ -3512,7 +3584,8 @@ function renderRouteTabs(routeNames, prefix, container, sel, onSelect) {
   });
   container.appendChild(allBtn);
 
-  for (const name of routeNames) {
+  const editing = !!reorder && routeOrderEditing;
+  routeNames.forEach((name, index) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `group-tab${selected.includes(name) ? " active" : ""}`;
@@ -3524,7 +3597,42 @@ function renderRouteTabs(routeNames, prefix, container, sel, onSelect) {
       setShareLink(buildShareLink(currentSelection));
       onSelect();
     });
-    container.appendChild(btn);
+    if (!editing) {
+      container.appendChild(btn);
+      return;
+    }
+    const move = (delta) => {
+      const names = [...routeNames];
+      [names[index], names[index + delta]] = [names[index + delta], names[index]];
+      reorder.onChange(names);
+    };
+    const arrow = (text, label, delta, disabled) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ghost tab-arrow";
+      b.textContent = text;
+      b.setAttribute("aria-label", `Move ${prefix} ${name} ${label}`);
+      b.disabled = disabled;
+      b.addEventListener("click", () => move(delta));
+      return b;
+    };
+    const wrap = document.createElement("span");
+    wrap.className = "route-tab-wrap";
+    wrap.append(arrow("◀", "left", -1, index === 0), btn, arrow("▶", "right", 1, index === routeNames.length - 1));
+    container.appendChild(wrap);
+  });
+
+  if (reorder) {
+    const orderBtn = document.createElement("button");
+    orderBtn.type = "button";
+    orderBtn.className = `group-tab${editing ? " active" : ""}`;
+    orderBtn.setAttribute("aria-pressed", String(editing));
+    orderBtn.textContent = editing ? "✓ Done" : "⇄ Order";
+    orderBtn.addEventListener("click", () => {
+      routeOrderEditing = !routeOrderEditing;
+      onSelect();
+    });
+    container.appendChild(orderBtn);
   }
 }
 
@@ -3612,11 +3720,33 @@ function renderBoard(round) {
   for (const group of routeGroups) {
     if (groupNames.length >= 2 && group.groupName !== currentSelection.group) continue;
 
-    const routeNames = group.routes.map((r) => r.name);
-    renderRouteTabs(routeNames, laneLabelPrefix, el.routeTabs, currentSelection, () => {
-      if (lastRoundData) renderBoard(lastRoundData);
-    });
-    const routesToShow = filterRoutesBySelection(group.routes, routeNames, currentSelection);
+    // This tablet's own order (6.53) - Lead/Boulder only, Speed has the lane swap
+    const orderable = round.discipline !== "Speed";
+    const orderedRoutes = orderable ? applyRouteOrder(group.routes, (r) => r.name, currentSelection.order) : group.routes;
+    const routeNames = orderedRoutes.map((r) => r.name);
+    renderRouteTabs(
+      routeNames,
+      laneLabelPrefix,
+      el.routeTabs,
+      currentSelection,
+      () => {
+        if (lastRoundData) renderBoard(lastRoundData);
+      },
+      orderable
+        ? {
+            onChange: (names) => {
+              // keep the order of routes this group does not show (other group/course)
+              const natural = group.routes.map((r) => r.name);
+              const rest = (currentSelection.order ?? []).filter((n) => !names.includes(n));
+              currentSelection.order = !rest.length && names.every((n, i) => n === natural[i]) ? null : [...names, ...rest];
+              saveSelection(currentSelection);
+              setShareLink(buildShareLink(currentSelection));
+              if (lastRoundData) renderBoard(lastRoundData);
+            },
+          }
+        : null
+    );
+    const routesToShow = applyRouteOrder(filterRoutesBySelection(orderedRoutes, routeNames, currentSelection), (r) => r.name, orderable ? currentSelection.order : null);
     const nextRoutes = nextCategoryRoutesFor(routesToShow.length);
 
     const grid = document.createElement("div");
@@ -3887,7 +4017,7 @@ function renderPairedBoard(round, stageResult) {
 async function startTrainingSession(selection) {
   if (!selection.control) {
     setShareLink(buildShareLink(selection));
-    el.controlShareRow.hidden = false;
+    el.controlShareRow.hidden = isKioskView();
     setControlLink(buildShareLink({ ...selection, control: true }));
     el.trainingControls.hidden = false;
   }
@@ -4214,6 +4344,7 @@ function selectionFromPlan(plan, sessionId, version, local = {}) {
     group: local.group ?? null,
     route: local.route ?? null,
     swap: !!local.swap,
+    order: local.order ?? null,
     sequence: plan.sequence.map((entry) => ({ ...entry })),
     showNextPreview: plan.showNextPreview !== false,
   };
@@ -5958,3 +6089,4 @@ if (initial?.kind === "session") {
 }
 
 initHostPanel();
+syncKioskView();

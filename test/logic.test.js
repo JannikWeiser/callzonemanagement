@@ -512,3 +512,91 @@ test("Next-category preview: without a preview round nothing changes", () => {
   const lane = { routeName: "1", finished: false, atWall: { bib: "5" }, onDeck: null, queue: [{ bib: "6" }] };
   assert.deepEqual(plain(app.fn("withNextCategoryPreview")(lane, { id: 1 })), plain(lane));
 });
+
+// ---- this tablet's own route order (6.53) ---------------------------------------------------
+test("Route order: listed routes first in the given order, the others keep their natural order after them", () => {
+  const f = app.fn("applyRouteOrder");
+  const items = ["1", "2", "3", "4", "5"].map((name) => ({ name }));
+  const names = (order) => plain(f(items, (r) => r.name, order)).map((r) => r.name).join(",");
+  assert.equal(names(["3", "1"]), "3,1,2,4,5");
+  assert.equal(names(["5", "4", "3", "2", "1"]), "5,4,3,2,1");
+  assert.equal(names(["2", "1", "3", "4", "5"]), "2,1,3,4,5");
+  assert.equal(names(["9", "2"]), "2,1,3,4,5", "a name that does not exist is ignored");
+});
+test("Route order: no order (null/empty) returns the same list untouched", () => {
+  const f = app.fn("applyRouteOrder");
+  const items = [{ name: "1" }, { name: "2" }];
+  assert.equal(f(items, (r) => r.name, null), items);
+  assert.equal(f(items, (r) => r.name, []), items);
+});
+test("Route order never changes who is where: the lanes only change place", () => {
+  const base = reset(loadFixture("boulder-1-group"));
+  const st = heatState(base, 7);
+  const routes = allRoutes(st);
+  const byName = (list) => Object.fromEntries(list.map((r) => [r.name, line(boulder(st, r.name, "interval"))]));
+  const ordered = plain(app.fn("applyRouteOrder")(routes, (r) => r.name, ["5", "3", "1"]));
+  assert.deepEqual(ordered.map((r) => r.name), ["5", "3", "1", "2", "4"]);
+  assert.deepEqual(byName(ordered), byName(routes));
+});
+
+// ---- Lead: athletes who did not start (DNS) are skipped (6.54) --------------------------------
+// results.info marks them with `score: "DNS"` on the ascent (real round 13519); the status stays "pending".
+const dns = (round, routeName, bibList) => {
+  const route = routeNamed(round, routeName);
+  for (const bib of bibList) {
+    const a = round.startlist.find((x) => x.bib === String(bib));
+    round.ranking.find((e) => e.athlete_id === a.athlete_id).ascents.find((x) => x.route_id === route.id).score = "DNS";
+  }
+  return round;
+};
+const laneBibs = (l) => [l.atWall?.bib ?? null, l.onDeck?.bib ?? null, ...l.queue.map((a) => a?.bib)];
+
+test("DNS: a DNS athlete in the middle of the start order is skipped", () => {
+  const r = dns(mark(makeRound({ n: 7 }), "1", { confirmed: [1, 2] }), "1", [3]);
+  assert.deepEqual(laneBibs(lead(r, "1")), ["4", "5", "6", "7"]);
+});
+test("DNS: a DNS athlete is never NEXT - the next athlete after him is", () => {
+  const r = dns(mark(makeRound({ n: 6 }), "1", { confirmed: [1], active: [2] }), "1", [3]);
+  const l = lead(r, "1");
+  assert.equal(l.atWall.bib, "2");
+  assert.equal(l.onDeck.bib, "4");
+});
+test("DNS: two DNS athletes in a row are both skipped", () => {
+  const r = dns(mark(makeRound({ n: 7 }), "1", { confirmed: [1] }), "1", [2, 3]);
+  assert.deepEqual(laneBibs(lead(r, "1")), ["4", "5", "6", "7"]);
+});
+test("DNS: a DNS athlete at the END does not keep the route from finishing", () => {
+  const r = dns(mark(makeRound({ routes: ["1", "2"], n: 5 }), "1", { confirmed: [1, 2, 3, 4] }), "1", [5]);
+  const l = lead(r, "1");
+  assert.equal(l.finished, true);
+  assert.equal(l.atWall, null);
+  mark(r, "2", { confirmed: [1, 2, 3, 4, 5] });
+  assert.equal(app.fn("isRoundFullyFinished")(r), true, "the sequence can move on");
+});
+test("DNS: a pending round does not offer a DNS athlete as NEXT", () => {
+  const r = dns(makeRound({ status: "pending", n: 4 }), "1", [1]);
+  const l = lead(r, "1");
+  assert.equal(l.atWall, null);
+  assert.equal(l.onDeck.bib, "2");
+});
+test("DNS: is per route - an athlete who is DNS on route 1 only still waits on route 2", () => {
+  const r = dns(makeRound({ routes: ["1", "2"], n: 4 }), "1", [2]);
+  assert.deepEqual(laneBibs(lead(r, "1")), ["1", "3", "4"]);
+  assert.deepEqual(laneBibs(lead(r, "2")), ["1", "2", "3", "4"]);
+});
+test("DNS: an ascent that is 'active' is never hidden, whatever its score says", () => {
+  const r = dns(mark(makeRound({ n: 4 }), "1", { confirmed: [1], active: [2] }), "1", [2]);
+  assert.equal(lead(r, "1").atWall.bib, "2");
+});
+test("DNS: no DNS marker anywhere changes nothing (the frozen scenarios above stay valid)", () => {
+  const r = mark(makeRound({ n: 6 }), "1", { confirmed: [1, 2] });
+  assert.deepEqual(laneBibs(lead(r, "1")), ["3", "4", "5", "6"]);
+});
+test("DNS on real data (13519, DM Darmstadt): route 1 FLOHÉ #22, route 2 starts again with #1 and #4 (BICKNELL, DNS) is skipped", () => {
+  const r = loadFixture("lead-two-pass-dns");
+  const r1 = lead(r, "1"), r2 = lead(r, "2");
+  assert.deepEqual(laneBibs(r1).slice(0, 5), ["22", "23", "24", "25", "26"]);
+  assert.deepEqual(laneBibs(r2).slice(0, 6), ["1", "2", "3", "5", "6", "7"]);
+  assert.ok(!laneBibs(r2).includes("4"), "BICKNELL never appears on route 2");
+  assert.equal(r1.finished || r2.finished, false);
+});
