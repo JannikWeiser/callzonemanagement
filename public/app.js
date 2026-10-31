@@ -259,6 +259,7 @@ function saveSelection(sel) {
         group: sel.group ?? null,
         swap: !!sel.swap,
         order: sel.order ?? null,
+        colOrder: sel.colOrder ?? null,
       }
     : sel;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
@@ -365,6 +366,22 @@ function orderParam(params) {
   return list?.length ? list : null;
 }
 
+// `corder=2+1*` (6.53): the same per Split View column - columns separated by
+// `*`, route names by `+`, an empty column = natural order. `null` when no column
+// has an order.
+function colOrderFromParam(value) {
+  if (!value) return null;
+  const columns = value.split("*").map((c) => {
+    const names = c.split("+").filter(Boolean);
+    return names.length ? names : null;
+  });
+  return columns.some(Boolean) ? columns : null;
+}
+function colOrderToParam(colOrder) {
+  if (!colOrder?.some(Boolean)) return null;
+  return colOrder.map((names) => (names?.length ? names.join("+") : "")).join("*");
+}
+
 function readUrlSelection() {
   const params = new URLSearchParams(location.search);
 
@@ -383,6 +400,7 @@ function readUrlSelection() {
       group: params.get("group"),
       swap: params.get("swap") === "1",
       order: orderParam(params),
+      colOrder: colOrderFromParam(params.get("corder")),
       // `control=1` opens the training controller of the session (6.47),
       // which asks for the host password instead of showing a board.
       control: params.get("control") === "1",
@@ -443,7 +461,7 @@ function readUrlSelection() {
           route: routeStr ? routeStr.split("+").filter(Boolean) : null,
         };
       });
-    if (columns.length) return { kind: "watch", host, eventId, group: null, route: null, sequence: [{ type: "split", columns }], showNextPreview: true, swap: false };
+    if (columns.length) return { kind: "watch", host, eventId, group: null, route: null, sequence: [{ type: "split", columns }], showNextPreview: true, swap: false, colOrder: colOrderFromParam(params.get("corder")) };
   }
 
   const group = params.get("group");
@@ -458,7 +476,7 @@ function readUrlSelection() {
   // this param should get the new default-on behavior, not silently fall
   // back to off.
   const showNextPreview = params.get("preview") !== "0";
-  return sequence ? { kind: "watch", host, eventId, group, route, sequence, showNextPreview, swap, order: orderParam(params) } : null;
+  return sequence ? { kind: "watch", host, eventId, group, route, sequence, showNextPreview, swap, order: orderParam(params), colOrder: colOrderFromParam(params.get("corder")) } : null;
 }
 
 function buildShareLink(sel) {
@@ -472,6 +490,7 @@ function buildShareLink(sel) {
       if (sel.route?.length) url.searchParams.set("route", sel.route.join(","));
       if (sel.swap) url.searchParams.set("swap", "1");
       if (sel.order?.length) url.searchParams.set("order", sel.order.join(","));
+      if (colOrderToParam(sel.colOrder)) url.searchParams.set("corder", colOrderToParam(sel.colOrder));
     }
     return url.toString();
   }
@@ -508,6 +527,7 @@ function buildShareLink(sel) {
   if (sel.showNextPreview === false) url.searchParams.set("preview", "0");
   if (sel.swap) url.searchParams.set("swap", "1");
   if (sel.order?.length) url.searchParams.set("order", sel.order.join(","));
+  if (colOrderToParam(sel.colOrder)) url.searchParams.set("corder", colOrderToParam(sel.colOrder));
   return url.toString();
 }
 
@@ -2026,11 +2046,12 @@ function ensureSplitState(entry) {
     splitState = {
       entryIndex: sequenceIndex,
       key,
-      entries: entry.columns.map((column) => ({
+      entries: entry.columns.map((column, i) => ({
         sequence: column.sequence.map((e) => ({ ...e })),
         sequenceIndex: 0,
         group: column.group ?? null,
         route: column.route ?? null,
+        order: currentSelection?.colOrder?.[i] ?? null, // this tablet's own route order (6.53)
       })),
     };
   }
@@ -2758,12 +2779,28 @@ function markNextCategoryHeading(li) {
 // an already-headed lane section - shared by the live inference (buildLane)
 // and Training mode's manual position (buildTrainingLane), which differ
 // only in how atWall/onDeck/queue/finished get computed.
-function renderLaneBody(laneEl, { atWall, onDeck, queue, finished }) {
+function renderLaneBody(laneEl, { atWall, onDeck, queue, finished, nextCategory }) {
   if (finished) {
     const done = document.createElement("div");
     done.className = "lane-finished";
     done.textContent = "Round finished";
     laneEl.appendChild(done);
+    if (nextCategory?.length) {
+      // the first names of the next category (6.55), numbered from 1 - a new start list
+      const title = document.createElement("div");
+      title.className = "next-category-title";
+      title.textContent = nextRoundPreviewLabel ? `Next Category: ${nextRoundPreviewLabel}` : "Next Category";
+      laneEl.appendChild(title);
+      const list = document.createElement("ol");
+      list.className = "queue-list next-category-list";
+      for (const athlete of nextCategory) {
+        const li = document.createElement("li");
+        li.textContent = athleteLine(athlete) || "—";
+        li.classList.add("queue-item--preview");
+        list.appendChild(li);
+      }
+      laneEl.appendChild(list);
+    }
     return;
   }
   const climbingCard = makeCard("climbing", laneEntryText(atWall), "at-wall");
@@ -2824,8 +2861,18 @@ function laneLabelPrefixFor(round) {
 // renderBoard() has already confirmed the current and next round render the
 // same number of lanes (see nextCategoryRoutes() below) - no partial/guessed
 // lane matching here.
+const NEXT_CATEGORY_NAMES = 7; // names shown under "Round finished" (6.55)
+
 function withNextCategoryPreview(lane, previewRoute) {
-  if (lane.finished || !previewRoute || !nextRoundPreview || lane.queue.length >= QUEUE_MAX) return lane;
+  if (!previewRoute || !nextRoundPreview) return lane;
+  if (lane.finished) {
+    // A finished lane (route/boulder/lane) shows the first names of the next
+    // category under "Round finished" (6.55). Only a list below the placeholder:
+    // there are no CLIMBING/NEXT cards on a finished lane, so nothing is filled.
+    const athletes = skipDnsAthletes(nextRoundPreview, previewRoute, orderedAthletesForRoute(nextRoundPreview, previewRoute)).slice(0, NEXT_CATEGORY_NAMES);
+    return athletes.length ? { ...lane, nextCategory: athletes } : lane;
+  }
+  if (lane.queue.length >= QUEUE_MAX) return lane;
   const previewCount = QUEUE_MAX - lane.queue.length;
   const preview = skipDnsAthletes(nextRoundPreview, previewRoute, orderedAthletesForRoute(nextRoundPreview, previewRoute))
     .slice(0, previewCount)
@@ -3017,7 +3064,8 @@ function textEm(text, weight, family) {
 const nameOfLine = (line) => line.replace(/^#\S+ · /, "");
 
 function fitLaneGrid(grid) {
-  const lanes = [...grid.querySelectorAll(":scope > .lane")].filter((l) => l.querySelector(".card"));
+  const allLanes = [...grid.querySelectorAll(":scope > .lane")];
+  const lanes = allLanes.filter((l) => l.querySelector(".card")); // the lanes that are measured
   if (!lanes.length) return;
   const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 
@@ -3076,7 +3124,8 @@ function fitLaneGrid(grid) {
     const chromeRem = block ? 26 : grid.classList.contains("lanes-grid--single") ? 33 : 22;
     const room = Math.max(window.innerHeight - gridRect.top - window.scrollY - below - 8, window.innerHeight - chromeRem * rem);
 
-    const setSize = (size) => lanes.forEach((lane) => lane.style.setProperty("--lane-fs", `${size}px`));
+    // a finished lane that lists the next category (6.55) gets the same size
+    const setSize = (size) => allLanes.forEach((lane) => lane.style.setProperty("--lane-fs", `${size}px`));
     const needed = (lane, probe) => {
       const bottom = probe.lastElementChild.getBoundingClientRect().bottom;
       return bottom - lane.getBoundingClientRect().top + parseFloat(getComputedStyle(lane).paddingBottom);
@@ -3136,7 +3185,7 @@ function fitLaneGrid(grid) {
 
   // the text of each line: the full name, or the first name shortened when the
   // name is longer than FIT_NAME_CHARS (a fixed rule, not "does it fit")
-  for (const lane of lanes) {
+  for (const lane of allLanes) {
     for (const t of lane.querySelectorAll(".card-athlete, .queue-list li")) {
       const node = t.firstChild;
       if (!node || node.nodeType !== 3) continue;
@@ -3560,15 +3609,63 @@ function filterRoutesBySelection(routes, routeNames, sel) {
 // While true the route tabs of a Lead/Boulder board show ◀ ▶ arrows (6.53).
 let routeOrderEditing = false;
 
+function routeArrow(text, prefix, name, label, disabled, onClick) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "ghost tab-arrow";
+  b.textContent = text;
+  b.setAttribute("aria-label", `Move ${prefix} ${name} ${label}`);
+  b.disabled = disabled;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+function renderOrderOnlyTabs(routeNames, prefix, container, onSelect, reorder) {
+  const editing = routeOrderEditing;
+  if (editing) {
+    routeNames.forEach((name, index) => {
+      const move = (delta) => {
+        const names = [...routeNames];
+        [names[index], names[index + delta]] = [names[index + delta], names[index]];
+        reorder.onChange(names);
+      };
+      const chip = document.createElement("span");
+      chip.className = "group-tab route-chip";
+      chip.textContent = `${prefix} ${name}`;
+      const wrap = document.createElement("span");
+      wrap.className = "route-tab-wrap";
+      wrap.append(routeArrow("◀", prefix, name, "left", index === 0, () => move(-1)), chip, routeArrow("▶", prefix, name, "right", index === routeNames.length - 1, () => move(1)));
+      container.appendChild(wrap);
+    });
+  }
+  const orderBtn = document.createElement("button");
+  orderBtn.type = "button";
+  orderBtn.className = `group-tab${editing ? " active" : ""}`;
+  orderBtn.setAttribute("aria-pressed", String(editing));
+  orderBtn.textContent = editing ? "✓ Done" : "⇄ Order";
+  orderBtn.addEventListener("click", () => {
+    routeOrderEditing = !routeOrderEditing;
+    onSelect();
+  });
+  container.appendChild(orderBtn);
+}
+
 // `reorder` (optional, Lead/Boulder boards only): { onChange(namesInNewOrder) } -
 // adds the "⇄ Order" button and, while it is on, the ◀ ▶ arrows around each tab.
-function renderRouteTabs(routeNames, prefix, container, sel, onSelect, reorder = null) {
+// `orderOnly` (a Split View column of a shared session, where the host decides
+// which routes show): no selection tabs, only the "⇄ Order" button and, while it
+// is on, the routes with their ◀ ▶ arrows.
+function renderRouteTabs(routeNames, prefix, container, sel, onSelect, reorder = null, orderOnly = false) {
   container.innerHTML = "";
   if (routeNames.length < 2) {
     container.hidden = true;
     return;
   }
   container.hidden = false;
+  if (orderOnly) {
+    renderOrderOnlyTabs(routeNames, prefix, container, onSelect, reorder);
+    return;
+  }
   const selected = (sel.route ?? []).filter((name) => routeNames.includes(name));
 
   const allBtn = document.createElement("button");
@@ -3606,19 +3703,9 @@ function renderRouteTabs(routeNames, prefix, container, sel, onSelect, reorder =
       [names[index], names[index + delta]] = [names[index + delta], names[index]];
       reorder.onChange(names);
     };
-    const arrow = (text, label, delta, disabled) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "ghost tab-arrow";
-      b.textContent = text;
-      b.setAttribute("aria-label", `Move ${prefix} ${name} ${label}`);
-      b.disabled = disabled;
-      b.addEventListener("click", () => move(delta));
-      return b;
-    };
     const wrap = document.createElement("span");
     wrap.className = "route-tab-wrap";
-    wrap.append(arrow("◀", "left", -1, index === 0), btn, arrow("▶", "right", 1, index === routeNames.length - 1));
+    wrap.append(routeArrow("◀", prefix, name, "left", index === 0, () => move(-1)), btn, routeArrow("▶", prefix, name, "right", index === routeNames.length - 1, () => move(1)));
     container.appendChild(wrap);
   });
 
@@ -3895,10 +3982,33 @@ function renderMultiBoard(entries, results) {
     for (const group of routeGroups) {
       if (groupNames.length >= 2 && group.groupName !== entry.group) continue;
 
-      const routeNames = group.routes.map((r) => r.name);
-      renderRouteTabs(routeNames, laneLabelPrefix, routeTabsEl, entry, rerender);
-      if (currentSelection.sessionId) routeTabsEl.hidden = true;
-      const routesToShow = filterRoutesBySelection(group.routes, routeNames, entry);
+      // This tablet's own route order of the column (6.53). In a shared session the
+      // host decides which routes show (no selection tabs), the order stays ours.
+      const inSession = !!currentSelection.sessionId;
+      const orderedRoutes = applyRouteOrder(group.routes, (r) => r.name, entry.order);
+      const routeNames = orderedRoutes.map((r) => r.name);
+      const routesToShow = applyRouteOrder(filterRoutesBySelection(orderedRoutes, routeNames, entry), (r) => r.name, entry.order);
+      const tabNames = inSession ? routesToShow.map((r) => r.name) : routeNames;
+      renderRouteTabs(
+        tabNames,
+        laneLabelPrefix,
+        routeTabsEl,
+        entry,
+        rerender,
+        {
+          onChange: (names) => {
+            const natural = group.routes.map((r) => r.name).filter((n) => names.includes(n));
+            const rest = (entry.order ?? []).filter((n) => !names.includes(n));
+            entry.order = !rest.length && names.every((n, k) => n === natural[k]) ? null : [...names, ...rest];
+            currentSelection.colOrder = Array.from({ length: entries.length }, (_, k) => (k === i ? entry.order : currentSelection.colOrder?.[k] ?? null));
+            if (!currentSelection.colOrder.some(Boolean)) currentSelection.colOrder = null;
+            saveSelection(currentSelection);
+            setShareLink(buildShareLink(currentSelection));
+            rerender();
+          },
+        },
+        inSession
+      );
 
       const grid = document.createElement("div");
       grid.className = routesToShow.length === 1 ? "lanes-grid lanes-grid--single" : "lanes-grid";
@@ -4345,6 +4455,7 @@ function selectionFromPlan(plan, sessionId, version, local = {}) {
     route: local.route ?? null,
     swap: !!local.swap,
     order: local.order ?? null,
+    colOrder: local.colOrder ?? null,
     sequence: plan.sequence.map((entry) => ({ ...entry })),
     showNextPreview: plan.showNextPreview !== false,
   };

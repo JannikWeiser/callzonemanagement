@@ -909,6 +909,13 @@ previously-reported problems:
   `renderBoard(lastRoundData)` for a paired entry. See
   [ARCHITECTURE.md §6.45](ARCHITECTURE.md#645-wall-display-rework-greenredgrey-cards-container-query-font-sizes-speed-lane-swap).
 
+- **"Round finished" + next category (6.55)** - a FINISHED lane shows "Next
+  Category: <label>" and the first 7 athletes of the next round under it
+  (`lane.nextCategory`, set in `withNextCategoryPreview()`), requested by the
+  owner. It is only a list under the placeholder: CLIMBING/NEXT are still never
+  filled (6.42), the same gates apply (option, plain next round, exact lane count).
+  See [ARCHITECTURE.md §6.55](ARCHITECTURE.md#655-a-finished-lane-lists-the-first-names-of-the-next-category).
+
 - **Lead DNS athletes (6.54)** - `skipDnsAthletes()` drops athletes whose ascent
   on the route has `score: "DNS"` (status stays "pending" in results.info) from
   `computeLane()`'s order and from the next-category preview; an "active" ascent
@@ -929,7 +936,7 @@ previously-reported problems:
   [ARCHITECTURE.md §6.52](ARCHITECTURE.md#652-wall-text-fills-the-available-space---one-fixed-size-per-screen-names-over-15-characters-shortened).
 
 - **Route order + kiosk view (6.53)** - the route order (`currentSelection.order`,
-  `applyRouteOrder()`, "⇄ Order" with ◀ ▶) is a per-tablet display preference,
+  and `colOrder` per Split View column, `applyRouteOrder()`, "⇄ Order" with ◀ ▶) is a per-tablet display preference,
   Lead/Boulder only, never part of a plan and never an input of the inference.
   The link/QR rows are hidden by `syncKioskView()` through `isKioskView()`, which
   also recognises a kiosk browser that only fills the screen (Raspberry Pi), a

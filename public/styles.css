@@ -521,6 +521,7 @@ button.ghost {
 .route-tab-wrap { display: inline-flex; align-items: center; gap: 0.25rem; }
 .tab-arrow { padding: 0.4rem 0.65rem; border-radius: 999px; font-size: 0.8rem; line-height: 1; }
 .tab-arrow:disabled { opacity: 0.3; }
+.route-chip { cursor: default; }
 
 .lanes-grid {
   display: grid;
@@ -636,6 +637,15 @@ button.ghost {
 }
 .queue-list li { color: var(--queue); overflow-wrap: anywhere; }
 .queue-list li.queue-item--preview { color: var(--preview); font-style: italic; }
+
+/* "Next Category: U 13 m — Finale" under "Round finished" (6.55) */
+.next-category-title {
+  color: var(--text);
+  font-weight: 700;
+  font-size: max(1rem, calc(var(--lane-fs, 1.3rem) * 0.8));
+  margin-top: 0.5rem;
+}
+.next-category-list { margin-top: 0.4rem; }
 /* "Next: U 13 m — Finale": heading in front of the next category's names */
 .queue-list li.queue-item--next-title {
   list-style: none;

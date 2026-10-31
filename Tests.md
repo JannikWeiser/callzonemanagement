@@ -82,6 +82,7 @@ Womit getestet wird:
 | Speed-K.-o. | `heatIsDone`: beide Zeiten · Status wird ignoriert · `dns` und „NOT STARTED“ entscheiden allein · `dnf` entscheidet nicht · leerer Lauf ≠ „NOT STARTED“ · aktuelle Stufe und Restläufe · nächste Stufe noch nicht gepaart → nichts, aber nicht fertig · alles erledigt → fertig · echte Runden 13739 (1/4, A:208 / B:218) und 13748 (fertig) |
 | Paare | `earlierStageName` nach Stufen-Name, nicht nach Index (inkl. null/unbekannt) · pending-Runde meldet keine Stufe · `stageHeatsRemaining`/`isLastSpeedStage` |
 | Lead: DNS | DNS-Athlet (`score: "DNS"`, Status bleibt „pending“) wird in der Mitte, mehrfach hintereinander, am Ende (Runde wird fertig), in einer pending-Runde und in der Vorschau übersprungen · nur auf der Route, auf der er DNS ist · ein „active“-Eintrag nie · echte Runde 13519 (DM Darmstadt): Route 1 FLOHÉ #22, Route 2 beginnt mit #1, #4 fehlt |
+| Next Category | fertige Lane bekommt die ersten 7 Athleten der passenden Route der nächsten Runde (eigene Startreihenfolge, weniger als 7 → alle, keine → nichts, DNS ausgelassen) · fasst CLIMBING/NEXT nie an · ohne nächste Runde / bei anderer Routenzahl bleibt alles wie vorher |
 | Sonstiges | `collectRouteGroups` (Gruppen, Courses, nie Course-Reiter bei Lead/Speed) · Namenszeilen (`#bib · Name`, Bib 0) · Vorschau der nächsten Kategorie (Lücke + Namen bis `QUEUE_MAX`, fasst CLIMBING/NEXT nie an) |
 
 Die Prüfung der Prüfung: 9 absichtlich eingebaute Fehler (z. B. `Math.max` in
@@ -375,6 +376,8 @@ siehe AGENTS.md §3/§4) und Boulder mit Gruppen `13709` (Event 1594).
 | A-17 | Vorschau der nächsten Kategorie (Mock): 3 Athleten übrig | 3 echte + Leerzeile + 3 Vorschau-Namen (wie vorher mit 6), auf größeren Bildschirmen mehr | ✔ |
 | A-18 | Speed-Finale → nächste Runde (Sequenz 13740, 13748, „Show next category’s start list“ an), letzte Stufe | statt „—“ steht „Next: U 13 m — Finale“ vor den Vorschau-Namen, deren Nummern wieder bei 1 beginnen; bei 6 Plätzen kein Überlauf | ✔ |
 | A-19 | Lead/Boulder: „⇄ Order“ → ◀ ▶ bei einem Reiter → „✓ Done“ | Reiter und Lanes in neuer Reihenfolge, `order=…` im „Link for this tablet“, nach Neuladen und über den Link gleich; zurück zur natürlichen Reihenfolge → `order` verschwindet; bei Speed gibt es den Knopf nicht | ✔ |
+| A-21 | Split View: „⇄ Order“ in jeder Spalte (auch in einer gemeinsamen Sitzung, dort nur der Knopf ohne Auswahl-Reiter) | Spalten ordnen sich unabhängig, `corder=…` im Link, nach Neuladen und über den Link gleich | ✔ |
+| A-22 | Sequence mit zwei Lead-Runden gleicher Routenzahl, Route 1 fertig, Route 2 läuft | Route 1: „Round finished“, darunter „Next Category: <Runde>“ und die ersten 7 Namen (1–7); Route 2 normal | ✔ |
 | A-20 | Kiosk ohne Fullscreen-API (Fenster füllt den Bildschirm, Raspberry-Pi-Kiosk) | „Link for this tablet“ + QR, „switch round“ und der Steuer-Link des Trainings sind weg, auch nach mehreren Polls; im normalen Fenster wieder da | ✔ (Fenstergröße = Bildschirm simuliert, echter Pi nicht geprüft) |
 | A-10 | Safari < 16 (keine Container-Query-Einheiten) | alte Schriftgrößen als Fallback | ○ |
 

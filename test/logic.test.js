@@ -600,3 +600,74 @@ test("DNS on real data (13519, DM Darmstadt): route 1 FLOHÉ #22, route 2 starts
   assert.ok(!laneBibs(r2).includes("4"), "BICKNELL never appears on route 2");
   assert.equal(r1.finished || r2.finished, false);
 });
+
+// ---- Split View: the route order per column in the tablet link (6.53) -------------------------
+test("Column order link: 'corder' parses to one list per column, empty = natural", () => {
+  const parse = app.fn("colOrderFromParam");
+  assert.deepEqual(plain(parse("2+1+3*2+1")), [["2", "1", "3"], ["2", "1"]]);
+  assert.deepEqual(plain(parse("*3+1")), [null, ["3", "1"]]);
+  assert.equal(parse(""), null);
+  assert.equal(parse(null), null);
+  assert.equal(parse("*"), null, "no column has an order");
+});
+test("Column order link: building and parsing give the same thing back", () => {
+  const parse = app.fn("colOrderFromParam"), build = app.fn("colOrderToParam");
+  for (const colOrder of [[["2", "1"], null], [null, ["A2", "A1", "A3"]], [["3", "2", "1"], ["2", "1"], null]]) {
+    assert.deepEqual(plain(parse(build(colOrder))), plain(colOrder));
+  }
+  assert.equal(build(null), null);
+  assert.equal(build([null, null]), null, "nothing to write when no column has an order");
+});
+
+// ---- a finished lane lists the first names of the next category (6.55) -----------------------
+test("Next Category: a finished lane gets the first 7 names of the next round's matching route", () => {
+  const next = makeRound({ routes: ["1", "2"], n: 20 });
+  app.set("nextRoundPreview", next);
+  try {
+    const finished = { routeName: "1", finished: true, atWall: null, onDeck: null, queue: [] };
+    const out = plain(app.fn("withNextCategoryPreview")(finished, routeNamed(next, "1")));
+    assert.equal(out.finished, true, "stays 'Round finished'");
+    assert.equal(out.atWall, null);
+    assert.equal(out.onDeck, null, "CLIMBING/NEXT are never filled");
+    assert.deepEqual(out.queue, []);
+    assert.deepEqual(out.nextCategory.map((a) => a.bib), ["1", "2", "3", "4", "5", "6", "7"]);
+    const rev = makeRound({ routes: ["1", "2"], n: 20, reverse: ["2"] });
+    app.set("nextRoundPreview", rev);
+    assert.deepEqual(plain(app.fn("withNextCategoryPreview")(finished, routeNamed(rev, "2"))).nextCategory.map((a) => a.bib), ["20", "19", "18", "17", "16", "15", "14"], "that lane's own start order");
+  } finally {
+    app.set("nextRoundPreview", null);
+  }
+});
+test("Next Category: fewer than 7 athletes in the next round shows them all; none -> nothing added", () => {
+  const few = makeRound({ n: 3 });
+  app.set("nextRoundPreview", few);
+  try {
+    const finished = { routeName: "1", finished: true, atWall: null, onDeck: null, queue: [] };
+    assert.equal(plain(app.fn("withNextCategoryPreview")(finished, routeNamed(few, "1"))).nextCategory.length, 3);
+    const empty = makeRound({ n: 0 });
+    app.set("nextRoundPreview", empty);
+    assert.equal(plain(app.fn("withNextCategoryPreview")(finished, routeNamed(empty, "1"))).nextCategory, undefined);
+  } finally {
+    app.set("nextRoundPreview", null);
+  }
+});
+test("Next Category: DNS athletes of the next round are left out here too", () => {
+  const next = dns(makeRound({ n: 10 }), "1", [2]);
+  app.set("nextRoundPreview", next);
+  try {
+    const finished = { routeName: "1", finished: true, atWall: null, onDeck: null, queue: [] };
+    assert.deepEqual(plain(app.fn("withNextCategoryPreview")(finished, routeNamed(next, "1"))).nextCategory.map((a) => a.bib), ["1", "3", "4", "5", "6", "7", "8"]);
+  } finally {
+    app.set("nextRoundPreview", null);
+  }
+});
+test("Next Category: no preview round or no matching route (lane count differs) -> a finished lane stays as it was", () => {
+  const finished = { routeName: "1", finished: true, atWall: null, onDeck: null, queue: [] };
+  assert.deepEqual(plain(app.fn("withNextCategoryPreview")(finished, { id: 1 })), plain(finished), "no next round loaded");
+  app.set("nextRoundPreview", makeRound({ n: 5 }));
+  try {
+    assert.deepEqual(plain(app.fn("withNextCategoryPreview")(finished, undefined)), plain(finished), "previewRoute is undefined when the lane counts differ");
+  } finally {
+    app.set("nextRoundPreview", null);
+  }
+});

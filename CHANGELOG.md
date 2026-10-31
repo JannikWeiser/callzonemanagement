@@ -36,9 +36,13 @@ section number); this file is the *what happened, when* log.
   every poll. See [ARCHITECTURE.md §6.53](ARCHITECTURE.md#653-this-tablets-own-route-order-leadboulder-and-a-kiosk-view-that-does-not-need-the-fullscreen-api).
 
 ### Added
+- **"Round finished" lanes list the next category.** A route/boulder/lane that is
+  finished while the round still runs now shows "Next Category: <round>" and the
+  first 7 athletes of the next round under it (numbered from 1). Display only,
+  CLIMBING/NEXT are never filled. See [ARCHITECTURE.md §6.55](ARCHITECTURE.md#655-a-finished-lane-lists-the-first-names-of-the-next-category).
 - **Route/boulder order per tablet (Lead and Boulder).** "⇄ Order" next to the
   route tabs shows ◀ ▶ arrows around each tab; the lanes follow. Stored in the
-  tablet link (`order=3,1,2`), like the Speed lane swap. Display only. See
+  tablet link (`order=3,1,2`), like the Speed lane swap. Display only. In the Split View every column has its own order (`corder=2+1*3+2+1`), also inside a shared session (there only the Order button, the host still decides which routes show). See
   [ARCHITECTURE.md §6.53](ARCHITECTURE.md#653-this-tablets-own-route-order-leadboulder-and-a-kiosk-view-that-does-not-need-the-fullscreen-api).
 - **Frozen logic regression tests ("who is where and when").** `test/logic.test.js`
   runs the real `public/app.js` in a Node `vm` (`test/helpers/app-harness.js`)

@@ -3900,8 +3900,7 @@ from the screen like the size.
 **Route order.** Like the Speed lane swap (6.45) a display preference of ONE
 tablet: which boulder/route stands left or right depends on where the tablet
 hangs. Decided with the user: arrow buttons (not drag & drop), per tablet (not
-part of a session plan), Lead and Boulder only (Speed keeps "Swap lanes", a split
-view's columns have no order yet).
+part of a session plan), Lead and Boulder only (Speed keeps "Swap lanes").
 - `currentSelection.order` = route names in the wanted order (`null` = natural),
   URL `order=3,1,2`, saved with the selection (a session keeps it as a view
   preference like `swap`).
@@ -3914,6 +3913,14 @@ view's columns have no order yet).
   (`routeOrderEditing`) each tab has ◀ ▶ buttons, "✓ Done" ends it. Moving
   keeps the order of routes the current group does not show (other group/course)
   and clears `order` when it is the natural order again.
+- **Split View:** every column has its own order, `currentSelection.colOrder` (one
+  list per column, URL `corder=2+1*3+2+1`: columns separated by `*`, names by `+`,
+  empty = natural; `colOrderFromParam()`/`colOrderToParam()`), copied into the
+  runtime column (`splitState.entries[i].order`) by `ensureSplitState()`. In a
+  shared session the host decides which routes a column shows, so there are no
+  selection tabs there: `renderRouteTabs(..., orderOnly)` shows only "⇄ Order" and
+  the ◀ ▶ of the routes the column shows. The "Order" mode (`routeOrderEditing`)
+  is one switch for all columns of the board.
 - Never touches `computeLane()`/`computeBoulderLane()`: it only moves lanes
   (tests: "Route order never changes who is where").
 
@@ -3947,6 +3954,28 @@ ascents have no such field (checked on real data), Speed has its own `dns`
 handling (5.5/5.7) - don't extend this to them without fetching real data first.
 Tests: the "DNS: ..." group in `test/logic.test.js` incl. the frozen real round
 (`test/fixtures/lead-two-pass-dns.json`).
+
+### 6.55 A finished lane lists the first names of the next category
+
+**Requested by the owner:** where a lane says "Round finished" (a route/boulder/
+lane that is done while the round still runs) and a next round exists in the
+sequence, the lane shows under it **"Next Category: <round label>"** and the first
+`NEXT_CATEGORY_NAMES` = 7 athletes of that lane's counterpart in the next round,
+numbered from 1.
+- `withNextCategoryPreview()` adds `lane.nextCategory` (the athletes) to a
+  *finished* lane; `renderLaneBody()` draws the heading and the list below the
+  placeholder. It reuses the 6.42 gates: the option "Show next category's
+  startlist near the end", a plain next round, and the exact lane count
+  (`nextCategoryRoutesFor()`); DNS athletes (6.54) are left out.
+- **Still never fills CLIMBING/NEXT** (6.42): a finished lane has no cards, the
+  list is only drawn under "Round finished". A running lane keeps the 6.42
+  behaviour ("Next: ..." heading inside the queue).
+- The fit (6.52) gives such a lane the size of the measured lanes of its grid;
+  when every lane is finished the CSS default applies.
+- Not done: a Speed-elimination round that is finished shows no lanes at all
+  ("Round finished" as one message) - nothing to list per lane there. Once the
+  whole round is finished the sequence moves on anyway; this is for lanes that
+  finish earlier than the round.
 
 ## 7. Explicitly out of scope (do not "fix" without asking)
 
